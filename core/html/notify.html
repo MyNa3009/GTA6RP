@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<!--
+  UI: Benachrichtigungen
+  CONTRACT_VERSION: 1
+  Reine Anzeige oben rechts unter der Geldanzeige, ohne Maus- und Tastaturfokus.
+  Teamnachrichten (type message, /dm) stehen dagegen gross in der Bildschirmmitte.
+  Neueste Meldung oben. Gleiche Meldung kurz hintereinander zaehlt hoch statt neu.
+
+  EINGEHEND (Lua -> UI)
+  notify_open {
+    colors: { base: string, ink: string, accent: string, signal: string, info: string },  // RGB-Kanaele
+    maxVisible: number,
+    items: Item[]          // Meldungen, die vor dem Laden schon da waren
+  }
+  notify_push Item
+
+  Item { text: string, type: "info" | "success" | "error" | "warning" | "message", duration: number, title?: string }
+  // Dauer in ms. message ist eine Teamnachricht (/dm), title steht dann als erste Zeile, z. B. "Teamnachricht von Fabian Nandes"
+
+  AUSGEHEND (UI -> Lua)
+  ui_ready        { ui: "notify", version: 1 }
+  notify_flushed  {}      // Warteliste aus notify_open ist angezeigt
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benachrichtigungen</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Monitor. Dichte 8, Bewegung 2, Varianz 3.
+  Kurze Zeilen am rechten Rand unter der Geldanzeige. Die Art steht als Wort vor dem Text,
+  keine Icon-Kreise, keine Farbschiene, kein Zeitbalken.
+*/
+:root {
+  /* Grundfarben, werden aus der Config ueberschrieben */
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+  --rgb-info:   84 140 220;
+
+  --c-bg:         rgb(var(--rgb-base) / 0.9);
+  --c-border:     rgb(var(--rgb-ink) / 0.08);
+  --c-text:       rgb(var(--rgb-ink) / 0.94);
+  --c-text-muted: rgb(var(--rgb-ink) / 0.55);
+  --c-accent:     rgb(var(--rgb-accent));
+  --c-signal:     rgb(var(--rgb-signal));
+  --c-signal-bg:  rgb(var(--rgb-signal) / 0.16);
+  --c-signal-line: rgb(var(--rgb-signal) / 0.45);
+  --c-accent-bg:  rgb(var(--rgb-accent) / 0.14);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
+
+  --shadow: 0 6px 18px rgb(var(--rgb-base) / 0.35);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --radius-md: 8px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(15px, 0.85vw, 18px);
+  --fs-lg: clamp(17px, 1vw, 21px);
+  --space-5: 24px;
+  --radius-lg: 12px;
+  --message-max: clamp(360px, 32vw, 620px);
+
+  --dur-in: 160ms; --dur-out: 140ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --z-toast: 30;
+
+  /* Unter der Geldanzeige oben rechts, gleiche rechte Kante */
+  --stack-top: clamp(96px, 12vh, 140px);
+  --stack-right: clamp(16px, 2vw, 40px);
+  --toast-max: clamp(260px, 22vw, 420px);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.stack {
+  position: fixed;
+  top: var(--stack-top);
+  right: var(--stack-right);
+  z-index: var(--z-toast);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  pointer-events: none;
+}
+
+.toast {
+  max-width: var(--toast-max);
+  padding: var(--space-2) var(--space-3);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  animation: toast-in var(--dur-in) var(--ease-out);
+}
+.toast[data-leaving] { animation: toast-out var(--dur-out) var(--ease-out) forwards; }
+
+/* Art als Wort vor dem Text. Hinweise haben keins, sie sind der Normalfall. */
+.toast__kind { margin-right: var(--space-2); font-weight: 700; }
+.toast[data-type="success"] .toast__kind { color: var(--c-accent); }
+.toast[data-type="error"] .toast__kind,
+.toast[data-type="warning"] .toast__kind { color: var(--c-signal); }
+
+/* Warnungen (Verwarnung, A-Jail) muessen auffallen: eigene Flaeche, zweizeilig */
+.toast[data-type="warning"] {
+  padding: var(--space-3) var(--space-4);
+  background: linear-gradient(var(--c-signal-bg), var(--c-signal-bg)), var(--c-bg);
+  border-color: var(--c-signal-line);
+}
+.toast[data-type="warning"] .toast__kind,
+.toast[data-type="message"] .toast__kind { display: block; margin: 0 0 var(--space-1); }
+
+/* Teamnachricht (/dm): gross in der Bildschirmmitte, damit sie niemand uebersieht */
+.center {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: var(--z-toast);
+  width: min(var(--message-max), calc(100vw - 2 * var(--space-4)));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.toast[data-type="message"] {
+  max-width: none;
+  padding: var(--space-4) var(--space-5);
+  background: linear-gradient(var(--c-accent-bg), var(--c-accent-bg)), rgb(var(--rgb-base) / 0.94);
+  border-color: var(--c-accent-line);
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  line-height: 1.45;
+  animation-name: message-in;
+}
+.toast[data-type="message"] .toast__kind {
+  margin-bottom: var(--space-2);
+  color: var(--c-accent);
+  font-size: var(--fs-md);
+}
+.toast[data-type="message"][data-leaving] { animation: toast-out var(--dur-out) var(--ease-out) forwards; }
+@keyframes message-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.toast__count {
+  margin-left: var(--space-2);
+  color: var(--c-text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.toast__count[hidden] { display: none; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes toast-out {
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast, .toast[data-leaving] { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<ol class="stack" id="stack" aria-live="polite" aria-label="Benachrichtigungen"></ol>
+<ol class="center" id="center" aria-live="assertive" aria-label="Teamnachrichten"></ol>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();
+
+const Mock = {
+  async handle(event, data) {
+    console.info(`[mock] ${event}`, data);
+    return { ok: true };
+  },
+  push(event, data) {
+    Bridge.emit(event, data);
+  },
+};
+</script>
+
+<script id="app">
+const TEXT = {
+  // Hinweise (info) bekommen kein Wort davor
+  kinds: { success: 'Erledigt', error: 'Fehler', warning: 'Warnung', message: 'Teamnachricht' },
+};
+
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal', 'info'];
+const TYPES = new Set(['info', 'success', 'error', 'warning', 'message']);
+const TITLE_TYPES = new Set(['message']);  // nur hier darf der Titel das Wort ersetzen
+const CENTER_TYPES = new Set(['message']); // stehen in der Bildschirmmitte
+const CENTER_MAX_VISIBLE = 2;
+const DEFAULT_MAX_VISIBLE = 4;
+const DEFAULT_DURATION_MS = 5000;
+const LEAVE_MS = 140;           // wie --dur-out
+const MERGE_WINDOW_MS = 1500;   // gleiche Meldung kurz hintereinander: Zaehler statt neuer Karte
+
+const state = {
+  maxVisible: DEFAULT_MAX_VISIBLE,
+  items: [],  // { node, text, type, title, center, count, timer, shownAt }
+};
+
+const stack = document.getElementById('stack');
+const center = document.getElementById('center');
+
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  COLOR_KEYS.forEach((key) => {
+    const value = colors[key];
+    if (typeof value === 'string' && COLOR_PATTERN.test(value.trim())) {
+      document.documentElement.style.setProperty(`--rgb-${key}`, value.trim());
+    }
+  });
+}
+
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function remove(item) {
+  if (item.removed) return;
+  item.removed = true;
+  clearTimeout(item.timer);
+  item.node.setAttribute('data-leaving', '');
+  state.items = state.items.filter((entry) => entry !== item);
+  setTimeout(() => item.node.remove(), LEAVE_MS);
+}
+
+function schedule(item, duration) {
+  clearTimeout(item.timer);
+  item.timer = setTimeout(() => remove(item), duration);
+}
+
+function push(data) {
+  const type = TYPES.has(data.type) ? data.type : 'info';
+  const text = typeof data.text === 'string' ? data.text : '';
+  if (!text) return;
+  const title = TITLE_TYPES.has(type) && typeof data.title === 'string' && data.title ? data.title : '';
+  const duration = Number(data.duration) > 0 ? Number(data.duration) : DEFAULT_DURATION_MS;
+  const now = Date.now();
+
+  // Gleiche Meldung gerade eben: nur zaehlen
+  const same = state.items.find((item) => item.text === text && item.type === type && item.title === title && now - item.shownAt < MERGE_WINDOW_MS + duration);
+  if (same) {
+    same.count += 1;
+    same.shownAt = now;
+    const count = same.node.querySelector('.toast__count');
+    count.hidden = false;
+    count.textContent = `×${same.count}`;
+    schedule(same, duration);
+    return;
+  }
+
+  const node = make('li', 'toast');
+  node.dataset.type = type;
+  node.setAttribute('role', type === 'error' || type === 'warning' || type === 'message' ? 'alert' : 'status');
+  const kind = title || TEXT.kinds[type];
+  if (kind) node.append(make('span', 'toast__kind', kind));
+  node.append(document.createTextNode(text));
+  const count = make('span', 'toast__count');
+  count.hidden = true;
+  node.append(count);
+  const inCenter = CENTER_TYPES.has(type);
+  (inCenter ? center : stack).prepend(node);
+
+  const item = { node, text, type, title, center: inCenter, count: 1, timer: null, shownAt: now };
+  state.items.unshift(item);
+  schedule(item, duration);
+
+  // Zu viele: die aeltesten gehen, Mitte und Rand getrennt gezaehlt
+  const limit = inCenter ? CENTER_MAX_VISIBLE : state.maxVisible;
+  state.items.filter((entry) => entry.center === inCenter).slice(limit).forEach(remove);
+}
+
+Bridge.on('notify_open', (data) => {
+  applyColors(data.colors);
+  state.maxVisible = Number(data.maxVisible) > 0 ? Number(data.maxVisible) : DEFAULT_MAX_VISIBLE;
+  (Array.isArray(data.items) ? data.items : []).forEach(push);
+  Bridge.send('notify_flushed', {});
+});
+
+Bridge.on('notify_push', push);
+
+Bridge.send('ui_ready', { ui: 'notify', version: CONTRACT_VERSION });
+
+if (Bridge.platform === 'mock') {
+  // Im Browser: je eine Meldung pro Typ, danach eine doppelte
+  Mock.push('notify_open', {
+    colors: { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72', info: '84 140 220' },
+    maxVisible: 5,
+    items: [
+      { text: 'Deine permanente ID ist 17 (Login 12).', type: 'info', duration: 60000 },
+      { text: 'Neuer Kontostand (bank) von ID 17: 4.500 $', type: 'success', duration: 60000 },
+      { text: 'Niemand mit dieser permanenten ID ist gerade im Spiel.', type: 'error', duration: 60000 },
+      { text: 'Verwarnung von der Administration: Fahren über den Gehweg trotz Ansage (2 von 3)', type: 'warning', duration: 60000 },
+      { text: 'Komm bitte kurz in den Support-Warteraum, es geht um die Szene am Pillbox.', type: 'message', title: 'Teamnachricht von Kemal Arslan', duration: 60000 },
+    ],
+  });
+  setTimeout(() => Mock.push('notify_push', { text: 'Niemand mit dieser permanenten ID ist gerade im Spiel.', type: 'error', duration: 60000 }), 300);
+}
+</script>
+</body>
+</html>

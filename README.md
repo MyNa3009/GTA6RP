@@ -1,20 +1,37 @@
 # GTA6RP
 
-Dieses Repository dient als Grundgerüst für ein GTA6RP-Projekt.
+Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6 RP-Plattform gibt, läuft alles auf einem FiveM-Testserver (txAdmin, MariaDB, oxmysql).
 
-## Struktur
+| Ordner | Version | Inhalt |
+|---|---|---|
+| [`core/`](core/README.md) | 1.6.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
+| [`core_inventory/`](core_inventory/README.md) | 1.0.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
+| [`tests/`](tests/README.md) | | Tests für die Serverlogik beider Resources |
+| `config/` | | Ausschnitt für die `server.cfg` |
 
-- `scripts/` – einzelne Spiel-Skripte und Logik
-- `config/` – Beispiel-Konfigurationen
-- `docs/` – Projekt-Dokumentation
+Das Inventar 1.0.0 braucht mindestens die Core 1.6.0. Beide Ordner werden darum immer zusammen aktualisiert.
 
-## Schnellstart
+## Installation
 
-1. Projekt klonen
-2. passende Server-/Client-Skripte in `scripts/` einbauen
-3. Konfigurationen in `config/` anpassen
-4. Entwicklungs- und Testabläufe dokumentieren
+1. `core/database/schema.sql` in der Datenbank ausführen. Die Tabellen des Inventars legt das Inventar beim Start selbst an.
+2. Die Ordner `core` und `core_inventory` nach `resources/[core]/` kopieren.
+3. Die Zeilen aus [`config/server.example.cfg`](config/server.example.cfg) in die eigene `server.cfg` übernehmen.
+4. Server neu starten.
 
-## Hinweis
+Für ein Update steht in der README jeder Resource ein Abschnitt `Update von x.y.z` mit allen Schritten.
 
-Die einzelnen Scripts werden im Repository als separate Dateien/Ordner organisiert. Ein GitHub-Project-Board ist für Aufgaben verwaltung; die eigentlichen Script-Dateien liegen hier im Projektordner.
+## Aufbau
+
+Damit der Umzug auf GTA 6 später möglich ist, gilt in jeder Resource:
+
+- **FiveM-Natives nur in `core/bridge/`.** Alle anderen Dateien nutzen `Platform`, `Network`, `DB` und `Identity`. Das Inventar hat keine eigene Bridge, es lädt die der Core.
+- **GTA-5-Daten nur in `data/`** (Dateien `*_gta5.lua`): Waffen, Modelle, Koordinaten, Kleidung.
+- **Der Server entscheidet.** Werte im Client sind nur Anzeige.
+- **Die permanente Charakter-ID** ist der Schlüssel in allen Tabellen, Befehlen und Logs.
+- **Alles wird geloggt**, Admins sehen alles.
+
+Beim Umzug werden nur `bridge/` und `data/` ersetzt.
+
+## Sicherheit
+
+Die echte `server.cfg`, Zugangsdaten und Datenbank-Sicherungen kommen nie ins Repo. Die `.gitignore` schließt sie aus.

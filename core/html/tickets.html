@@ -1,0 +1,1458 @@
+<!DOCTYPE html>
+<!--
+  UI: Tickets
+  CONTRACT_VERSION: 1
+  Eine Datei, zwei Ansichten: "player" (/report, eigene Tickets) und "admin" (/tickets, alle Tickets).
+  Ob jemand etwas darf, prueft immer der Server. Die UI blendet nur aus, was sowieso nicht geht.
+
+  EINGEHEND (Lua -> UI)
+  ticket_open {
+    mode: "player" | "admin",
+    colors: { base, ink, accent, signal, info },          // RGB-Kanaele als Text, z. B. "214 164 72"
+    categories: { id: string, label: string }[],
+    limits: { cooldown: number, minLength: number, maxLength: number },
+    tickets?: Ticket[], cooldown?: number,                 // nur player
+    list?: List, selectId?: number                         // nur admin
+  }
+  ticket_message { ticketId: number, message: Message }   // neue Nachricht im gerade offenen Ticket
+  ticket_changed Ticket                                    // Status oder Bearbeiter hat sich geaendert
+  ticket_close   {}
+
+  Ticket  { id, accountId, characterId, characterName, category, categoryLabel, subject,
+            status: "open" | "claimed" | "closed", claimedById?, claimedByName?, claimedByOnline?,
+            createdAt, updatedAt, claimedAt?, closedAt?, serverId? }          // Zeiten in Sekunden, serverId nur wenn online
+  Message { id, authorId?, authorName, role: "player" | "admin" | "system", body, createdAt }
+  List    { tickets: Ticket[], filter, counts: { open, claimed, mine },
+            permissions: { teleport: boolean, spectate: boolean }, duty: boolean, dutyRequired: boolean, selfId: number }
+
+  AUSGEHEND (UI -> Lua), Antwort immer { ok: boolean, data?: any, error?: string }
+  ui_ready        { ui: "ticket", version: 1 }
+  ticket_mine     {}                                   -> data: { tickets, cooldown }
+  ticket_list     { filter: "open"|"mine"|"closed"|"player", characterId? } -> data: List
+  ticket_get      { id }                               -> data: { ticket, messages: Message[], canWrite, cooldown }
+  ticket_create   { category, text }                   -> data: { ticket, cooldown }
+  ticket_send     { id, text }                         -> data: { message, cooldown }
+  ticket_action   { action: "claim"|"unclaim"|"close"|"reopen", id } -> data: { ticket }
+  ticket_goto     { id }                               -> data: {}   (Lua schliesst die UI danach)
+  ticket_spectate { id }                               -> data: {}   (Lua schliesst die UI danach)
+  ticket_close    {}
+
+  FEHLERCODES
+  cooldown (data.cooldown), already_open (data.id), claimed_by_other (data.name), closed, not_claimed, not_closed,
+  own_ticket, already_yours, invalid_text, invalid_category, duty_required, no_permission, not_found,
+  target_offline, no_character, not_ready, db_error, timeout, bridge_error, client_error
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tickets</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Operate. Liste links, ein Ticket rechts, Verlauf wie im MDT statt Chat-Blasen.
+  Dichte 7, Bewegung 2, Varianz 3. Gold nur fuer die eine Hauptaktion und den Status "wartet".
+*/
+:root {
+  /* Grundfarben, werden aus der Config ueberschrieben */
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+
+  --c-bg:         rgb(var(--rgb-base) / 0.97);
+  --c-scrim:      rgb(var(--rgb-base) / 0.45);
+  --c-field:      rgb(var(--rgb-base) / 0.6);
+  --c-hover:      rgb(var(--rgb-ink) / 0.05);
+  --c-selected:   rgb(var(--rgb-ink) / 0.08);
+  --c-line:       rgb(var(--rgb-ink) / 0.09);
+  --c-line-hi:    rgb(var(--rgb-ink) / 0.2);
+  --c-text:       rgb(var(--rgb-ink) / 0.94);
+  --c-text-muted: rgb(var(--rgb-ink) / 0.62);
+  --c-text-faint: rgb(var(--rgb-ink) / 0.42);
+  --c-accent:     rgb(var(--rgb-accent));
+  --c-on-accent:  rgb(var(--rgb-base));
+  --c-signal:     rgb(var(--rgb-signal));
+
+  --shadow-panel: 0 20px 60px rgb(var(--rgb-base) / 0.6);
+
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-5: 24px; --space-6: 32px;
+
+  --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(16px, 0.9vw, 19px);
+
+  --dur-fast: 120ms; --dur-panel: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --z-overlay: 10;
+
+  --panel-width: min(1180px, 92vw);
+  --panel-height: min(780px, 86vh);
+  --sidebar-width: clamp(280px, 24vw, 380px);
+  --author-width: clamp(140px, 11vw, 190px);
+  --control-height: clamp(34px, 1.9vw, 40px);
+  --small-height: clamp(28px, 1.5vw, 32px);
+  --icon-size: 18px;
+  --text-max: 70ch;
+}
+
+/* Spieler-Ansicht: weniger Inhalt, kleineres Fenster */
+.panel[data-mode="player"] {
+  --panel-width: min(940px, 90vw);
+  --panel-height: min(700px, 84vh);
+  --sidebar-width: clamp(240px, 20vw, 320px);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button, input, textarea { font: inherit; color: inherit; }
+h1, h2, p { margin: 0; }
+
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: grid;
+  place-items: center;
+  background: var(--c-scrim);
+}
+.screen[hidden] { display: none; }
+
+.panel {
+  width: var(--panel-width);
+  height: var(--panel-height);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--c-bg);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+  animation: panel-in var(--dur-panel) var(--ease-out);
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: scale(0.985); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ---------- Kopfzeile ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--c-line);
+}
+.topbar__title { font-size: var(--fs-md); font-weight: 700; }
+.topbar .icon-btn { margin-left: auto; }
+.topbar__hint { flex: 1; font-size: var(--fs-xs); font-weight: 500; color: var(--c-signal); }
+
+/* ---------- Bedienelemente ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-height);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--c-line-hi);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.btn:hover:not(:disabled) { background: var(--c-hover); }
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn[hidden] { display: none; }
+.btn--primary { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); }
+.btn--primary:hover:not(:disabled) { background: var(--c-accent); opacity: 0.9; }
+.btn--small { height: var(--small-height); padding: 0 var(--space-3); font-size: var(--fs-xs); }
+
+.text-btn {
+  border: 0;
+  padding: 0;
+  background: none;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--c-line-hi);
+}
+.text-btn:hover:not(:disabled) { color: var(--c-text); text-decoration-color: currentColor; }
+.text-btn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.text-btn:disabled { opacity: 0.4; cursor: default; }
+.text-btn[hidden] { display: none; }
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: var(--control-height);
+  height: var(--control-height);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--c-text-muted);
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--c-hover); color: var(--c-text); }
+.icon-btn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.icon-btn svg { width: var(--icon-size); height: var(--icon-size); }
+
+.input, .textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-md);
+  background: var(--c-field);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1.5;
+}
+.input { height: var(--control-height); padding: 0 var(--space-3); }
+.textarea { padding: var(--space-2) var(--space-3); resize: none; }
+.input::placeholder, .textarea::placeholder { color: var(--c-text-faint); }
+.input:hover, .textarea:hover { border-color: var(--c-line-hi); }
+.input:focus-visible, .textarea:focus-visible { outline: none; border-color: var(--c-text-muted); }
+
+/* Umschalter: Filter (Team) und Kategorie (Spieler) sehen gleich aus */
+.switch {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.switch__item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--small-height);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  cursor: pointer;
+}
+.switch__item:hover { color: var(--c-text); background: var(--c-hover); }
+.switch__item:focus-visible, .switch__item:has(input:focus-visible) { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.switch__item[aria-selected="true"], .switch__item:has(input:checked) { color: var(--c-text); background: var(--c-selected); }
+.switch__item input { position: absolute; opacity: 0; pointer-events: none; }
+.switch__count { font-variant-numeric: tabular-nums; color: var(--c-text-faint); }
+.switch__count:empty { display: none; }
+
+/* ---------- Aufbau ---------- */
+
+.body {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--c-line);
+}
+.sidebar__tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--c-line);
+}
+.sidebar__tools[hidden] { display: none; }
+
+.list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+}
+
+.empty { padding: var(--space-2) var(--space-4); font-size: var(--fs-sm); line-height: 1.5; color: var(--c-text-muted); }
+.empty[hidden] { display: none; }
+
+.tickets {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+.row {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-bottom: 1px solid var(--c-line);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.row:hover { background: var(--c-hover); }
+.row:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
+.row[aria-current="true"] { background: var(--c-selected); }
+.row__top { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.row__id { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-faint); font-variant-numeric: tabular-nums; }
+.row__who { flex: 1; min-width: 0; font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row__who[data-offline] { color: var(--c-text-muted); }
+.row__time { font-size: var(--fs-xs); color: var(--c-text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.row__line { font-size: var(--fs-xs); color: var(--c-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.state { font-weight: 600; color: var(--c-text-muted); }
+.state--waiting { color: var(--c-accent); }
+.state--closed { color: var(--c-text-faint); }
+
+/* ---------- Rechte Seite ---------- */
+
+.main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+
+.blank { padding: var(--space-5); }
+.blank[hidden] { display: none; }
+.blank__title { font-size: var(--fs-md); font-weight: 600; }
+.blank__text { margin-top: var(--space-1); max-width: var(--text-max); font-size: var(--fs-sm); line-height: 1.5; color: var(--c-text-muted); }
+
+/* Neues Ticket */
+.create {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  max-width: calc(var(--text-max) + 2 * var(--space-5));
+}
+.create[hidden] { display: none; }
+.create__title { font-size: var(--fs-lg); font-weight: 700; }
+.create__lead { margin-top: var(--space-1); font-size: var(--fs-sm); line-height: 1.5; color: var(--c-text-muted); }
+.field { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.field--set { margin: 0; padding: 0; border: 0; }
+.field__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+.create .textarea { min-height: clamp(110px, 16vh, 180px); }
+.create__foot { display: flex; align-items: center; gap: var(--space-3); }
+
+.counter { font-size: var(--fs-xs); color: var(--c-text-faint); font-variant-numeric: tabular-nums; }
+.counter[hidden] { display: none; }
+.counter[data-over] { color: var(--c-signal); }
+.form-error { font-size: var(--fs-xs); font-weight: 600; color: var(--c-signal); }
+.form-error:empty { display: none; }
+
+/* Ticket */
+.ticket { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.ticket[hidden] { display: none; }
+
+.ticket__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--c-line);
+}
+.ticket__titles { flex: 1; min-width: 0; }
+.ticket__title { font-size: var(--fs-lg); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ticket__title-id { margin-left: var(--space-2); font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+.ticket__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--c-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ticket__travel { display: inline-flex; gap: var(--space-3); }
+.ticket__travel[hidden] { display: none; }
+.ticket__actions { display: flex; align-items: center; gap: var(--space-3); }
+
+.error-line {
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--c-line);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-signal);
+}
+.error-line[hidden] { display: none; }
+
+/* Verlauf: Absender links, Text rechts, wie ein Protokoll */
+.log {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  list-style: none;
+  overflow-y: auto;
+}
+.entry {
+  display: grid;
+  grid-template-columns: var(--author-width) minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+}
+.entry + .entry:not([data-follow]) { border-top: 1px solid var(--c-line); }
+.entry[data-follow] { padding-top: 0; }
+.entry__author { min-width: 0; font-size: var(--fs-xs); line-height: 1.6; }
+.entry__name { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry__name[data-team] { color: var(--c-accent); }
+.entry__info { display: block; color: var(--c-text-faint); font-variant-numeric: tabular-nums; }
+.entry__body {
+  max-width: var(--text-max);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.entry--system .entry__author { color: var(--c-text-faint); font-variant-numeric: tabular-nums; }
+.entry--system .entry__body { font-size: var(--fs-xs); color: var(--c-text-faint); }
+
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--c-line);
+}
+.composer[hidden] { display: none; }
+.composer .textarea { height: calc(var(--control-height) * 2); }
+.composer__side { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); }
+.composer .form-error { grid-column: 1 / -1; }
+
+.locked {
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--c-line);
+  font-size: var(--fs-xs);
+  color: var(--c-text-muted);
+}
+.locked[hidden] { display: none; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="screen" id="screen" hidden>
+  <div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="title">
+
+    <header class="topbar">
+      <h1 class="topbar__title" id="title"></h1>
+      <p class="topbar__hint" id="duty-hint"></p>
+      <button class="icon-btn" type="button" data-action="close" id="close-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+
+    <div class="body">
+      <aside class="sidebar">
+        <div class="sidebar__tools" id="admin-tools" hidden>
+          <div class="switch" role="tablist" id="filters">
+            <button class="switch__item" type="button" role="tab" data-action="filter" data-filter="open"><span id="f-open"></span><span class="switch__count" id="f-open-count"></span></button>
+            <button class="switch__item" type="button" role="tab" data-action="filter" data-filter="mine"><span id="f-mine"></span><span class="switch__count" id="f-mine-count"></span></button>
+            <button class="switch__item" type="button" role="tab" data-action="filter" data-filter="closed"><span id="f-closed"></span></button>
+          </div>
+          <form id="search-form" role="search">
+            <input class="input" id="search" name="characterId" type="search" inputmode="numeric" autocomplete="off" maxlength="9">
+          </form>
+        </div>
+
+        <div class="list-head">
+          <span id="list-title"></span>
+          <button class="text-btn" type="button" data-action="new" id="new-btn" hidden></button>
+          <button class="text-btn" type="button" data-action="clear-search" id="clear-search" hidden></button>
+        </div>
+        <p class="empty" id="list-empty" hidden></p>
+        <ul class="tickets" id="tickets" aria-labelledby="list-title"></ul>
+      </aside>
+
+      <main class="main">
+        <div class="blank" id="blank">
+          <p class="blank__title" id="blank-title"></p>
+          <p class="blank__text" id="blank-text"></p>
+        </div>
+
+        <form class="create" id="create" hidden novalidate>
+          <div>
+            <h2 class="create__title" id="create-title"></h2>
+            <p class="create__lead" id="create-lead"></p>
+          </div>
+          <fieldset class="field field--set">
+            <legend class="field__label" id="category-label"></legend>
+            <div class="switch" id="categories"></div>
+          </fieldset>
+          <div class="field">
+            <label class="field__label" for="create-text" id="create-text-label"></label>
+            <textarea class="textarea" id="create-text" name="text" spellcheck="true"></textarea>
+          </div>
+          <div class="create__foot">
+            <button class="btn btn--primary" type="submit" id="create-submit"></button>
+            <span class="counter" id="create-counter" hidden></span>
+          </div>
+          <p class="form-error" id="create-error" role="alert"></p>
+        </form>
+
+        <section class="ticket" id="ticket" hidden aria-labelledby="ticket-title">
+          <div class="ticket__head">
+            <div class="ticket__titles">
+              <h2 class="ticket__title" id="ticket-title"></h2>
+              <div class="ticket__meta" id="ticket-meta">
+                <span class="state" id="ticket-state"></span>
+                <span id="ticket-info"></span>
+                <span class="ticket__travel" id="travel" hidden>
+                  <button class="text-btn" type="button" data-action="goto" id="act-goto" hidden></button>
+                  <button class="text-btn" type="button" data-action="spectate" id="act-spectate" hidden></button>
+                </span>
+              </div>
+            </div>
+            <div class="ticket__actions">
+              <button class="text-btn" type="button" data-action="ticket-action" data-ticket-action="unclaim" id="act-unclaim" hidden></button>
+              <button class="btn" type="button" data-action="ticket-action" data-ticket-action="close" id="act-close" hidden></button>
+              <button class="btn btn--primary" type="button" data-action="ticket-action" data-ticket-action="reopen" id="act-reopen" hidden></button>
+              <button class="btn btn--primary" type="button" data-action="ticket-action" data-ticket-action="claim" id="act-claim" hidden></button>
+            </div>
+          </div>
+          <p class="error-line" id="ticket-error" role="alert" hidden></p>
+          <ol class="log" id="log" aria-live="polite"></ol>
+          <form class="composer" id="composer" hidden novalidate>
+            <label class="visually-hidden" for="composer-text" id="composer-label"></label>
+            <textarea class="textarea" id="composer-text" name="text" spellcheck="true"></textarea>
+            <div class="composer__side">
+              <span class="counter" id="composer-counter" hidden></span>
+              <button class="btn btn--primary" type="submit" id="composer-submit"></button>
+            </div>
+            <p class="form-error" id="composer-error" role="alert"></p>
+          </form>
+          <p class="locked" id="locked" hidden></p>
+        </section>
+      </main>
+    </div>
+  </div>
+</div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();
+</script>
+
+<script id="mock">
+/* Nur im Browser: Beispieldaten fuer die Ansicht ohne FiveM */
+const Mock = {
+  delay: 60,
+  now: Math.floor(Date.now() / 1000),
+  selfId: 1,
+  tickets: [],
+  messages: {},
+  init() {
+    const n = this.now;
+    this.tickets = [
+      { id: 41, accountId: 7, characterId: 23, characterName: 'Dario Pfeffer', category: 'report', categoryLabel: 'Regelverstoß melden', subject: 'Am Pillbox schießt einer ohne RP auf alle, Kennzeichen 82KLM193', status: 'open', createdAt: n - 4 * 60, updatedAt: n - 4 * 60, serverId: 13 },
+      { id: 40, accountId: 3, characterId: 3, characterName: 'Mira Brandt', category: 'bug', categoryLabel: 'Bug oder Fehler', subject: 'Ich hänge am Würfelpark im Boden fest', status: 'claimed', claimedById: 1, claimedByName: 'Fabian Nandes', claimedByOnline: true, createdAt: n - 11 * 60, updatedAt: n - 60, serverId: 3 },
+      { id: 38, accountId: 9, characterId: 14, characterName: 'Kemal Arslan', category: 'question', categoryLabel: 'Frage', subject: 'Wie bewerbe ich mich beim LSPD?', status: 'claimed', claimedById: 17, claimedByName: 'Lena Wójcik', claimedByOnline: true, createdAt: n - 32 * 60, updatedAt: n - 9 * 60 },
+    ];
+    this.messages = {
+      40: [
+        { id: 1, authorId: 3, authorName: 'Mira Brandt', role: 'player', body: 'Ich hänge am Würfelpark im Boden fest, komme weder vor noch zurück.', createdAt: n - 11 * 60 },
+        { id: 2, authorName: 'System', role: 'system', body: 'Fabian Nandes (ID 1) hat das Ticket übernommen.', createdAt: n - 8 * 60 },
+        { id: 3, authorId: 1, authorName: 'Fabian Nandes', role: 'admin', body: 'Hi Mira, ich komme gleich. Bleib bitte genau da stehen.', createdAt: n - 8 * 60 },
+        { id: 4, authorId: 3, authorName: 'Mira Brandt', role: 'player', body: 'Okay, danke! Bin direkt neben den Tennisplätzen.', createdAt: n - 60 },
+      ],
+      41: [{ id: 5, authorId: 23, authorName: 'Dario Pfeffer', role: 'player', body: 'Am Pillbox schießt einer ohne RP auf alle, Kennzeichen 82KLM193. Clip habe ich.', createdAt: n - 4 * 60 }],
+      38: [{ id: 6, authorId: 14, authorName: 'Kemal Arslan', role: 'player', body: 'Wie bewerbe ich mich beim LSPD?', createdAt: n - 32 * 60 }],
+    };
+  },
+  async handle(event, data) {
+    await new Promise((r) => setTimeout(r, this.delay));
+    const find = (id) => this.tickets.find((t) => t.id === id);
+    switch (event) {
+      case 'ticket_get': {
+        const t = find(data.id);
+        if (!t) return { ok: false, error: 'not_found' };
+        return { ok: true, data: { ticket: t, messages: this.messages[t.id] || [], canWrite: true, cooldown: 0 } };
+      }
+      case 'ticket_send': {
+        const msg = { id: Date.now(), authorId: 1, authorName: 'Fabian Nandes', role: location.hash === '#admin' ? 'admin' : 'player', body: data.text, createdAt: Math.floor(Date.now() / 1000) };
+        (this.messages[data.id] ||= []).push(msg);
+        return { ok: true, data: { message: msg, cooldown: location.hash === '#admin' ? 0 : 25 } };
+      }
+      case 'ticket_list':
+        return { ok: true, data: this.list() };
+      case 'ticket_mine':
+        return { ok: true, data: { tickets: this.tickets.filter((t) => t.characterId === 3), cooldown: 0 } };
+      case 'ticket_action': {
+        const t = find(data.id);
+        if (data.action === 'claim') Object.assign(t, { status: 'claimed', claimedById: 1, claimedByName: 'Fabian Nandes', claimedByOnline: true });
+        if (data.action === 'unclaim') Object.assign(t, { status: 'open', claimedById: null, claimedByName: null });
+        if (data.action === 'close') Object.assign(t, { status: 'closed', closedAt: Math.floor(Date.now() / 1000) });
+        if (data.action === 'reopen') Object.assign(t, { status: 'claimed', claimedById: 1, claimedByName: 'Fabian Nandes', claimedByOnline: true });
+        return { ok: true, data: { ticket: t } };
+      }
+      default:
+        console.info(`[mock] ${event}`, data);
+        return { ok: true, data: {} };
+    }
+  },
+  list() {
+    const open = this.tickets.filter((t) => t.status !== 'closed');
+    return {
+      tickets: open, filter: 'open',
+      counts: { open: open.filter((t) => t.status === 'open').length, claimed: open.filter((t) => t.status === 'claimed').length, mine: open.filter((t) => t.claimedById === 1).length },
+      permissions: { teleport: true, spectate: true }, duty: true, dutyRequired: true, selfId: 1,
+    };
+  },
+};
+</script>
+
+<script id="app">
+const TEXT = {
+  title: 'Tickets',
+  close: 'Schließen',
+  newTicket: 'Neues Ticket',
+  filters: { open: 'Offen', mine: 'Meine', closed: 'Geschlossen' },
+  searchPlaceholder: 'Permanente ID suchen, Enter',
+  clearSearch: 'Alle zeigen',
+  listTitle: {
+    player: 'Deine Tickets',
+    open: 'Offen und in Bearbeitung',
+    mine: 'Von dir übernommen',
+    closed: 'Zuletzt geschlossen',
+    search: (id) => `Tickets von ID ${id}`,
+  },
+  emptyPlayer: 'Noch keine Tickets.',
+  emptyAdmin: { open: 'Gerade wartet niemand.', mine: 'Du hast kein Ticket übernommen.', closed: 'Noch nichts geschlossen.', search: 'Dieser Charakter hat keine Tickets.' },
+  blankPlayer: { title: 'Kein Ticket ausgewählt', text: 'Links siehst du deine Tickets. Für ein neues Anliegen: "Neues Ticket".' },
+  blankAdmin: { title: 'Kein Ticket ausgewählt', text: 'Links ein Ticket wählen. Aus dem Chat geht es mit /claim 12.' },
+  createTitle: 'Neues Ticket',
+  createLead: 'Beschreib kurz, worum es geht und wo du gerade bist. Das Team sieht deinen Namen und deine permanente ID.',
+  categoryLabel: 'Worum geht es?',
+  textLabel: 'Nachricht',
+  textPlaceholder: 'z. B. Ich hänge am Würfelpark im Boden fest und komme nicht mehr raus.',
+  createSubmit: 'Ticket senden',
+  send: 'Senden',
+  wait: (s) => `Noch ${s} s`,
+  composerLabel: 'Nachricht',
+  composerPlaceholder: { player: 'Antwort an das Team', admin: 'Antwort an den Spieler' },
+  counter: (n, max) => `${n} / ${max}`,
+  state: {
+    open: 'Wartet',
+    mine: 'Bei dir',
+    claimed: (name) => `Bei ${name}`,
+    closed: 'Geschlossen',
+    playerOpen: 'Wartet auf das Team',
+    playerClaimed: (name) => `${name} kümmert sich`,
+  },
+  offline: 'offline',
+  online: 'online',
+  ticketNo: (id) => `#${id}`,
+  idLabel: (id) => `ID ${id}`,
+  created: (time) => `seit ${time}`,
+  team: 'Team',
+  system: 'System',
+  actions: { goto: 'Hingehen', spectate: 'Beobachten', claim: 'Übernehmen', unclaim: 'Freigeben', close: 'Schließen', reopen: 'Wieder öffnen' },
+  locked: {
+    closedPlayer: 'Geschlossen. Für ein neues Anliegen bitte ein neues Ticket erstellen.',
+    closedAdmin: 'Geschlossen. "Wieder öffnen" übernimmt es, dann kann der Spieler wieder schreiben.',
+    notClaimed: 'Zum Antworten erst übernehmen.',
+    otherClaimed: (name) => `${name} bearbeitet dieses Ticket.`,
+    duty: 'Antworten geht nur im Admin-Dienst (/aduty).',
+  },
+  dutyHint: 'Nicht im Dienst: übernehmen und antworten erst nach /aduty.',
+  errors: {
+    cooldown: (s) => `Bitte noch ${s} Sekunden warten.`,
+    already_open: 'Du hast schon ein offenes Ticket. Schreib bitte dort weiter.',
+    claimed_by_other: (name) => `${name || 'Jemand anderes'} bearbeitet das Ticket schon.`,
+    closed: 'Das Ticket ist geschlossen.',
+    not_claimed: 'Erst übernehmen.',
+    not_closed: 'Das Ticket ist nicht geschlossen.',
+    own_ticket: 'Dein eigenes Ticket kannst du nicht bearbeiten.',
+    already_yours: 'Das Ticket hast du schon übernommen.',
+    invalid_text: (min, max) => `Die Nachricht muss ${min} bis ${max} Zeichen lang sein.`,
+    invalid_category: 'Wähle aus, worum es geht.',
+    duty_required: 'Das geht nur im Admin-Dienst. Starte ihn mit /aduty.',
+    no_permission: 'Dafür hast du keine Rechte.',
+    not_found: 'Dieses Ticket gibt es nicht.',
+    target_offline: 'Der Spieler ist gerade nicht im Spiel.',
+    no_position: 'Die Position konnte nicht gelesen werden.',
+    self: 'Das geht nicht mit dir selbst.',
+    invalid_query: 'Gib eine permanente ID ein, z. B. 17.',
+    fallback: 'Das hat nicht geklappt. Versuch es gleich noch einmal.',
+  },
+};
+
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
+const TICK_MS = 1000;
+const REFRESH_DEBOUNCE_MS = 400;
+const FOLLOW_WINDOW_S = 5 * SECONDS_PER_MINUTE;  // gleicher Absender innerhalb von 5 Minuten: ohne neuen Kopf
+const COUNTER_FROM = 0.8;                         // Zeichenzaehler erst ab 80 Prozent zeigen
+const DEFAULT_LIMITS = { cooldown: 25, minLength: 3, maxLength: 500 };
+
+const timeFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
+const dateFormat = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+const state = {
+  open: false,
+  mode: 'player',
+  categories: [],
+  limits: DEFAULT_LIMITS,
+  tickets: [],
+  filter: 'open',
+  searchId: null,
+  counts: { open: 0, claimed: 0, mine: 0 },
+  permissions: { teleport: false, spectate: false },
+  duty: false,
+  dutyRequired: true,
+  selfId: null,
+  currentId: null,
+  current: null,      // { ticket, messages }
+  creating: false,
+  cooldownEndsAt: 0,
+  busy: false,
+};
+
+const $ = (id) => document.getElementById(id);
+const el = {
+  screen: $('screen'), panel: $('panel'), title: $('title'), closeBtn: $('close-btn'), dutyHint: $('duty-hint'),
+  adminTools: $('admin-tools'), filters: $('filters'),
+  fOpen: $('f-open'), fOpenCount: $('f-open-count'), fMine: $('f-mine'), fMineCount: $('f-mine-count'), fClosed: $('f-closed'),
+  searchForm: $('search-form'), search: $('search'),
+  listTitle: $('list-title'), newBtn: $('new-btn'), clearSearch: $('clear-search'), tickets: $('tickets'), listEmpty: $('list-empty'),
+  blank: $('blank'), blankTitle: $('blank-title'), blankText: $('blank-text'),
+  create: $('create'), createTitle: $('create-title'), createLead: $('create-lead'), categoryLabel: $('category-label'),
+  categories: $('categories'), createTextLabel: $('create-text-label'), createText: $('create-text'),
+  createSubmit: $('create-submit'), createCounter: $('create-counter'), createError: $('create-error'),
+  ticket: $('ticket'), ticketTitle: $('ticket-title'), ticketState: $('ticket-state'), ticketInfo: $('ticket-info'),
+  travel: $('travel'), ticketError: $('ticket-error'),
+  actGoto: $('act-goto'), actSpectate: $('act-spectate'), actUnclaim: $('act-unclaim'), actClose: $('act-close'),
+  actReopen: $('act-reopen'), actClaim: $('act-claim'),
+  log: $('log'), composer: $('composer'), composerLabel: $('composer-label'), composerText: $('composer-text'),
+  composerSubmit: $('composer-submit'), composerCounter: $('composer-counter'), composerError: $('composer-error'),
+  locked: $('locked'),
+};
+
+/* ---------- Hilfen ---------- */
+
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  COLOR_KEYS.forEach((key) => {
+    const value = colors[key];
+    if (typeof value === 'string' && COLOR_PATTERN.test(value.trim())) {
+      document.documentElement.style.setProperty(`--rgb-${key}`, value.trim());
+    }
+  });
+}
+
+// Lua schickt leere Tabellen manchmal als {} statt []
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function formatTime(seconds) {
+  if (!seconds) return '';
+  const date = new Date(seconds * MS_PER_SECOND);
+  return date.toDateString() === new Date().toDateString() ? timeFormat.format(date) : dateFormat.format(date);
+}
+
+function formatAgo(seconds) {
+  if (!seconds) return '';
+  const minutes = Math.max(0, Math.floor((Date.now() / MS_PER_SECOND - seconds) / SECONDS_PER_MINUTE));
+  if (minutes < 1) return 'jetzt';
+  if (minutes < MINUTES_PER_HOUR) return `${minutes} Min.`;
+  return formatTime(seconds);
+}
+
+function textLength(value) {
+  return [...value.trim()].length;
+}
+
+function errorText(result) {
+  const code = result && result.error;
+  const data = (result && result.data) || {};
+  const entry = TEXT.errors[code];
+  if (code === 'cooldown') return entry(data.cooldown || 0);
+  if (code === 'claimed_by_other') return entry(data.name);
+  if (code === 'invalid_text') return entry(state.limits.minLength, state.limits.maxLength);
+  if (typeof entry === 'string') return entry;
+  return data.text || TEXT.errors.fallback;
+}
+
+function cooldownLeft() {
+  return Math.max(0, Math.ceil((state.cooldownEndsAt - Date.now()) / MS_PER_SECOND));
+}
+
+function setCooldown(seconds) {
+  state.cooldownEndsAt = Date.now() + (Number(seconds) || 0) * MS_PER_SECOND;
+}
+
+function hasActiveTicket() {
+  return state.tickets.some((t) => t.status !== 'closed');
+}
+
+function canAct() {
+  return !state.dutyRequired || state.duty;
+}
+
+// Status als ein Wort, Gold nur fuer "wartet" (dort ist etwas zu tun)
+function statusOf(ticket) {
+  const admin = state.mode === 'admin';
+  if (ticket.status === 'closed') return { text: TEXT.state.closed, tone: 'closed' };
+  if (ticket.status === 'open') return { text: admin ? TEXT.state.open : TEXT.state.playerOpen, tone: 'waiting' };
+  if (admin && ticket.claimedById === state.selfId) return { text: TEXT.state.mine, tone: 'waiting' };
+  return { text: admin ? TEXT.state.claimed(ticket.claimedByName || '?') : TEXT.state.playerClaimed(ticket.claimedByName || '?'), tone: '' };
+}
+
+function statusNode(ticket) {
+  const status = statusOf(ticket);
+  return make('span', status.tone ? `state state--${status.tone}` : 'state', status.text);
+}
+
+/* ---------- Liste ---------- */
+
+function ticketRow(ticket) {
+  const admin = state.mode === 'admin';
+  const li = make('li');
+  const button = make('button', 'row');
+  button.type = 'button';
+  button.dataset.action = 'select';
+  button.dataset.id = String(ticket.id);
+  button.setAttribute('aria-current', String(ticket.id === state.currentId));
+
+  const top = make('span', 'row__top');
+  const who = make('span', 'row__who', admin ? `${ticket.characterName}, ${TEXT.idLabel(ticket.characterId)}` : ticket.categoryLabel);
+  if (admin && !ticket.serverId) {
+    who.dataset.offline = '';
+    who.title = TEXT.offline;
+  }
+  top.append(
+    make('span', 'row__id', TEXT.ticketNo(ticket.id)),
+    who,
+    make('span', 'row__time', ticket.status === 'open' ? formatAgo(ticket.createdAt) : formatTime(ticket.updatedAt)),
+  );
+
+  const line = make('span', 'row__line');
+  line.append(statusNode(ticket), document.createTextNode(`  ${ticket.subject}`));
+  button.append(top, line);
+  li.append(button);
+  return li;
+}
+
+function renderList() {
+  const admin = state.mode === 'admin';
+  el.adminTools.hidden = !admin;
+  el.dutyHint.hidden = !admin || canAct();
+
+  if (admin) {
+    el.filters.querySelectorAll('.switch__item').forEach((button) => {
+      button.setAttribute('aria-selected', String(state.searchId === null && button.dataset.filter === state.filter));
+    });
+    const active = state.counts.open + state.counts.claimed;
+    setText(el.fOpenCount, active > 0 ? String(active) : '');
+    setText(el.fMineCount, state.counts.mine > 0 ? String(state.counts.mine) : '');
+    setText(el.listTitle, state.searchId !== null ? TEXT.listTitle.search(state.searchId) : TEXT.listTitle[state.filter]);
+    setText(el.listEmpty, TEXT.emptyAdmin[state.searchId !== null ? 'search' : state.filter]);
+    el.clearSearch.hidden = state.searchId === null;
+    el.newBtn.hidden = true;
+  } else {
+    setText(el.listTitle, TEXT.listTitle.player);
+    setText(el.listEmpty, TEXT.emptyPlayer);
+    el.clearSearch.hidden = true;
+    // Neues Ticket nur, wenn keins mehr offen ist
+    el.newBtn.hidden = hasActiveTicket() || state.creating;
+  }
+
+  el.tickets.replaceChildren(...state.tickets.map(ticketRow));
+  el.listEmpty.hidden = state.tickets.length > 0;
+}
+
+/* ---------- Verlauf ---------- */
+
+function entryNode(message, previous) {
+  const li = make('li');
+  li.dataset.id = String(message.id);
+
+  if (message.role === 'system') {
+    li.className = 'entry entry--system';
+    li.append(make('span', 'entry__author', formatTime(message.createdAt)), make('p', 'entry__body', message.body));
+    return li;
+  }
+
+  li.className = 'entry';
+  // Gleicher Absender kurz hintereinander: nur der Text, kein neuer Kopf
+  const follows = previous && previous.role === message.role && previous.authorId === message.authorId
+    && message.createdAt - previous.createdAt < FOLLOW_WINDOW_S;
+  const author = make('div', 'entry__author');
+  if (follows) {
+    li.dataset.follow = '';
+  } else {
+    const name = make('span', 'entry__name', message.authorName);
+    if (message.role === 'admin') name.dataset.team = '';
+    const info = [];
+    if (message.role === 'admin') info.push(TEXT.team);
+    if (message.authorId) info.push(TEXT.idLabel(message.authorId));
+    info.push(formatTime(message.createdAt));
+    author.append(name, make('span', 'entry__info', info.join(', ')));
+  }
+  li.append(author, make('p', 'entry__body', message.body));
+  return li;
+}
+
+function renderLog() {
+  const list = state.current ? state.current.messages : [];
+  el.log.replaceChildren(...list.map((message, i) => entryNode(message, list[i - 1])));
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
+function addMessage(ticketId, message) {
+  if (!state.current || state.current.ticket.id !== ticketId || !message) return;
+  const list = state.current.messages;
+  if (list.some((m) => m.id === message.id)) return;
+  list.push(message);
+  el.log.append(entryNode(message, list[list.length - 2]));
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
+/* ---------- Rechte Seite ---------- */
+
+// Was das Team am offenen Ticket tun kann (nur Anzeige, der Server prueft selbst)
+function adminFlags(ticket) {
+  const mine = ticket.status === 'claimed' && ticket.claimedById === state.selfId;
+  const free = ticket.status === 'open' || (ticket.status === 'claimed' && !ticket.claimedByOnline);
+  return {
+    mine,
+    claim: ticket.status !== 'closed' && !mine && free,
+    unclaim: mine,
+    close: ticket.status !== 'closed' && mine,
+    reopen: ticket.status === 'closed',
+    write: mine && canAct(),
+  };
+}
+
+function renderTicket() {
+  const ticket = state.current.ticket;
+  const admin = state.mode === 'admin';
+
+  el.ticketTitle.replaceChildren(document.createTextNode(admin ? ticket.characterName : `${TEXT.ticketNo(ticket.id)} ${ticket.categoryLabel}`));
+  if (admin) el.ticketTitle.append(make('span', 'ticket__title-id', `${TEXT.idLabel(ticket.characterId)}, ${TEXT.ticketNo(ticket.id)}`));
+
+  const status = statusOf(ticket);
+  el.ticketState.className = status.tone ? `state state--${status.tone}` : 'state';
+  setText(el.ticketState, status.text);
+  const info = admin ? [ticket.categoryLabel, TEXT.created(formatTime(ticket.createdAt)), ticket.serverId ? TEXT.online : TEXT.offline]
+    : [TEXT.created(formatTime(ticket.createdAt))];
+  setText(el.ticketInfo, info.join(', '));
+
+  const buttons = [el.actClaim, el.actUnclaim, el.actClose, el.actReopen, el.actGoto, el.actSpectate];
+  let canWrite = false;
+  let lockedText = '';
+  if (admin) {
+    const flags = adminFlags(ticket);
+    el.actClaim.hidden = !flags.claim;
+    el.actUnclaim.hidden = !flags.unclaim;
+    el.actClose.hidden = !flags.close;
+    el.actReopen.hidden = !flags.reopen;
+    el.actGoto.hidden = !state.permissions.teleport;
+    el.actSpectate.hidden = !state.permissions.spectate;
+    el.travel.hidden = !ticket.serverId || (el.actGoto.hidden && el.actSpectate.hidden);
+    buttons.forEach((b) => { b.disabled = state.busy || !canAct(); });
+    canWrite = flags.write;
+    if (ticket.status === 'closed') lockedText = TEXT.locked.closedAdmin;
+    else if (flags.mine && !canAct()) lockedText = TEXT.locked.duty;
+    else if (!flags.mine && ticket.status === 'claimed' && ticket.claimedByOnline) lockedText = TEXT.locked.otherClaimed(ticket.claimedByName);
+    else if (!flags.mine) lockedText = TEXT.locked.notClaimed;
+  } else {
+    buttons.forEach((b) => { b.hidden = true; });
+    el.travel.hidden = true;
+    canWrite = ticket.status !== 'closed';
+    if (!canWrite) lockedText = TEXT.locked.closedPlayer;
+  }
+
+  el.composer.hidden = !canWrite;
+  el.locked.hidden = canWrite;
+  setText(el.locked, lockedText);
+  el.composerText.placeholder = TEXT.composerPlaceholder[state.mode];
+  renderCounter(el.composerText, el.composerCounter);
+  renderComposerButton();
+}
+
+function renderDetail() {
+  const showCreate = state.mode === 'player' && state.creating;
+  const showTicket = !showCreate && Boolean(state.current);
+  el.create.hidden = !showCreate;
+  el.ticket.hidden = !showTicket;
+  el.blank.hidden = showCreate || showTicket;
+  const blank = state.mode === 'admin' ? TEXT.blankAdmin : TEXT.blankPlayer;
+  setText(el.blankTitle, blank.title);
+  setText(el.blankText, blank.text);
+  if (showCreate) {
+    renderCounter(el.createText, el.createCounter);
+    renderCreateButton();
+  }
+  if (showTicket) renderTicket();
+}
+
+// Zaehler erst zeigen, wenn es knapp wird
+function renderCounter(input, counter) {
+  const length = textLength(input.value);
+  const max = state.limits.maxLength;
+  counter.hidden = length < max * COUNTER_FROM;
+  setText(counter, TEXT.counter(length, max));
+  counter.toggleAttribute('data-over', length > max);
+}
+
+function sendBlocked(input) {
+  const length = textLength(input.value);
+  return state.busy || length < state.limits.minLength || length > state.limits.maxLength;
+}
+
+// Nur Spieler haben eine Pause zwischen Nachrichten
+function renderComposerButton() {
+  const wait = state.mode === 'player' ? cooldownLeft() : 0;
+  setText(el.composerSubmit, wait > 0 ? TEXT.wait(wait) : TEXT.send);
+  el.composerSubmit.disabled = wait > 0 || sendBlocked(el.composerText);
+}
+
+function renderCreateButton() {
+  const wait = cooldownLeft();
+  setText(el.createSubmit, wait > 0 ? TEXT.wait(wait) : TEXT.createSubmit);
+  el.createSubmit.disabled = wait > 0 || sendBlocked(el.createText) || !el.create.querySelector('input[name="category"]:checked');
+}
+
+function renderCategories() {
+  const nodes = state.categories.map((category, index) => {
+    const label = make('label', 'switch__item');
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'category';
+    input.value = category.id;
+    if (index === 0) input.checked = true;
+    label.append(input, document.createTextNode(category.label));
+    return label;
+  });
+  el.categories.replaceChildren(...nodes);
+}
+
+function render() {
+  el.screen.hidden = !state.open;
+  if (!state.open) return;
+  el.panel.dataset.mode = state.mode;
+  renderList();
+  renderDetail();
+}
+
+/* ---------- Laden ---------- */
+
+let refreshTimer = null;
+
+function applyList(data) {
+  state.tickets = asArray(data.tickets);
+  state.counts = data.counts || state.counts;
+  state.permissions = data.permissions || state.permissions;
+  state.duty = data.duty === true;
+  state.dutyRequired = data.dutyRequired !== false;
+  state.selfId = data.selfId ?? state.selfId;
+}
+
+async function loadList() {
+  if (state.mode === 'player') {
+    const result = await Bridge.send('ticket_mine', {});
+    if (result && result.ok) {
+      state.tickets = asArray(result.data.tickets);
+      setCooldown(result.data.cooldown);
+    }
+  } else {
+    const payload = state.searchId !== null ? { filter: 'player', characterId: state.searchId } : { filter: state.filter };
+    const result = await Bridge.send('ticket_list', payload);
+    if (result && result.ok) applyList(result.data);
+    else showTicketError(errorText(result));
+  }
+  renderList();
+}
+
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(loadList, REFRESH_DEBOUNCE_MS);
+}
+
+function showTicketError(text) {
+  el.ticketError.hidden = !text;
+  setText(el.ticketError, text || '');
+}
+
+async function openTicket(id) {
+  state.creating = false;
+  state.currentId = id;
+  showTicketError('');
+  setText(el.composerError, '');
+  renderList();
+  const result = await Bridge.send('ticket_get', { id });
+  if (state.currentId !== id) return;
+  if (!result || !result.ok) {
+    state.current = null;
+    render();
+    setText(el.blankText, errorText(result));
+    return;
+  }
+  state.current = { ticket: result.data.ticket, messages: asArray(result.data.messages) };
+  if (state.mode === 'player') setCooldown(result.data.cooldown);
+  render();
+  renderLog();
+  if (!el.composer.hidden) el.composerText.focus();
+}
+
+/* ---------- Aktionen ---------- */
+
+async function runAction(action) {
+  const ticket = state.current && state.current.ticket;
+  if (!ticket || state.busy) return;
+  state.busy = true;
+  renderDetail();
+  const result = await Bridge.send('ticket_action', { action, id: ticket.id });
+  state.busy = false;
+  if (!result || !result.ok) {
+    showTicketError(errorText(result));
+    renderDetail();
+    return;
+  }
+  await openTicket(ticket.id);
+  scheduleRefresh();
+}
+
+async function travel(event) {
+  const ticket = state.current && state.current.ticket;
+  if (!ticket || state.busy) return;
+  state.busy = true;
+  renderDetail();
+  const result = await Bridge.send(event, { id: ticket.id });
+  state.busy = false;
+  if (!result || !result.ok) showTicketError(errorText(result));
+  renderDetail();
+}
+
+async function sendMessage() {
+  const ticket = state.current && state.current.ticket;
+  if (!ticket || el.composerSubmit.disabled) return;
+  state.busy = true;
+  renderComposerButton();
+  const result = await Bridge.send('ticket_send', { id: ticket.id, text: el.composerText.value.trim() });
+  state.busy = false;
+  if (!result || !result.ok) {
+    if (result && result.error === 'cooldown') setCooldown(result.data && result.data.cooldown);
+    setText(el.composerError, errorText(result));
+    renderComposerButton();
+    return;
+  }
+  setText(el.composerError, '');
+  el.composerText.value = '';
+  if (state.mode === 'player') setCooldown(result.data.cooldown);
+  addMessage(ticket.id, result.data.message);
+  renderDetail();
+  el.composerText.focus();
+}
+
+async function createTicket() {
+  if (el.createSubmit.disabled) return;
+  const category = el.create.querySelector('input[name="category"]:checked');
+  state.busy = true;
+  renderCreateButton();
+  const result = await Bridge.send('ticket_create', { category: category && category.value, text: el.createText.value.trim() });
+  state.busy = false;
+  if (!result || !result.ok) {
+    if (result && result.error === 'cooldown') setCooldown(result.data && result.data.cooldown);
+    setText(el.createError, errorText(result));
+    renderCreateButton();
+    if (result && result.error === 'already_open' && result.data && result.data.id) openTicket(result.data.id);
+    return;
+  }
+  setText(el.createError, '');
+  el.createText.value = '';
+  setCooldown(result.data.cooldown);
+  await loadList();
+  openTicket(result.data.ticket.id);
+}
+
+function closeUi() {
+  Bridge.send('ticket_close', {});
+}
+
+/* ---------- Ereignisse ---------- */
+
+const ACTIONS = {
+  close: closeUi,
+  new() {
+    state.creating = true;
+    state.currentId = null;
+    state.current = null;
+    setText(el.createError, '');
+    render();
+    el.createText.focus();
+  },
+  select(target) { openTicket(Number(target.dataset.id)); },
+  filter(target) {
+    state.filter = target.dataset.filter;
+    state.searchId = null;
+    el.search.value = '';
+    loadList();
+  },
+  'clear-search'() {
+    state.searchId = null;
+    el.search.value = '';
+    loadList();
+  },
+  'ticket-action'(target) { runAction(target.dataset.ticketAction); },
+  goto() { travel('ticket_goto'); },
+  spectate() { travel('ticket_spectate'); },
+};
+
+document.addEventListener('click', (e) => {
+  const target = e.target.closest('[data-action]');
+  if (!target || target.disabled) return;
+  const action = ACTIONS[target.dataset.action];
+  if (action) action(target);
+});
+
+el.searchForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const id = Number.parseInt(el.search.value.trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    el.search.setCustomValidity(TEXT.errors.invalid_query);
+    el.search.reportValidity();
+    return;
+  }
+  el.search.setCustomValidity('');
+  state.searchId = id;
+  loadList();
+});
+el.search.addEventListener('input', () => el.search.setCustomValidity(''));
+
+el.composer.addEventListener('submit', (e) => { e.preventDefault(); sendMessage(); });
+el.create.addEventListener('submit', (e) => { e.preventDefault(); createTicket(); });
+el.composerText.addEventListener('input', () => { renderCounter(el.composerText, el.composerCounter); renderComposerButton(); });
+el.createText.addEventListener('input', () => { renderCounter(el.createText, el.createCounter); renderCreateButton(); });
+el.create.addEventListener('change', renderCreateButton);
+
+// Enter sendet, Shift + Enter macht eine neue Zeile
+[[el.composerText, sendMessage], [el.createText, createTicket]].forEach(([input, fn]) => {
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      fn();
+    }
+  });
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.open) {
+    e.preventDefault();
+    closeUi();
+  }
+});
+
+// Sekundentakt nur fuer die Pause des Spielers
+setInterval(() => {
+  if (!state.open || state.mode !== 'player') return;
+  if (!el.composer.hidden && !el.ticket.hidden) renderComposerButton();
+  if (!el.create.hidden) renderCreateButton();
+}, TICK_MS);
+
+/* ---------- Bridge ---------- */
+
+Bridge.on('ticket_open', (data) => {
+  applyColors(data.colors);
+  state.open = true;
+  state.mode = data.mode === 'admin' ? 'admin' : 'player';
+  state.categories = asArray(data.categories);
+  state.limits = { ...DEFAULT_LIMITS, ...(data.limits || {}) };
+  state.current = null;
+  state.currentId = null;
+  state.creating = false;
+  state.busy = false;
+  state.searchId = null;
+  state.filter = 'open';
+  el.search.value = '';
+  showTicketError('');
+  renderCategories();
+
+  if (state.mode === 'player') {
+    state.tickets = asArray(data.tickets);
+    setCooldown(data.cooldown);
+    // Offenes Ticket gleich zeigen, sonst direkt das Formular
+    const active = state.tickets.find((t) => t.status !== 'closed');
+    if (active) {
+      render();
+      openTicket(active.id);
+    } else {
+      state.creating = true;
+      render();
+      el.createText.focus();
+    }
+  } else {
+    applyList(data.list || {});
+    render();
+    const selectId = Number(data.selectId) || (state.tickets[0] && state.tickets[0].id);
+    if (selectId) openTicket(selectId);
+  }
+});
+
+Bridge.on('ticket_message', (data) => {
+  if (data && data.message) addMessage(Number(data.ticketId), data.message);
+});
+
+Bridge.on('ticket_changed', (ticket) => {
+  if (!state.open || !ticket || !ticket.id) return;
+  if (state.current && state.current.ticket.id === ticket.id) {
+    state.current.ticket = ticket;
+    renderDetail();
+  }
+  scheduleRefresh();
+});
+
+Bridge.on('ticket_close', () => {
+  state.open = false;
+  render();
+});
+
+/* ---------- Feste Texte ---------- */
+
+setText(el.title, TEXT.title);
+el.closeBtn.setAttribute('aria-label', TEXT.close);
+setText(el.newBtn, TEXT.newTicket);
+setText(el.fOpen, TEXT.filters.open);
+setText(el.fMine, TEXT.filters.mine);
+setText(el.fClosed, TEXT.filters.closed);
+el.search.placeholder = TEXT.searchPlaceholder;
+el.search.setAttribute('aria-label', TEXT.searchPlaceholder);
+setText(el.clearSearch, TEXT.clearSearch);
+setText(el.createTitle, TEXT.createTitle);
+setText(el.createLead, TEXT.createLead);
+setText(el.categoryLabel, TEXT.categoryLabel);
+setText(el.createTextLabel, TEXT.textLabel);
+el.createText.placeholder = TEXT.textPlaceholder;
+setText(el.composerLabel, TEXT.composerLabel);
+setText(el.dutyHint, TEXT.dutyHint);
+Object.entries({ goto: el.actGoto, spectate: el.actSpectate, claim: el.actClaim, unclaim: el.actUnclaim, close: el.actClose, reopen: el.actReopen })
+  .forEach(([key, node]) => setText(node, TEXT.actions[key]));
+
+Bridge.send('ui_ready', { ui: 'ticket', version: CONTRACT_VERSION });
+</script>
+
+<script id="mock-start">
+/* Nur im Browser: Beispieldaten laden. tickets.html#admin zeigt die Team-Ansicht, #new das Formular. */
+if (Bridge.platform === 'mock') {
+  Mock.init();
+  const colors = { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72' };
+  const categories = [{ id: 'question', label: 'Frage' }, { id: 'bug', label: 'Bug oder Fehler' }, { id: 'report', label: 'Regelverstoß melden' }, { id: 'other', label: 'Sonstiges' }];
+  if (location.hash === '#admin') {
+    Bridge.emit('ticket_open', { mode: 'admin', colors, categories, limits: DEFAULT_LIMITS, list: Mock.list(), selectId: 40 });
+  } else if (location.hash === '#new') {
+    Bridge.emit('ticket_open', { mode: 'player', colors, categories, limits: DEFAULT_LIMITS, tickets: [], cooldown: 0 });
+  } else {
+    Bridge.emit('ticket_open', { mode: 'player', colors, categories, limits: DEFAULT_LIMITS, tickets: Mock.tickets.filter((t) => t.characterId === 3), cooldown: 18 });
+  }
+}
+</script>
+</body>
+</html>

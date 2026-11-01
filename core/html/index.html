@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<!--
+  UI: Shell (ui_page der Core)
+  Jede UI ist eine eigene Datei und laeuft hier in einem iframe.
+  Die Shell leitet Nachrichten aus Lua an die passende UI weiter.
+
+  REGEL
+  Eventnamen beginnen mit dem UI-Namen: login_open -> login, char_open -> char.
+  <ui>_open blendet die UI ein, <ui>_close blendet sie aus.
+  Neue UI: iframe mit data-ui="<name>" ergaenzen und Datei in fxmanifest.lua unter files eintragen.
+  data-passive bei reinen Anzeigen (HUD), damit sie keine Klicks abfangen.
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Core UI</title>
+<style>
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.ui-frame {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+.ui-frame[hidden] { display: none; }
+/* Reine Anzeigen fangen keine Klicks ab, auch wenn sie ueber einer anderen UI liegen */
+.ui-frame[data-passive] { pointer-events: none; }
+</style>
+</head>
+<body>
+
+<iframe class="ui-frame" data-ui="login" src="login.html" title="Login" hidden></iframe>
+<iframe class="ui-frame" data-ui="char" src="characters.html" title="Charakterauswahl" hidden></iframe>
+<iframe class="ui-frame" data-ui="death" src="death.html" title="Bewusstlos" data-passive hidden></iframe>
+<iframe class="ui-frame" data-ui="money" src="money.html" title="Geldanzeige" data-passive hidden></iframe>
+<iframe class="ui-frame" data-ui="needs" src="needs.html" title="Hunger und Durst" data-passive hidden></iframe>
+<iframe class="ui-frame" data-ui="jail" src="jail.html" title="A-Jail" data-passive hidden></iframe>
+<iframe class="ui-frame" data-ui="admin" src="admin.html" title="Admin-Menü" hidden></iframe>
+<iframe class="ui-frame" data-ui="ticket" src="tickets.html" title="Tickets" hidden></iframe>
+<!-- Zuletzt, damit Meldungen ueber allem liegen (auch ueber dem Admin-Menue) -->
+<iframe class="ui-frame" data-ui="notify" src="notify.html" title="Benachrichtigungen" data-passive hidden></iframe>
+
+<script>
+const OPEN_SUFFIX = '_open';
+const CLOSE_SUFFIX = '_close';
+
+const frames = {};
+document.querySelectorAll('.ui-frame').forEach((frame) => {
+  frames[frame.dataset.ui] = frame;
+});
+
+window.addEventListener('message', (e) => {
+  const msg = e.data;
+  if (!msg || typeof msg.action !== 'string') return;
+
+  const ui = msg.action.split('_')[0];
+  const frame = frames[ui];
+  if (!frame || !frame.contentWindow) {
+    console.warn(`[shell] Keine UI fuer ${msg.action}`);
+    return;
+  }
+
+  const opening = msg.action.endsWith(OPEN_SUFFIX);
+  if (opening) frame.hidden = false;
+
+  frame.contentWindow.postMessage(msg, '*');
+
+  if (opening && !frame.hasAttribute('data-passive')) frame.contentWindow.focus();
+  if (msg.action.endsWith(CLOSE_SUFFIX)) frame.hidden = true;
+});
+</script>
+</body>
+</html>

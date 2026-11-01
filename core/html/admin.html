@@ -1,0 +1,3278 @@
+<!DOCTYPE html>
+<!--
+  UI: Admin-Menü
+  CONTRACT_VERSION: 1
+  Jede Anfrage prüft der Server mit dem passenden Recht. Die UI blendet nur aus, was man sowieso nicht darf.
+
+  EINGEHEND (Server -> UI)
+  admin_open  {
+    colors: { base: string, ink: string, accent: string, signal: string, info: string },  // RGB-Kanaele
+    currency: string, serverName: string,
+    self: Self, players: OnlinePlayer[]
+  }
+  admin_close {}
+
+  Self         { accountId: number, rank: { id, label, level }, duty: boolean, dutyRequired: boolean, permissions: string[],
+                 limits: { jailMaxMinutes, banMaxDays, reasonMin, reasonMax } }
+  OnlinePlayer { serverId: number, accountId?: number, characterId?: number, characterName?: string,
+                 playerName: string, rank?: string, loggedIn: boolean, duty: boolean, jailed: boolean, warning: boolean,
+                 frozen?: boolean, dimension?: number }   // dimension fehlt in der normalen Welt (0)
+
+  AUSGEHEND (UI -> Server), Antwort immer { ok: boolean, data?: any, error?: string }
+  ui_ready      { ui: "admin", version: 1 }
+  admin_refresh {}                                   -> data: { self, players }
+  admin_duty    {}                                   -> data: { self }
+  admin_search  { query: string }                    -> data: { results: SearchResult[] }
+  admin_profile { accountId?: number, characterId?: number } -> data: Profile   // characterId = permanente ID
+  admin_logs    { accountId, category, page, archive?: boolean } -> data: { entries: LogEntry[], page, hasMore, archive, archiveDays, names: Names }
+  admin_link    { accountId, otherAccountId, dismissed: boolean } -> data: { links: Link[] }
+  admin_warnings {}                                  -> data: { warnings: Warning[], devices: DeviceAlert[] }
+  admin_device_alert { accountId, alertId, dismissed: boolean } -> data: { devices: Devices }
+  admin_accounts { page: number }                    -> data: { accounts: AccountRow[], page, hasMore }
+  (admin_open und admin_refresh liefern zusaetzlich warningCount: number)
+  admin_action  { action: "revive"|"goto"|"bring", serverId: number } -> data: {}
+  admin_punish  { type: "jail", accountId, characterId, minutes, reason }
+                { type: "unjail", accountId, characterId, reason? }
+                { type: "ban", accountId, scope: "character"|"login", characterId?, duration: "30m"|"12h"|"7d"|"2w"|"perm", reason }
+                { type: "unban", accountId, banId, reason? }
+                { type: "warn", accountId, characterId, reason }
+                { type: "unwarn", accountId, warnId, reason? }
+                { type: "kick", accountId, characterId?, reason }  // ohne characterId: wer mit dem Login verbunden ist
+                -> data: { punishments: Punishments }
+  admin_close   {}
+  admin_open_tickets {}                              // schliesst das Menue und oeffnet die Ticket-UI
+  (admin_open und admin_refresh liefern zusaetzlich commands: CommandGroup[] und ticketsOpen?: number, nur mit tickets.manage)
+
+  CommandGroup { title, hint?, entries: { usage, text, rank?: string, level: number, allowed: boolean }[] }
+  SearchResult { accountId, characterId?, characterName?, deleted: boolean, rank: string, serverId? }
+  Profile      { account: { id, rank, email?, createdAt, lastLogin? }, online?: OnlinePlayer,
+                 characters: Character[], identifiers: { type, value?, lastSeen }[], counts: { [category]: number },
+                 links: Link[], punishments: Punishments, focusCharacterId?: number,
+                 devices: Devices, twinks: { total, recent: { action, amount?, time, data? }[] } }
+  Devices      { known: boolean, deviceCount: number, alerts: DeviceAlert[], ips?: { ip, firstSeen, lastSeen }[], ipRetentionDays }
+  DeviceAlert  { id, accountId, createdAt, ip?, ipKnown: boolean, active: boolean, dismissedBy?, dismissedAt?, name?, serverId? }
+  Punishments  { bans: Ban[], jails: JailEntry[], activeBan?: Ban, activeJails: JailEntry[],
+                 warns: Warn[], activeWarns: number, warnExpireDays: number }
+  Warn         { id, characterId, characterName?, reason, createdAt, seenAt?, active: boolean,
+                 warnedBy?, warnedByName?, revokedAt?, revokedBy?, revokedByName?, revokeReason? }
+  Ban          { id, characterId?, characterName?, reason, createdAt, expiresAt?, active: boolean,
+                 bannedBy?, bannedByName?, liftedAt?, liftedBy?, liftedByName?, liftReason? }   // ohne characterId = ganzer Login
+  JailEntry    { id, characterId?, characterName?, reason, minutes, remaining, active: boolean, createdAt,
+                 jailedBy?, jailedByName?, releasedAt?, releasedBy?, releasedByName?, releaseReason? }
+  Link         { otherAccountId, otherName?, types: string[], timesSeen, firstSeen, lastSeen, active: boolean,
+                 dismissedBy?, dismissedByName?, dismissedAt? }
+  Names        { accounts: { [id: string]: string }, characters: { [id: string]: string } }
+  Warning      { a: Side, b: Side, types: string[], timesSeen, firstSeen, lastSeen }
+  Side         { accountId, name?, serverId? }   // serverId nur, wenn online
+  AccountRow   { accountId, characterId?, name?, rank, lastSeen?, serverId?, warning, banned, jailed }   // eine Zeile pro Charakter
+  IDs: characterId ist die permanente ID (ueber dem Kopf, in Befehlen). accountId ist der Login (E-Mail), dem mehrere Charaktere gehoeren.
+  Character    { id, rank, firstname, lastname, dateOfBirth, gender, job, jobGrade, cash, bank, createdAt, lastPlayed?, deletedAt? }   // rank gilt nur fuer diesen Charakter
+  LogEntry     { id, time, actorAccountId?, accountId?, characterId?, targetAccountId?, category, action,
+                 amount?, balanceBefore?, balanceAfter?, resource?, reason?, data?: string (JSON) }
+
+  FEHLERCODES
+  no_permission, duty_required, target_offline, self, no_position, not_found, invalid_query,
+  invalid_category, unknown_action, no_character, db_error, server_error, timeout, bridge_error, client_error,
+  target_jailed, jailed, invalid_reason, invalid_duration, invalid_minutes, already_banned, not_banned,
+  already_jailed, not_jailed, account_not_found, character_not_found, target_too_high, not_ready
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin-Menü</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  /* Die 4 Grundfarben, werden aus der Config ueberschrieben */
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+  --rgb-info:   84 140 220;  /* nur fuer Hinweise ohne Gefahr (Twinks) */
+
+  --c-bg:          rgb(var(--rgb-base) / 0.97);
+  --c-scrim:       rgb(var(--rgb-base) / 0.45);
+  --c-sunken:      rgb(var(--rgb-base) / 0.5);
+  --c-surface:     rgb(var(--rgb-ink) / 0.04);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.08);
+  --c-border:      rgb(var(--rgb-ink) / 0.10);
+  --c-border-hi:   rgb(var(--rgb-ink) / 0.22);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.62);
+  --c-text-faint:  rgb(var(--rgb-ink) / 0.42);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.5);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
+  --c-signal-line: rgb(var(--rgb-signal) / 0.45);
+  --c-info:        rgb(var(--rgb-info));
+  --c-info-soft:   rgb(var(--rgb-info) / 0.14);
+  --c-info-line:   rgb(var(--rgb-info) / 0.5);
+
+  --shadow-panel: 0 20px 60px rgb(var(--rgb-base) / 0.6);
+
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
+
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px; --radius-full: 999px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+
+  --dur-fast: 120ms; --dur-panel: 200ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --z-overlay: 10; --z-sticky: 2;
+
+  --panel-width: min(1440px, 94vw);
+  --panel-height: min(880px, 90vh);
+  --sidebar-width: clamp(280px, 22vw, 360px);
+  --control-height: clamp(36px, 2vw, 42px);
+  --icon-size: 20px;
+  --dot-size: 8px;
+  --label-width: clamp(90px, 7vw, 130px);
+  --short-input: clamp(110px, 8vw, 150px);
+  --stripe-gap: 10px;
+  --notices-max: 52%;
+  --cmd-usage-width: clamp(170px, 14vw, 260px);
+  --cmd-rank-width: clamp(80px, 6vw, 110px);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button, input { font: inherit; color: inherit; }
+
+.icon { width: var(--icon-size); height: var(--icon-size); flex: none; }
+
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: grid;
+  place-items: center;
+  background: var(--c-scrim);
+}
+.screen[hidden] { display: none; }
+
+.panel {
+  width: var(--panel-width);
+  height: var(--panel-height);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+  animation: panel-in var(--dur-panel) var(--ease-out);
+}
+
+@keyframes panel-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ---------- Kopfzeile ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.topbar__title { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
+.topbar__server { font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-muted); }
+.topbar__spacer { flex: 1; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
+.chip[hidden] { display: none; }
+.chip--duty { border-color: var(--c-signal-line); color: var(--c-text); background: var(--c-signal-soft); }
+
+.dot {
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: 50%;
+  background: var(--c-signal);
+  flex: none;
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.btn:hover:not(:disabled) { background: var(--c-surface-hi); border-color: var(--c-border-hi); }
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn[hidden] { display: none; }
+
+.btn[aria-pressed="true"] { border-color: var(--c-accent-line); background: var(--c-accent-soft); }
+.btn--primary { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); }
+.btn--primary:hover:not(:disabled) { background: var(--c-accent); border-color: transparent; opacity: 0.9; }
+.btn--danger { border-color: var(--c-signal-line); color: var(--c-text); background: var(--c-signal-soft); }
+.btn--danger:hover:not(:disabled) { border-color: var(--c-signal); background: var(--c-signal-soft); }
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: var(--control-height);
+  height: var(--control-height);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.icon-btn:hover:not(:disabled) { background: var(--c-surface-hi); color: var(--c-text); }
+.icon-btn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.icon-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* ---------- Koerper ---------- */
+
+.body {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* ---------- Seitenleiste ---------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--c-border);
+  background: var(--c-surface);
+}
+
+.search {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-sunken);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.input::placeholder { color: var(--c-text-faint); }
+.input:hover { border-color: var(--c-border-hi); }
+.input:focus-visible { outline: none; border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft); }
+
+.modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-1);
+  margin: var(--space-3) var(--space-4) 0;
+  padding: var(--space-1);
+  background: var(--c-sunken);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+}
+.mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: calc(var(--radius-md) - var(--space-1));
+  background: transparent;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.mode:hover { color: var(--c-text); }
+.mode:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.mode[aria-selected="true"] { background: var(--c-surface-hi); color: var(--c-text); }
+.mode__count {
+  min-width: 2ch;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--c-surface-hi);
+  font-variant-numeric: tabular-nums;
+}
+.mode__count[data-alert="true"] { background: var(--c-signal); color: var(--c-on-accent); }
+
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+}
+
+.link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  cursor: pointer;
+}
+.link:hover { color: var(--c-text); }
+.link:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+.link[hidden] { display: none; }
+
+.players {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-3);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.player {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.player:hover:not(:disabled) { background: var(--c-surface-hi); }
+.player:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
+.player:disabled { cursor: default; opacity: 0.55; }
+.player[aria-pressed="true"] { background: var(--c-surface-hi); border-color: var(--c-accent-line); }
+
+.player__text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.player__name, .player__meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player__name { font-size: var(--fs-sm); font-weight: 600; }
+.player__meta { font-size: var(--fs-xs); color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+.player__duty { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-xs); font-weight: 600; color: var(--c-signal); }
+
+.player__badges { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.player__warning { font-size: var(--fs-xs); font-weight: 700; color: var(--c-signal); }
+
+.warning {
+  margin: 0 var(--space-6) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--c-signal-line);
+  border-radius: var(--radius-md);
+  background: var(--c-signal-soft);
+}
+.warning[hidden] { display: none; }
+.warning__title { margin: 0; font-size: var(--fs-sm); font-weight: 700; }
+.warning__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+}
+.warning__text { min-width: 0; overflow-wrap: anywhere; }
+.warning__rows { display: grid; gap: var(--space-3); }
+
+/* Hinweise, Formular und Warnungen ueber den Tabs. Bei wenig Hoehe scrollen sie selbst, die Tabs bleiben sichtbar. */
+.notices { flex: 0 1 auto; min-height: 0; max-height: var(--notices-max); overflow-y: auto; }
+.warning__meta { color: var(--c-text-muted); font-size: var(--fs-xs); }
+
+.links { margin-top: var(--space-6); }
+.links__title { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; }
+.links .warning { margin: 0 0 var(--space-2); }
+.warning--off { border-color: var(--c-border); background: var(--c-surface); }
+.warning--info { border-color: var(--c-info-line); background: var(--c-info-soft); }
+.warning--info .warning__title { color: var(--c-info); }
+.player__twink { font-size: var(--fs-xs); font-weight: 700; color: var(--c-info); }
+
+.empty {
+  margin: 0;
+  padding: var(--space-5) var(--space-4);
+  font-size: var(--fs-sm);
+  color: var(--c-text-muted);
+  line-height: 1.5;
+}
+.empty[hidden] { display: none; }
+
+/* ---------- Hauptbereich ---------- */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.placeholder {
+  margin: auto;
+  max-width: 40ch;
+  text-align: center;
+  font-size: var(--fs-md);
+  color: var(--c-text-muted);
+  line-height: 1.55;
+}
+.placeholder[hidden] { display: none; }
+
+.inventory__weight { margin: 0 0 var(--space-4); font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
+.inventory__title { margin: var(--space-5) 0 var(--space-2); font-size: var(--fs-sm); font-weight: 700; }
+
+.archive-bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--c-border);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+/* ---------- Befehlsliste ---------- */
+
+.commands { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.commands[hidden] { display: none; }
+.commands__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--c-border);
+}
+.commands__title { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
+.commands__filter { max-width: clamp(220px, 18vw, 320px); margin-left: auto; }
+.commands__body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--space-5) var(--space-5); }
+.commands__empty { margin: var(--space-5) 0; font-size: var(--fs-sm); color: var(--c-text-muted); }
+.commands__empty[hidden] { display: none; }
+.cmd-table { width: 100%; margin-top: var(--space-5); border-collapse: collapse; table-layout: fixed; }
+.cmd-table caption { text-align: left; padding-bottom: var(--space-2); }
+.cmd-table__title { display: block; font-size: var(--fs-sm); font-weight: 700; }
+.cmd-table__hint { display: block; margin-top: var(--space-1); font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
+.cmd-table td { padding: var(--space-2) var(--space-4) var(--space-2) 0; border-top: 1px solid var(--c-border); vertical-align: baseline; font-size: var(--fs-sm); line-height: 1.45; overflow-wrap: anywhere; }
+.cmd-usage { width: var(--cmd-usage-width); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cmd-text { color: var(--c-text-muted); }
+.cmd-rank { width: var(--cmd-rank-width); padding-right: 0; text-align: right; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-faint); }
+.cmd-table tr[data-locked] .cmd-usage,
+.cmd-table tr[data-locked] .cmd-text { opacity: 0.45; }
+
+.profile { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.profile[hidden] { display: none; }
+
+.profile__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  padding: var(--space-5) var(--space-6) var(--space-4);
+}
+
+.profile__title { margin: 0 0 var(--space-1); font-size: var(--fs-xl); font-weight: 700; overflow-wrap: anywhere; }
+.profile__meta { margin: 0; font-size: var(--fs-sm); color: var(--c-text-muted); font-variant-numeric: tabular-nums; display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center; }
+.status-online { color: var(--c-text); font-weight: 600; }
+
+.actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.actions__hint { font-size: var(--fs-xs); color: var(--c-text-muted); }
+.actions__hint[hidden] { display: none; }
+
+.message {
+  margin: 0 var(--space-6) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+.message:empty { display: none; }
+.message[data-tone="error"]   { background: var(--c-signal-soft); border: 1px solid var(--c-signal-line); }
+.message[data-tone="success"] { background: var(--c-accent-soft); border: 1px solid var(--c-accent-line); }
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--c-border);
+  overflow-x: auto;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3);
+  border: 0;
+  background: transparent;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.tab:hover { color: var(--c-text); }
+.tab:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; border-radius: var(--radius-sm); }
+.tab[aria-selected="true"] { color: var(--c-text); }
+.tab[aria-selected="true"]::after {
+  content: '';
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: -1px;
+  height: 2px;
+  background: var(--c-accent);
+}
+.tab__count {
+  min-width: 2ch;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--c-surface-hi);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6) var(--space-6);
+}
+
+/* ---------- Uebersicht ---------- */
+
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-5);
+}
+.fact { min-width: 0; }
+.fact dt { margin-bottom: var(--space-1); font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
+.fact dd { margin: 0; font-size: var(--fs-md); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fact__sub { display: block; font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
+
+/* ---------- Tabellen ---------- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.table th {
+  position: sticky;
+  top: calc(-1 * var(--space-5));
+  z-index: var(--z-sticky);
+  padding: var(--space-2) var(--space-3);
+  background: var(--c-bg);
+  border-bottom: 1px solid var(--c-border);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  text-align: left;
+  white-space: nowrap;
+}
+.table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--c-border);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.table tr:hover td { background: var(--c-surface); }
+.num { text-align: right; white-space: nowrap; }
+.table th.num { text-align: right; }
+.nowrap { white-space: nowrap; }
+.muted { color: var(--c-text-muted); }
+.minus { color: var(--c-signal); font-weight: 600; }
+.plus { font-weight: 600; }
+.tag {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--c-surface-hi);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+}
+.tag--danger { background: var(--c-signal-soft); color: var(--c-text); }
+.tag--active { background: var(--c-accent-soft); color: var(--c-text); }
+.action-name { font-weight: 600; }
+.detail { color: var(--c-text-muted); font-size: var(--fs-xs); line-height: 1.5; }
+
+.skeleton-row td { height: calc(var(--space-6) + var(--space-1)); }
+.skeleton {
+  display: block;
+  height: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-hi);
+}
+
+.more { display: flex; justify-content: center; padding-top: var(--space-4); }
+.more[hidden] { display: none; }
+
+/* ---------- Strafen ---------- */
+
+.punish {
+  margin: 0 var(--space-6) var(--space-3);
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--c-signal-line);
+  border-radius: var(--radius-md);
+  background-color: var(--c-sunken);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgb(var(--rgb-signal) / 0.05) 0 var(--stripe-gap),
+    transparent var(--stripe-gap) calc(var(--stripe-gap) * 2)
+  );
+}
+.punish[hidden] { display: none; }
+.punish__title { margin: 0; font-size: var(--fs-md); font-weight: 700; }
+.punish__sub { margin: var(--space-1) 0 0; font-size: var(--fs-xs); color: var(--c-text-muted); overflow-wrap: anywhere; }
+.punish__sub:empty { display: none; }
+.punish__row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); gap: var(--space-3); align-items: center; }
+.punish__row[hidden] { display: none; }
+.punish__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+.punish__controls { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; min-width: 0; }
+.punish__error { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--c-signal); }
+.punish__error:empty { display: none; }
+.input--short { flex: 0 1 var(--short-input); }
+.input[type="number"] { appearance: textfield; }
+.input[type="number"]::-webkit-inner-spin-button,
+.input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+.choice {
+  height: calc(var(--control-height) - var(--space-2));
+  padding: 0 var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-full);
+  background: var(--c-surface);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.choice:hover:not(:disabled) { color: var(--c-text); border-color: var(--c-border-hi); }
+.choice:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.choice:disabled { opacity: 0.45; cursor: default; }
+.choice[aria-pressed="true"] { background: var(--c-signal-soft); border-color: var(--c-signal); color: var(--c-text); }
+
+.player__jail { font-size: var(--fs-xs); font-weight: 700; color: var(--c-accent); }
+.player__dim { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+
+.section-title { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; }
+.section-title + .empty { padding-top: 0; }
+.section { margin-bottom: var(--space-6); }
+.btn--small { height: calc(var(--control-height) - var(--space-2)); padding: 0 var(--space-3); font-size: var(--fs-xs); }
+
+@media (prefers-reduced-motion: reduce) {
+  .panel { animation: none; }
+  * { transition-duration: 0ms !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="screen" id="screen" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="title">
+
+    <header class="topbar">
+      <h1 class="topbar__title" id="title"></h1>
+      <span class="topbar__server" id="server-name"></span>
+      <span class="topbar__spacer"></span>
+      <button class="btn" type="button" data-action="tickets" id="tickets-btn" hidden><span id="tickets-label"></span><span class="mode__count" id="tickets-count" data-alert="true" hidden></span></button>
+      <button class="btn" type="button" data-action="commands" id="commands-btn" aria-pressed="false"></button>
+      <span class="chip" id="own-rank"></span>
+      <span class="chip chip--duty" id="duty-chip" hidden><span class="dot" aria-hidden="true"></span><span id="duty-chip-label"></span></span>
+      <button class="btn" type="button" data-action="duty" id="duty-btn" hidden></button>
+      <button class="icon-btn" type="button" data-action="refresh" id="refresh-btn">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+      </button>
+      <button class="icon-btn" type="button" data-action="close" id="close-btn">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+
+    <div class="body">
+      <aside class="sidebar">
+        <form class="search" id="search-form" role="search">
+          <input class="input" id="search" name="search" type="search" autocomplete="off" spellcheck="false" maxlength="50">
+          <button class="icon-btn" type="submit" id="search-btn">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+          </button>
+        </form>
+
+        <div class="modes" role="tablist" aria-label="Liste" id="modes">
+          <button class="mode" type="button" role="tab" data-action="mode" data-mode="online" id="mode-online">
+            <span id="mode-online-label"></span><span class="mode__count" id="mode-online-count"></span>
+          </button>
+          <button class="mode" type="button" role="tab" data-action="mode" data-mode="all" id="mode-all">
+            <span id="mode-all-label"></span>
+          </button>
+          <button class="mode" type="button" role="tab" data-action="mode" data-mode="warnings" id="mode-warnings">
+            <span id="mode-warnings-label"></span><span class="mode__count" id="mode-warnings-count"></span>
+          </button>
+        </div>
+
+        <div class="list-head">
+          <span id="list-title"></span>
+          <button class="link" type="button" data-action="clear-search" id="clear-search" hidden></button>
+        </div>
+        <ul class="players" id="players" aria-labelledby="list-title"></ul>
+        <p class="empty" id="list-empty" hidden></p>
+      </aside>
+
+      <main class="main">
+        <p class="placeholder" id="placeholder"></p>
+
+        <section class="commands" id="commands" hidden aria-labelledby="commands-title">
+          <div class="commands__head">
+            <h2 class="commands__title" id="commands-title"></h2>
+            <input class="input commands__filter" id="commands-filter" type="search" autocomplete="off" spellcheck="false" maxlength="40">
+          </div>
+          <div class="commands__body" id="commands-body"></div>
+          <p class="commands__empty" id="commands-empty" hidden></p>
+        </section>
+
+        <section class="profile" id="profile" hidden aria-labelledby="profile-title">
+          <div class="profile__head">
+            <div>
+              <h2 class="profile__title" id="profile-title"></h2>
+              <p class="profile__meta" id="profile-meta"></p>
+            </div>
+            <div class="actions" id="actions">
+              <span class="actions__hint" id="actions-hint" hidden></span>
+              <button class="btn" type="button" data-action="player-action" data-player-action="revive" id="act-revive"></button>
+              <button class="btn" type="button" data-action="player-action" data-player-action="goto" id="act-goto"></button>
+              <button class="btn" type="button" data-action="player-action" data-player-action="bring" id="act-bring"></button>
+              <button class="btn btn--danger" type="button" data-action="punish-open" data-type="jail" id="act-jail"></button>
+              <button class="btn btn--danger" type="button" data-action="punish-open" data-type="warn" id="act-warn"></button>
+              <button class="btn btn--danger" type="button" data-action="punish-open" data-type="kick" id="act-kick"></button>
+              <button class="btn btn--danger" type="button" data-action="punish-open" data-type="ban" id="act-ban"></button>
+            </div>
+          </div>
+
+          <div class="notices">
+          <p class="message" id="message" role="status" aria-live="polite"></p>
+
+          <form class="punish" id="punish" novalidate hidden aria-labelledby="punish-title">
+            <div>
+              <p class="punish__title" id="punish-title"></p>
+              <p class="punish__sub" id="punish-sub"></p>
+            </div>
+            <div class="punish__row" id="punish-scope-row">
+              <span class="punish__label" id="punish-scope-label"></span>
+              <div class="punish__controls" id="punish-scope" role="group" aria-labelledby="punish-scope-label"></div>
+            </div>
+            <div class="punish__row" id="punish-duration-row">
+              <label class="punish__label" for="punish-duration" id="punish-duration-label"></label>
+              <div class="punish__controls">
+                <span class="punish__controls" id="punish-duration-presets"></span>
+                <input class="input input--short" id="punish-duration" name="duration" type="text" autocomplete="off" spellcheck="false" maxlength="8">
+              </div>
+            </div>
+            <div class="punish__row" id="punish-minutes-row">
+              <label class="punish__label" for="punish-minutes" id="punish-minutes-label"></label>
+              <div class="punish__controls">
+                <span class="punish__controls" id="punish-minutes-presets"></span>
+                <input class="input input--short" id="punish-minutes" name="minutes" type="number" inputmode="numeric" min="1" step="1">
+              </div>
+            </div>
+            <div class="punish__row">
+              <label class="punish__label" for="punish-reason" id="punish-reason-label"></label>
+              <input class="input" id="punish-reason" name="reason" type="text" autocomplete="off">
+            </div>
+            <p class="punish__error" id="punish-error" role="alert"></p>
+            <div class="actions">
+              <button class="btn btn--danger" type="submit" id="punish-submit"></button>
+              <button class="btn" type="button" data-action="punish-cancel" id="punish-cancel"></button>
+            </div>
+          </form>
+
+          <section class="warning" id="punish-status" hidden aria-labelledby="punish-status-title">
+            <p class="warning__title" id="punish-status-title"></p>
+            <div class="warning__rows" id="punish-status-rows"></div>
+          </section>
+
+          <section class="warning" id="device-warning" hidden aria-labelledby="device-warning-title">
+            <p class="warning__title" id="device-warning-title"></p>
+            <div class="warning__rows" id="device-warning-rows"></div>
+          </section>
+
+          <section class="warning warning--info" id="twinks" hidden aria-labelledby="twinks-title">
+            <p class="warning__title" id="twinks-title"></p>
+            <div class="warning__rows" id="twinks-rows"></div>
+          </section>
+
+          <section class="warning" id="warning" hidden aria-labelledby="warning-title">
+            <p class="warning__title" id="warning-title"></p>
+            <div class="warning__rows" id="warning-rows"></div>
+          </section>
+          </div>
+
+          <nav class="tabs" role="tablist" id="tabs" aria-label="Bereiche der Akte"></nav>
+
+          <div class="content" id="content" role="tabpanel"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+</div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();
+
+const MOCK_MINUTE_MS = 60000;
+const MOCK_NOW = Date.now();
+
+const Mock = {
+  delay: 300,
+  self: {
+    accountId: 1,
+    rank: { id: 'chief', label: 'Chief Administrator', level: 7 },
+    duty: false,
+    dutyRequired: true,
+    permissions: ['admin.menu', 'admin.duty', 'admin.noclip', 'player.view', 'player.revive', 'player.teleport', 'player.ajail',
+      'player.ban', 'player.unban', 'player.warn', 'player.kick', 'accounts.links', 'data.private'],
+    limits: { jailMaxMinutes: 1440, banMaxDays: 365, reasonMin: 3, reasonMax: 200 },
+  },
+  players: [
+    { serverId: 1, accountId: 1, characterId: 3, characterName: 'Fabian Nandes', playerName: 'MyNa3009', rank: 'Chief Administrator', loggedIn: true, duty: false },
+    { serverId: 4, accountId: 12, characterId: 17, characterName: 'Lena Wójcik', playerName: 'lenawj', rank: 'Spieler', loggedIn: true, duty: false, warning: true },
+    { serverId: 7, accountId: 9, characterId: 14, characterName: 'Kemal Arslan', playerName: 'kem.a', rank: 'Junior Administrator', loggedIn: true, duty: true, dimension: 5 },
+    { serverId: 13, accountId: 31, characterId: 41, characterName: 'Dario Pfeffer', playerName: 'dpfeffer', rank: 'Spieler', loggedIn: true, duty: false, frozen: true },
+    { serverId: 9, playerName: 'Neuling_2027', loggedIn: false, duty: false },
+    { serverId: 11, accountId: 23, characterId: 30, characterName: 'Jonas Lehmkuhl', playerName: 'jonas_l', rank: 'Spieler', loggedIn: true, duty: false, jailed: true, warning: true },
+  ],
+  nextBanId: 15,
+  nextJailId: 8,
+  punishments: {
+    bans: [
+      { id: 9, reason: 'Fail-RP bei einer Geiselnahme', createdAt: MOCK_NOW - 12 * 86400000, expiresAt: MOCK_NOW - 9 * 86400000,
+        active: false, bannedBy: 9, bannedByName: 'Kemal Arslan' },
+      { id: 4, characterId: 22, characterName: 'Mira Brandt', reason: 'Charaktername verstößt gegen die Regeln', createdAt: MOCK_NOW - 8 * 86400000,
+        active: false, bannedBy: 1, bannedByName: 'Fabian Nandes', liftedAt: MOCK_NOW - 7 * 86400000, liftedBy: 1, liftedByName: 'Fabian Nandes', liftReason: 'Charakter gelöscht' },
+    ],
+    warns: [
+      { id: 21, characterId: 17, characterName: 'Lena Wójcik', reason: 'Fahren über den Gehweg trotz Ansage', createdAt: MOCK_NOW - 2 * 86400000,
+        seenAt: MOCK_NOW - 2 * 86400000, active: true, warnedBy: 9, warnedByName: 'Kemal Arslan' },
+      { id: 12, characterId: 22, characterName: 'Mira Brandt', reason: 'Beleidigung im OOC-Chat', createdAt: MOCK_NOW - 20 * 86400000,
+        active: false, warnedBy: 1, warnedByName: 'Fabian Nandes', revokedAt: MOCK_NOW - 19 * 86400000, revokedBy: 1, revokedByName: 'Fabian Nandes', revokeReason: 'War ein Missverständnis' },
+    ],
+    jails: [
+      { id: 5, characterId: 17, characterName: 'Lena Wójcik', reason: 'Trollen am Würfelpark', minutes: 30, remaining: 0, active: false,
+        createdAt: MOCK_NOW - 3 * 86400000, jailedBy: 9, jailedByName: 'Kemal Arslan', releasedAt: MOCK_NOW - 3 * 86400000 + 1900000, releaseReason: 'Zeit abgesessen' },
+    ],
+  },
+  refreshActive() {
+    const p = Mock.punishments;
+    p.activeBan = p.bans.find((b) => b.active && !b.characterId) || null;
+    return {
+      bans: [...p.bans], jails: [...p.jails], activeBan: p.activeBan, activeJails: p.jails.filter((j) => j.active),
+      warns: [...p.warns], warnExpireDays: 90, warnBanAt: 3, warnBanDays: 7,
+      activeWarns: p.warns.filter((w) => w.active && !w.banId).reduce((acc, w) => ({ ...acc, [w.characterId]: (acc[w.characterId] || 0) + 1 }), {}),
+    };
+  },
+  characterNames: { 17: 'Lena Wójcik', 21: 'Lena Brandt', 22: 'Mira Brandt' },
+  devices: {
+    known: true, deviceCount: 2, ipRetentionDays: 30,
+    alerts: [{ id: 3, accountId: 12, createdAt: MOCK_NOW - 52 * MOCK_MINUTE_MS, ip: '84.132.17.201', ipKnown: false, active: true }],
+    ips: [
+      { ip: '84.132.17.201', firstSeen: MOCK_NOW - 52 * MOCK_MINUTE_MS, lastSeen: MOCK_NOW - 52 * MOCK_MINUTE_MS },
+      { ip: '91.64.200.18', firstSeen: MOCK_NOW - 9 * 86400000, lastSeen: MOCK_NOW - 95 * MOCK_MINUTE_MS },
+    ],
+  },
+  links: [
+    { otherAccountId: 23, otherName: 'Jonas Lehmkuhl', types: ['license'], timesSeen: 3, firstSeen: MOCK_NOW - 1500 * MOCK_MINUTE_MS, lastSeen: MOCK_NOW - 41 * MOCK_MINUTE_MS, active: true },
+  ],
+  warnings() {
+    const active = Mock.links.filter((l) => l.active).map((l) => ({
+      a: { accountId: 12, name: 'Lena Wójcik', serverId: 4 },
+      b: { accountId: l.otherAccountId, name: l.otherName },
+      types: l.types, timesSeen: l.timesSeen, firstSeen: l.firstSeen, lastSeen: l.lastSeen,
+    }));
+    return active.concat([{
+      a: { accountId: 31, name: 'Dennis Vogt' }, b: { accountId: 44, name: 'Mara Ilić' },
+      types: ['license', 'license2'], timesSeen: 2, firstSeen: MOCK_NOW - 4300 * MOCK_MINUTE_MS, lastSeen: MOCK_NOW - 2900 * MOCK_MINUTE_MS,
+    }]);
+  },
+  logs(accountId) {
+    const t = (min) => MOCK_NOW - min * MOCK_MINUTE_MS;
+    return [
+      { id: 915, time: t(2), accountId, characterId: 17, category: 'twink', action: 'money_transfer', amount: 4000, resource: 'core', data: '{"interaction":"money_transfer","label":"Überweisung","relation":"same_login","fromCharacterId":17,"fromName":"Lena Wójcik","toCharacterId":22,"toName":"Mira Brandt","account":"bank"}' },
+      { id: 914, time: t(3), accountId, characterId: 22, targetAccountId: 23, category: 'twink', action: 'money_transfer', amount: 750, resource: 'core', data: '{"interaction":"money_transfer","label":"Überweisung","relation":"linked","fromCharacterId":22,"fromName":"Mira Brandt","toCharacterId":30,"toName":"Jonas Lehmkuhl","account":"cash"}' },
+      { id: 912, time: t(4), accountId, characterId: 17, category: 'money', action: 'remove', amount: 85, balanceBefore: 1325, balanceAfter: 1240, resource: 'tankstelle', reason: 'Tanken', data: '{"account":"cash"}' },
+      { id: 905, time: t(11), accountId, characterId: 17, targetAccountId: 9, category: 'money', action: 'transfer_out', amount: 2500, balanceBefore: 21230, balanceAfter: 18730, resource: 'core', reason: 'Miete Wohnung', data: '{"account":"bank","transferId":"1798559100-14","toCharacterId":14}' },
+      { id: 880, time: t(26), actorAccountId: 1, accountId, characterId: 17, category: 'admin', action: 'view_profile', resource: 'core' },
+      { id: 861, time: t(38), actorAccountId: 9, accountId, characterId: 17, targetAccountId: 9, category: 'death', action: 'died', resource: 'core', data: '{"victimName":"Lena Wójcik","killerAccountId":9,"killerServerId":7,"killerCharacterId":14,"killerName":"Kemal Arslan","weapon":453432689,"weaponName":"Pistole","position":{"x":-268.4,"y":-957.21,"z":31.22}}' },
+      { id: 858, time: t(41), accountId, characterId: 17, targetAccountId: 23, category: 'money', action: 'transfer_in', amount: 350, balanceBefore: 20880, balanceAfter: 21230, resource: 'core', reason: 'Autokauf Anzahlung', data: '{"account":"bank","transferId":"1798558800-11","fromCharacterId":30,"fromName":"Jonas Lehmkuhl"}' },
+      { id: 702, time: t(1440), actorAccountId: 1, accountId, characterId: 17, category: 'money', action: 'add', amount: 1000, balanceBefore: 19880, balanceAfter: 20880, resource: 'core', reason: 'Admin-Befehl /givemoney', data: '{"account":"bank"}' },
+      { id: 650, time: t(1500), accountId, targetAccountId: 23, category: 'security', action: 'multi_account', resource: 'core', data: '{"type":"license"}' },
+      { id: 860, time: t(37), actorAccountId: 1, accountId, characterId: 17, category: 'death', action: 'revive', resource: 'core', reason: 'Admin-Menü', data: '{"wasDead":true}' },
+      { id: 812, time: t(95), actorAccountId: accountId, accountId, characterId: 17, category: 'character', action: 'select', resource: 'core', data: '{"name":"Lena Wójcik","firstSpawn":false}' },
+      { id: 811, time: t(95.2), actorAccountId: accountId, accountId, category: 'account', action: 'login', resource: 'core' },
+      { id: 806, time: t(96), accountId, category: 'account', action: 'login_failed', resource: 'core', data: '{"email":"lena.wojcik@web.de"}' },
+      { id: 805, time: t(97), accountId, category: 'connection', action: 'join', resource: 'core', data: '{"name":"lenawj"}' },
+      { id: 702, time: t(1460), accountId, characterId: 17, category: 'money', action: 'add', amount: 2500, balanceBefore: 18730, balanceAfter: 21230, resource: 'jobs', reason: 'Gehalt Taxi' },
+    ];
+  },
+  responses: {
+    admin_refresh() { return { ok: true, data: { self: Mock.self, players: Mock.players, warningCount: Mock.warnings().length } }; },
+    admin_warnings() { return { ok: true, data: { warnings: Mock.warnings(), devices: Mock.devices.alerts.filter((a) => a.active).map((a) => ({ ...a, name: 'Lena Wójcik', serverId: 4 })) } }; },
+    admin_device_alert(data) {
+      Mock.devices.alerts = Mock.devices.alerts.map((a) => (a.id === data.alertId ? { ...a, active: !data.dismissed, dismissedAt: data.dismissed ? Date.now() : undefined } : a));
+      return { ok: true, data: { devices: Mock.devices } };
+    },
+    admin_accounts() {
+      const m = MOCK_MINUTE_MS;
+      return { ok: true, data: { page: 0, hasMore: true, accounts: [
+        { accountId: 1, characterId: 3, name: 'Fabian Nandes', rank: 'Chief Administrator', lastSeen: MOCK_NOW - 30 * m, serverId: 1, warning: false },
+        { accountId: 12, characterId: 17, name: 'Lena Wójcik', rank: 'Spieler', lastSeen: MOCK_NOW - 95 * m, serverId: 4, warning: true },
+        { accountId: 12, characterId: 22, name: 'Mira Brandt', rank: 'Spieler', lastSeen: MOCK_NOW - 400 * m, warning: true },
+        { accountId: 23, characterId: 30, name: 'Jonas Lehmkuhl', rank: 'Spieler', lastSeen: MOCK_NOW - 1310 * m, warning: true, jailed: true },
+        { accountId: 31, characterId: 35, name: 'Dennis Vogt', rank: 'Spieler', lastSeen: MOCK_NOW - 2900 * m, warning: true },
+        { accountId: 38, rank: 'Spieler', lastSeen: MOCK_NOW - 6100 * m, warning: false, banned: true },
+        { accountId: 44, characterId: 51, name: 'Mara Ilić', rank: 'Junior Administrator', lastSeen: MOCK_NOW - 9800 * m, warning: true },
+      ] } };
+    },
+    admin_duty() {
+      Mock.self = { ...Mock.self, duty: !Mock.self.duty };
+      Mock.players = Mock.players.map((p) => (p.accountId === 1 ? { ...p, duty: Mock.self.duty } : p));
+      return { ok: true, data: { self: Mock.self } };
+    },
+    admin_search(data) {
+      const q = data.query.toLowerCase();
+      const all = [
+        { accountId: 12, characterId: 17, characterName: 'Lena Wójcik', deleted: false, rank: 'Spieler', serverId: 4 },
+        { accountId: 12, characterId: 22, characterName: 'Mira Brandt', deleted: false, rank: 'Spieler' },
+        { accountId: 12, characterId: 21, characterName: 'Lena Brandt', deleted: true, rank: 'Spieler' },
+        { accountId: 23, characterId: 30, characterName: 'Jonas Lehmkuhl', deleted: false, rank: 'Spieler' },
+      ];
+      return { ok: true, data: { results: all.filter((r) => r.characterName.toLowerCase().includes(q) || String(r.accountId) === q || String(r.characterId) === q) } };
+    },
+    admin_profile(data) {
+      const accountId = data.accountId || ({ 17: 12, 21: 12, 22: 12, 30: 23 }[data.characterId]) || 12;
+      const online = Mock.players.find((p) => p.accountId === accountId) || null;
+      return { ok: true, data: {
+        focusCharacterId: data.characterId || (online && online.characterId) || 17,
+        account: { id: accountId, rank: online ? online.rank : 'Spieler', email: 'lena.wojcik@web.de', createdAt: MOCK_NOW - 9 * 86400000, lastLogin: MOCK_NOW - 95 * MOCK_MINUTE_MS },
+        online,
+        characters: [
+          { id: 17, rank: 'Spieler', firstname: 'Lena', lastname: 'Wójcik', dateOfBirth: '1997-08-21', gender: 'female', job: 'taxi', jobGrade: 1, cash: 1240, bank: 18730, createdAt: MOCK_NOW - 9 * 86400000, lastPlayed: MOCK_NOW - 95 * MOCK_MINUTE_MS },
+          { id: 21, rank: 'Spieler', firstname: 'Lena', lastname: 'Brandt', dateOfBirth: '2001-02-03', gender: 'female', job: 'unemployed', jobGrade: 0, cash: 500, bank: 2500, createdAt: MOCK_NOW - 8 * 86400000, deletedAt: MOCK_NOW - 7 * 86400000 },
+          { id: 22, rank: 'Spieler', firstname: 'Mira', lastname: 'Brandt', dateOfBirth: '2000-06-11', gender: 'female', job: 'unemployed', jobGrade: 0, cash: 820, bank: 4100, createdAt: MOCK_NOW - 6 * 86400000, lastPlayed: MOCK_NOW - 400 * MOCK_MINUTE_MS },
+        ],
+        identifiers: [
+          { type: 'discord', value: '412883205517836289', lastSeen: MOCK_NOW - 95 * MOCK_MINUTE_MS },
+          { type: 'license', value: '4c1e7a92b3d05f68e2a914d7c0b3f1a6e95d2c08', lastSeen: MOCK_NOW - 95 * MOCK_MINUTE_MS },
+        ],
+        counts: { money: 5, death: 2, admin: 1, character: 1, account: 2, connection: 1, security: 1, twink: 3 },
+        links: Mock.links,
+        punishments: Mock.refreshActive(),
+        devices: Mock.devices,
+        twinks: { total: 3, recent: Mock.logs(12).filter((e) => e.category === 'twink').map((e) => ({ action: e.action, amount: e.amount, time: e.time, data: e.data })) },
+        inventory: true,
+      } };
+    },
+    admin_inventory(data) {
+      const items = {
+        water: { label: 'Wasser', weight: 500 }, bread: { label: 'Brot', weight: 250 }, bandage: { label: 'Verband', weight: 100 },
+        lockpick: { label: 'Dietrich', weight: 50 }, phone: { label: 'Handy', weight: 200 }, backpack_4: { label: 'Rucksack Level 4', weight: 1200 },
+        jacket_bomber: { label: 'Bomberjacke', weight: 900 }, shoes_sneaker: { label: 'Sneaker', weight: 700 },
+      };
+      const layout = { equip: [{ id: 'jacket', label: 'Jacke' }, { id: 'shoes', label: 'Schuhe' }, { id: 'weapon', label: 'Waffe' }, { id: 'backpack', label: 'Rucksack' }] };
+      if (data.characterId === 22) return { ok: true, data: { characterId: 22, items, layout, state: { items: {}, weight: 0, maxWeight: 30000 } } };
+      return { ok: true, data: { characterId: data.characterId, items, layout, state: {
+        items: [
+          { slot: '1', name: 'water', count: 3 }, { slot: '2', name: 'bandage', count: 7 }, { slot: '5', name: 'phone', count: 1 }, { slot: '12', name: 'lockpick', count: 4 },
+          { slot: 'jacket', name: 'jacket_bomber', count: 1 }, { slot: 'shoes', name: 'shoes_sneaker', count: 1 },
+          { slot: 'backpack', name: 'backpack_4', count: 1, meta: { bagId: '3f9a', contentWeight: 2000 } },
+        ],
+        bag: [{ slot: '1', name: 'bread', count: 8 }],
+        weight: 3200, maxWeight: 30000, bagWeight: 2000, bagMaxWeight: 20000,
+      } } };
+    },
+    admin_punish(data) {
+      if (!Mock.self.duty) return { ok: false, error: 'duty_required' };
+      const p = Mock.punishments;
+      const by = { 1: 'Fabian Nandes' };
+      if (data.type === 'jail') {
+        if (p.jails.some((j) => j.active && j.characterId === data.characterId)) return { ok: false, error: 'already_jailed' };
+        p.jails.unshift({ id: Mock.nextJailId++, characterId: data.characterId, characterName: Mock.characterNames[data.characterId], reason: data.reason, minutes: data.minutes,
+          remaining: data.minutes * 60, active: true, createdAt: Date.now(), jailedBy: 1, jailedByName: by[1] });
+        Mock.players = Mock.players.map((pl) => (pl.characterId === data.characterId ? { ...pl, jailed: true } : pl));
+      } else if (data.type === 'unjail') {
+        p.jails = p.jails.map((j) => (j.active && j.characterId === data.characterId ? { ...j, active: false, releasedAt: Date.now(), releasedBy: 1, releasedByName: by[1], releaseReason: data.reason } : j));
+        Mock.players = Mock.players.map((pl) => (pl.characterId === data.characterId ? { ...pl, jailed: false } : pl));
+      } else if (data.type === 'ban') {
+        const days = { '1d': 1, '3d': 3, '7d': 7, '30d': 30 }[data.duration];
+        const charId = data.scope === 'login' ? undefined : data.characterId;
+        p.bans.unshift({ id: Mock.nextBanId++, characterId: charId, characterName: charId ? Mock.characterNames[charId] : undefined,
+          reason: data.reason, createdAt: Date.now(), expiresAt: data.duration === 'perm' ? undefined : Date.now() + (days || 1) * 86400000,
+          active: true, bannedBy: 1, bannedByName: by[1] });
+      } else if (data.type === 'warn') {
+        p.warns.unshift({ id: Mock.nextBanId++, characterId: data.characterId, characterName: Mock.characterNames[data.characterId], reason: data.reason,
+          createdAt: Date.now(), seenAt: Date.now(), active: true, warnedBy: 1, warnedByName: by[1] });
+      } else if (data.type === 'unwarn') {
+        p.warns = p.warns.map((w) => (w.id === data.warnId ? { ...w, active: false, revokedAt: Date.now(), revokedBy: 1, revokedByName: by[1], revokeReason: data.reason } : w));
+      } else if (data.type === 'kick') {
+        return { ok: true, data: { punishments: Mock.refreshActive() } };
+      } else if (data.type === 'unban') {
+        p.bans = p.bans.map((b) => (b.id === data.banId ? { ...b, active: false, liftedAt: Date.now(), liftedBy: 1, liftedByName: by[1], liftReason: data.reason } : b));
+      }
+      return { ok: true, data: { punishments: Mock.refreshActive() } };
+    },
+    admin_logs(data) {
+      const entries = Mock.logs(data.accountId).filter((e) => data.category === 'all' || e.category === data.category);
+      const names = { accounts: { 1: 'Fabian Nandes', 9: 'Kemal Arslan', 12: 'Lena Wójcik', 23: 'Jonas Lehmkuhl' }, characters: { 14: 'Kemal Arslan', 17: 'Lena Wójcik', 30: 'Jonas Lehmkuhl' } };
+      // Im Archiv: dieselben Beispiele, 4 Monate aelter
+      const shown = data.archive ? entries.slice(0, 3).map((e) => ({ ...e, id: e.id + 9000, time: e.time - 120 * 86400000 })) : entries;
+      return { ok: true, data: { entries: shown, page: 0, hasMore: false, archive: data.archive === true, archiveDays: 90, names } };
+    },
+    admin_link(data) {
+      Mock.links = Mock.links.map((l) => (l.otherAccountId === data.otherAccountId
+        ? { ...l, active: !data.dismissed, dismissedBy: data.dismissed ? 1 : undefined, dismissedByName: data.dismissed ? 'Fabian Nandes' : undefined, dismissedAt: data.dismissed ? Date.now() : undefined }
+        : l));
+      return { ok: true, data: { links: Mock.links } };
+    },
+    admin_action(data) {
+      if (!Mock.self.duty) return { ok: false, error: 'duty_required' };
+      if (data.action !== 'revive' && data.serverId === 1) return { ok: false, error: 'self' };
+      return { ok: true };
+    },
+  },
+  async handle(event, data) {
+    await new Promise((r) => setTimeout(r, this.delay));
+    const fn = this.responses[event];
+    console.info(`[mock] ${event}`, data);
+    return fn ? fn(data) : { ok: true };
+  },
+  push(event, data) {
+    Bridge.emit(event, data);
+  },
+};
+</script>
+
+<script id="app">
+const TEXT = {
+  title: 'Admin-Menü',
+  archiveOpen: 'Ältere Einträge im Archiv ansehen',
+  archiveTitle: (days) => `Archiv: Einträge älter als ${days} Tage`,
+  archiveTitleShort: 'Archiv',
+  archiveBack: 'Zurück zu den aktuellen Einträgen',
+  archiveEmpty: 'Im Archiv steht zu dieser Person nichts.',
+  inventory: {
+    pick: 'Wähle oben einen Charakter, um sein Inventar zu sehen.',
+    error: 'Das Inventar konnte nicht geladen werden. Läuft core_inventory?',
+    weight: (now, max) => `Taschen: ${now} von ${max}`,
+    worn: 'Angezogen und in der Hand', nothingWorn: 'Nichts angezogen.',
+    pockets: 'Taschen', bag: (now, max) => `Rucksack: ${now} von ${max}`, empty: 'Leer.',
+    slot: 'Platz', item: 'Item', count: 'Anzahl', weightCol: 'Gewicht',
+  },
+  commandsButton: 'Befehle',
+  commandsTitle: 'Alle Befehle',
+  commandsFilter: 'Befehl oder Stichwort suchen',
+  commandsEmpty: 'Kein Befehl passt zu deiner Suche.',
+  commandsRank: (level) => `ab Stufe ${level}`,
+  commandsEveryone: 'alle',
+  ticketsButton: 'Tickets',
+  dutyStart: 'Admin-Dienst starten',
+  dutyStop: 'Admin-Dienst beenden',
+  dutyActive: 'Im Dienst',
+  refresh: 'Aktualisieren',
+  close: 'Schließen',
+  searchPlaceholder: 'Permanente ID, Login oder Name',
+  searchButton: 'Suchen',
+  online: (n) => `Online (${n})`,
+  modeOnline: 'Online',
+  modeWarnings: 'Warnungen',
+  modeAll: 'Alle',
+  allTitle: 'Alle Charaktere, zuletzt gespielt zuerst',
+  allLoading: 'Lädt…',
+  noAccounts: 'Noch niemand registriert.',
+  accountNoCharacter: (id) => `Login ${id} (kein Charakter)`,
+  accountMeta: (a, lastSeen) => [a.characterId ? `ID ${a.characterId}` : null, `Login ${a.accountId}`,
+    a.serverId ? `online, Server ${a.serverId}` : `zuletzt ${lastSeen}`, a.rank].filter(Boolean).join(' · '),
+  neverLoggedIn: 'nie eingeloggt',
+  moreAccounts: 'Weitere laden',
+  warningsTitle: 'Offene Warnungen',
+  warningsLoading: 'Lädt…',
+  noWarnings: 'Keine offenen Warnungen. Ausgeblendete Multi-Account-Warnungen findest du in der Akte unter Übersicht.',
+  warningPair: (a, b) => `${a} und ${b}`,
+  sideState: (side) => `Login ${side.accountId} ${side.serverId ? 'online' : 'offline'}`,
+  openProfile: 'Akte öffnen',
+  results: (n) => `Suchergebnisse (${n})`,
+  backToOnline: 'Zurück zu online',
+  searching: 'Sucht…',
+  noResults: 'Nichts gefunden. Probier die permanente ID, die Login-Nummer oder einen Teil des Namens.',
+  noPlayers: 'Gerade ist niemand online.',
+  notLoggedIn: 'Nicht eingeloggt',
+  noCharacter: 'Kein Charakter',
+  deletedCharacter: 'gelöscht',
+  playerMeta: (p) => [p.characterId ? `ID ${p.characterId}` : null, p.accountId ? `Login ${p.accountId}` : null, `Server ${p.serverId}`, p.rank].filter(Boolean).join(' · '),
+  resultMeta: (r) => [r.characterId ? `ID ${r.characterId}` : null, `Login ${r.accountId}`, r.serverId ? `Server ${r.serverId}` : 'offline', r.rank].filter(Boolean).join(' · '),
+  placeholder: 'Wähle links einen Spieler aus oder such nach der permanenten ID, der Login-Nummer oder einem Namen.',
+  loadingProfile: 'Lädt…',
+  accountTitle: (id) => `Login ${id}`,
+  metaId: (id) => `Permanente ID ${id}`,
+  metaLogin: (id) => `Login ${id}`,
+  metaPlayingOther: (name) => `Online als ${name}`,
+  metaServer: (id) => `Server-ID ${id}`,
+  metaOnline: 'Online',
+  metaOffline: 'Offline',
+  actions: { revive: 'Wiederbeleben', goto: 'Zu Spieler', bring: 'Holen' },
+  actionsDone: { revive: 'Spieler wiederbelebt.', goto: 'Teleportiert.', bring: 'Spieler geholt.' },
+  hintDuty: 'Aktionen nur im Admin-Dienst',
+  hintOffline: 'Offline: nur Strafen möglich',
+  hintNoCharacter: 'Spieler spielt keinen Charakter',
+  hintOtherCharacter: 'Spielt gerade einen anderen Charakter',
+  dutyOn: 'Admin-Dienst gestartet.',
+  dutyOff: 'Admin-Dienst beendet.',
+  punish: {
+    open: { jail: 'A-Jail', ban: 'Bannen', warn: 'Verwarnen', kick: 'Kicken' },
+    titles: { jail: 'Ins A-Jail stecken', unjail: 'Aus dem A-Jail entlassen', ban: 'Bannen', unban: 'Ban aufheben',
+      warn: 'Verwarnen', unwarn: 'Verwarnung zurücknehmen', kick: 'Vom Server kicken' },
+    submit: { jail: 'Ins A-Jail', unjail: 'Entlassen', ban: 'Bannen', unban: 'Entbannen', warn: 'Verwarnen', unwarn: 'Zurücknehmen', kick: 'Kicken' },
+    busy: 'Wird gespeichert…',
+    cancel: 'Abbrechen',
+    done: { jail: 'Ins A-Jail gesteckt.', unjail: 'Aus dem A-Jail entlassen.', ban: 'Ganzer Login gebannt.', charBan: 'Charakter gebannt.', unban: 'Ban aufgehoben.',
+      warn: 'Verwarnt.', unwarn: 'Verwarnung zurückgenommen.', kick: 'Gekickt.' },
+    warnSub: (who, active, banAt, banDays) => `Verwarnung für ${who}, das wäre ${active + 1} von ${banAt}. Bei ${banAt} gibt es automatisch ${banDays} Tage Charakter-Ban. Die Person sieht es sofort oder beim nächsten Spielen.`,
+    unwarnSub: (warn) => `Warn-ID ${warn.id}: „${warn.reason}“`,
+    kickSub: (who) => `${who} wird sofort vom Server getrennt und kann direkt wieder joinen.`,
+    activeWarns: (who, n, banAt, days) => `${who}: ${n} von ${banAt} Verwarnungen bis zum automatischen Ban${days > 0 ? `, zählen ${days} Tage` : ''}`,
+    warnBanned: 'Führte zu Ban',
+    warnMinutes: 'A-Jail dazu',
+    warnMinutesPlaceholder: 'Keins',
+    warnsTitle: 'Verwarnungen',
+    noWarns: 'Noch nie verwarnt.',
+    unwarn: 'Zurücknehmen',
+    warnSeen: 'Gesehen',
+    warnUnseen: 'Noch nicht gesehen',
+    warnExpired: 'Abgelaufen',
+    warnRevoked: 'Zurückgenommen',
+    jailSub: (who) => `Gilt nur für ${who}. Die Zeit läuft nur, solange dieser Charakter gespielt wird. Offline geht es beim nächsten Spielen los.`,
+    banSub: 'Ein Charakter-Ban sperrt nur diese permanente ID. Ein Login-Ban sperrt alle Charaktere und auch weitere Logins auf derselben Rockstar-Lizenz.',
+    unjailSub: (jail) => `${jail.characterName || `ID ${jail.characterId}`} sitzt wegen „${jail.reason}“, noch ${formatMinutes(jail.remaining)}.`,
+    unbanSub: (ban) => `Ban-ID ${ban.id}: „${ban.reason}“`,
+    scope: 'Sperre für',
+    scopeCharacter: (who) => `Nur ${who}`,
+    scopeLogin: 'Ganzer Login, alle Charaktere',
+    duration: 'Dauer',
+    durationPlaceholder: 'z. B. 12h',
+    minutesPlaceholder: 'Andere',
+    durationPresets: [['1d', '1 Tag'], ['3d', '3 Tage'], ['7d', '7 Tage'], ['30d', '30 Tage'], ['perm', 'Permanent']],
+    minutes: 'Minuten',
+    minutesPresets: [10, 30, 60, 120],
+    minutesPreset: (n) => `${n} Min.`,
+    reason: 'Grund',
+    reasonPlaceholder: 'Was ist passiert?',
+    reasonOptional: 'Grund (optional)',
+    errors: {
+      reason: (min, max) => `Gib einen Grund mit ${min} bis ${max} Zeichen an.`,
+      minutes: (max) => `Gib die Minuten als ganze Zahl von 1 bis ${max} an.`,
+      duration: (max) => `Dauer wie 30m, 12h, 7d, 2w oder perm. Höchstens ${max} Tage.`,
+    },
+    statusTitle: 'Aktive Strafen',
+    activeBan: (ban) => `Ganzer Login gebannt ${ban.expiresAt ? `bis ${formatTime(ban.expiresAt)}` : 'permanent'}`,
+    activeCharBan: (ban) => `${TEXT.who(ban.characterName, ban.characterId)} gebannt ${ban.expiresAt ? `bis ${formatTime(ban.expiresAt)}` : 'permanent'}`,
+    activeJail: (jail) => `${TEXT.who(jail.characterName, jail.characterId)} im A-Jail, noch ${formatMinutes(jail.remaining)}`,
+    meta: (reason, by) => `Grund: ${reason}${by ? ` · von ${by}` : ''}`,
+    unban: 'Entbannen',
+    unjail: 'Entlassen',
+    bansTitle: 'Bans',
+    jailsTitle: 'A-Jail',
+    noBans: 'Noch nie gebannt.',
+    noJails: 'Noch nie im A-Jail.',
+    wholeAccount: 'Ganzer Login',
+    character: (name, id) => (name ? `${name} (ID ${id})` : `ID ${id}`),
+    permanent: 'Permanent',
+    until: (time) => `bis ${time}`,
+    statusActive: 'Aktiv',
+    statusExpired: 'Abgelaufen',
+    statusLifted: 'Aufgehoben',
+    liftedBy: (who, time, reason) => `von ${who} am ${time}${reason ? ` · ${reason}` : ''}`,
+    jailRunning: 'Sitzt gerade',
+    jailWaiting: 'Wartet, offline',
+    jailServed: 'Abgesessen',
+    jailReleased: 'Entlassen',
+    minutesValue: (n) => `${n} Min.`,
+    columns: { time: 'Zeit', target: 'Betrifft', character: 'Charakter', duration: 'Dauer', reason: 'Grund', by: 'Von', state: 'Status', left: 'Rest', action: '' },
+  },
+  jailBadge: 'A-Jail',
+  frozenBadge: 'Eingefroren',
+  dimensionBadge: (dimension) => `Dim ${dimension}`,
+  bannedBadge: 'Gebannt',
+  charBanned: (time) => `Gesperrt ${time}`,
+  tabs: {
+    overview: 'Übersicht', characters: 'Charaktere', punishments: 'Strafen', inventory: 'Inventar', item: 'Items', twink: 'Twinks', money: 'Geld', death: 'Tode',
+    connection: 'Verbindungen', account: 'Account', admin: 'Admin', security: 'Sicherheit', all: 'Alles',
+  },
+  facts: {
+    id: 'Permanente ID', login: 'Login-Nummer', rank: 'Teamrang dieses Charakters', status: 'Status', created: 'Login registriert',
+    lastLogin: 'Letzter Login', email: 'E-Mail', identifiers: 'Verknüpfte Identifier', characters: 'Charaktere',
+    devices: 'Bekannte PCs', ip: 'IP-Adresse',
+  },
+  statusOnline: (p) => `Online, Server-ID ${p.serverId}${p.characterName ? ` als ${p.characterName} (ID ${p.characterId})` : ''}`,
+  statusOffline: 'Offline',
+  identifierHidden: 'Wert nur mit Recht für Personendaten',
+  charactersCount: (active, deleted) => `${active} aktiv${deleted ? `, ${deleted} gelöscht` : ''}`,
+  columns: {
+    time: 'Zeit', action: 'Aktion', details: 'Details', amount: 'Betrag', balance: 'Kontostand',
+    id: 'ID', name: 'Name', rank: 'Rang', dob: 'Geburtsdatum', gender: 'Geschlecht', job: 'Job', cash: 'Bargeld', bank: 'Bank',
+    lastPlayed: 'Zuletzt gespielt', state: 'Status',
+  },
+  genders: { male: 'Männlich', female: 'Weiblich' },
+  jobs: { unemployed: 'Arbeitslos' },
+  charActive: 'Aktiv',
+  charJailed: 'Im A-Jail',
+  openCharacter: 'Akte öffnen',
+  focusCharacter: 'Angezeigt',
+  asCharacter: (who) => `Als ${who}`,
+  charPlaying: 'Spielt gerade',
+  charDeleted: (date) => `Gelöscht ${date}`,
+  never: 'Noch nie',
+  noLogs: 'Keine Einträge in diesem Bereich.',
+  noCharacters: 'Dieser Account hat noch keinen Charakter.',
+  loadMore: 'Ältere Einträge laden',
+  loadingMore: 'Lädt…',
+  logLoadError: 'Einträge konnten nicht geladen werden.',
+  byActor: (who) => `durch ${who}`,
+  onTarget: (who) => `an ${who}`,
+  withTarget: (who) => `mit ${who}`,
+  who: (name, id) => (name ? `${name} (ID ${id})` : `ID ${id}`),
+  whoLogin: (name, id) => (name ? `${name} (Login ${id})` : `Login ${id}`),
+  killedBy: (who) => `Getötet von ${who}`,
+  noKiller: 'Ohne Fremdeinwirkung',
+  victim: (who) => `Opfer: ${who}`,
+  killerOnDuty: 'Täter war im Admin-Dienst',
+  weapon: (name) => `Waffe: ${name}`,
+  unknownWeapon: (hash) => `Unbekannt (Hash ${hash})`,
+  moneyFrom: (who) => `Von ${who}`,
+  moneyTo: (who) => `An ${who}`,
+  moneyByAdmin: (who) => `Gebucht durch ${who}`,
+  multiTitle: 'Warnung: Mehrere Logins auf derselben Lizenz oder demselben PC',
+  multiRow: (who, types) => `Verknüpft mit ${who} (${types})`,
+  deviceTitle: 'Warnung: Anmeldung an einem neuen PC (Accountsharing?)',
+  deviceRow: (time) => `Neuer PC am ${time}`,
+  deviceIpKnown: 'Die IP war schon bekannt, vielleicht gleicher Haushalt.',
+  deviceIpNew: 'Auch die IP war neu.',
+  deviceIp: (ip) => `IP ${ip}`,
+  deviceDismiss: 'Warnung ausblenden',
+  deviceRestore: 'Wieder anzeigen',
+  deviceDismissedOk: 'Geräte-Warnung ausgeblendet.',
+  deviceRestoredOk: 'Geräte-Warnung wird wieder angezeigt.',
+  deviceListName: (name) => `Neuer PC: ${name}`,
+  deviceListMeta: (alert, time) => [`Login ${alert.accountId}`, alert.serverId ? 'online' : 'offline', time].join(' · '),
+  deviceBadge: 'Neuer PC',
+  multiBadge: 'Multi-Account',
+  twinkTitle: (n) => `Twink-Interaktionen (${n})`,
+  twinkMore: (n) => `${n} weitere im Reiter Twinks`,
+  twinkRelation: { same_login: 'gleicher Login', linked: 'verknüpfter Login' },
+  twinkBlocked: 'blockiert',
+  twinkLine: (label, from, to) => `${label}: ${from} an ${to}`,
+  twinkFromTo: (from, to) => `Von ${from} an ${to}`,
+  multiMeta: (first, times) => `Zuerst erkannt ${first}, ${times}× gesehen`,
+  multiDismiss: 'Warnung ausblenden',
+  multiRestore: 'Wieder anzeigen',
+  multiDismissed: (by, at) => `Ausgeblendet${by ? ` von ${by}` : ''} am ${at}`,
+  linksTitle: 'Verknüpfte Logins',
+  linkDismissedOk: 'Warnung ausgeblendet.',
+  linkRestoredOk: 'Warnung wird wieder angezeigt.',
+  warningBadge: 'Warnung',
+  identifierTypes: { license: 'Rockstar-Lizenz', license2: 'Rockstar-Lizenz 2', discord: 'Discord', fivem: 'Cfx.re-Konto', hardware: 'gleicher PC' },
+  actorDied: 'Hat jemanden getötet',
+  actionNames: {
+    'money.add': 'Geld erhalten', 'money.remove': 'Geld abgezogen',
+    'money.transfer_out': 'Überweisung gesendet', 'money.transfer_in': 'Überweisung erhalten',
+    'money.transfer_failed': 'Überweisung fehlgeschlagen',
+    'death.died': 'Gestorben', 'death.hospital': 'Im Krankenhaus aufgewacht', 'death.revive': 'Wiederbelebt',
+    'connection.join': 'Verbunden', 'connection.leave': 'Verbindung getrennt', 'connection.left_at_login': 'Beim Login getrennt',
+    'account.register': 'Registriert', 'account.login': 'Eingeloggt', 'account.login_failed': 'Login fehlgeschlagen', 'account.logout': 'Ausgeloggt',
+    'character.create': 'Charakter erstellt', 'character.select': 'Charakter gewählt',
+    'character.delete': 'Charakter gelöscht', 'character.namechange': 'Name geändert', 'character.unload': 'Charakter verlassen',
+    'admin.duty_on': 'Admin-Dienst gestartet', 'admin.duty_off': 'Admin-Dienst beendet',
+    'admin.command': 'Befehl benutzt', 'admin.set_rank': 'Rang geändert', 'admin.view_profile': 'Akte geöffnet',
+    'admin.teleport_to': 'Zu Spieler teleportiert', 'admin.bring': 'Spieler geholt', 'admin.teleport_coords': 'Zu Koordinaten teleportiert',
+    'admin.car_teleport': 'Mit Fahrzeug teleportiert', 'admin.dimension': 'Dimension gewechselt',
+    'admin.freeze': 'Eingefroren', 'admin.unfreeze': 'Aufgetaut', 'admin.heal': 'Geheilt', 'admin.armor': 'Weste bekommen',
+    'admin.give_weapon': 'Waffe vom Team bekommen', 'admin.remove_weapon': 'Admin-Waffe abgenommen',
+    'admin.fix_vehicles': 'Fahrzeuge repariert', 'admin.message': 'Teamnachricht bekommen',
+    'punishment.silent_kick': 'Still gekickt (sah wie Verbindungsabbruch aus)',
+    'security.identifier_conflict': 'Identifier gehört anderem Account', 'security.login_locked': 'Login gesperrt',
+    'security.callback_without_login': 'Anfrage ohne Login', 'security.command_denied': 'Befehl ohne Recht',
+    'security.admin_denied': 'Admin-Zugriff ohne Recht', 'test.logtest': 'Testeintrag',
+    'security.multi_account': 'Multi-Account erkannt', 'security.register_blocked': 'Zweite Registrierung blockiert',
+    'security.new_device': 'Anmeldung an neuem PC',
+    'admin.device_alert_dismissed': 'Geräte-Warnung ausgeblendet', 'admin.device_alert_restored': 'Geräte-Warnung wieder angezeigt',
+    'twink.money_transfer': 'Twink-Überweisung', 'twink.item_give': 'Item an Twink gegeben',
+    'item.start_items': 'Startitems bekommen', 'item.admin_give': 'Item vom Team bekommen', 'item.admin_remove': 'Item vom Team abgenommen',
+    'item.give': 'Item gegeben', 'item.drop': 'Item auf den Boden gelegt', 'item.pickup': 'Item aufgehoben', 'item.use': 'Item benutzt',
+    'item.drop_expired': 'Haufen am Boden verschwunden', 'item.load_ammo': 'Munition geladen', 'item.relocate_drop': 'Umgeräumt, Rest als Beutel abgelegt', 'item.relocate_lost': 'Umgeräumt, Rest ohne Position verloren', 'admin.view_inventory': 'Inventar angesehen',
+    'admin.multi_account_dismissed': 'Multi-Account-Warnung ausgeblendet',
+    'admin.multi_account_restored': 'Multi-Account-Warnung wieder angezeigt',
+    'admin.noclip_on': 'Noclip an', 'admin.noclip_off': 'Noclip aus',
+    'admin.vehicle_spawn': 'Fahrzeug gespawnt', 'admin.vehicle_delete': 'Fahrzeug gelöscht',
+    'admin.vehicle_boost': 'Fahrzeug geboostet', 'admin.vehicle_boost_off': 'Boost ausgeschaltet',
+    'punishment.ban': 'Login gebannt', 'punishment.character_ban': 'Charakter gebannt', 'punishment.unban': 'Ban aufgehoben',
+    'punishment.jail': 'Ins A-Jail gesteckt', 'punishment.unjail': 'Aus dem A-Jail entlassen',
+    'punishment.jail_done': 'A-Jail abgesessen', 'punishment.jail_escape': 'Fluchtversuch aus dem A-Jail',
+    'punishment.warn': 'Verwarnt', 'punishment.unwarn': 'Verwarnung zurückgenommen', 'punishment.kick': 'Gekickt',
+    'security.rate_limited': 'Zu viele Anfragen (Spam-Schutz)',
+    'security.ban_blocked': 'Gebannt, Verbindung abgelehnt', 'security.login_banned': 'Login trotz Ban versucht',
+    'security.banned_character_select': 'Gesperrten Charakter gewählt',
+  },
+  dataLabels: {
+    account: 'Konto', name: 'Name', killerServerId: 'Killer Server-ID', killerCharacterId: 'Killer Charakter',
+    weapon: 'Waffe (Hash)', position: 'Position', minutes: 'Dauer (Min.)', from: 'Von', to: 'Zu',
+    command: 'Befehl', args: 'Argumente', permission: 'Recht', email: 'E-Mail', transferId: 'Überweisung',
+    toCharacterId: 'An Charakter', fromCharacterId: 'Von Charakter', firstSpawn: 'Erster Spawn', dead: 'War bewusstlos',
+    wasDead: 'War bewusstlos', callback: 'Anfrage', loggedIn: 'Eingeloggt', reason: 'Grund', type: 'Typ',
+    seconds: 'Sekunden', rank: 'Rang', dateOfBirth: 'Geburtsdatum', gender: 'Geschlecht',
+    startCash: 'Startbargeld', startBank: 'Startbank', console: 'Konsole', refunded: 'Zurückgebucht', error: 'Fehler',
+    banId: 'Ban-ID', jailId: 'Jail-ID', characterName: 'Charakter', duration: 'Dauer', until: 'Bis', permanent: 'Permanent',
+    remaining: 'Rest (Sek.)', attempts: 'Versuche', escapes: 'Fluchtversuche', online: 'War online', banReason: 'Ban-Grund',
+    jailed: 'Im A-Jail',
+    model: 'Modell', plate: 'Kennzeichen', percent: 'Boost (%)',
+    item: 'Item', itemLabel: 'Item', items: 'Items',
+    mode: 'Ziel', radius: 'Umkreis (m)', armor: 'Weste', ammo: 'Munition', weapons: 'Waffen', count: 'Anzahl',
+    text: 'Nachricht', shown: 'Angezeigter Text', random: 'Zufälliger Spieler',
+    alertId: 'Warnung', ipKnown: 'IP schon bekannt', interaction: 'Art', blocked: 'Blockiert',
+    warnId: 'Warn-ID', activeWarns: 'Aktive Verwarnungen', warnReason: 'Verwarnung', limit: 'Grenze pro Sekunde',
+  },
+  accounts: { cash: 'Bargeld', bank: 'Bank' },
+  yes: 'ja',
+  no: 'nein',
+  errors: {
+    no_permission: 'Dafür hast du keine Rechte.',
+    duty_required: 'Das geht nur im Admin-Dienst.',
+    target_offline: 'Der Spieler ist nicht mehr online oder spielt keinen Charakter.',
+    self: 'Das geht nicht mit dir selbst.',
+    no_position: 'Die Position konnte nicht gelesen werden.',
+    not_found: 'Diesen Login oder Charakter gibt es nicht.',
+    invalid_query: 'Gib eine ID oder einen Namen mit höchstens 50 Zeichen ein.',
+    no_character: 'Der Admin-Dienst geht nur mit einem Charakter.',
+    db_error: 'Datenbankfehler. Versuch es noch einmal.',
+    server_error: 'Serverfehler. Versuch es noch einmal.',
+    timeout: 'Der Server antwortet nicht.',
+    bridge_error: 'Die Verbindung zum Spiel ist unterbrochen.',
+    client_error: 'Im Spiel ist ein Fehler passiert.',
+    target_jailed: 'Die Person sitzt im A-Jail und kann nicht geholt werden.',
+    jailed: 'Im A-Jail geht das nicht.',
+    invalid_reason: 'Der Grund ist zu kurz oder zu lang.',
+    invalid_duration: 'Ungültige Dauer. Beispiele: 30m, 12h, 7d, 2w oder perm.',
+    invalid_minutes: 'Ungültige Minutenzahl.',
+    already_banned: 'Dafür gibt es schon einen aktiven Ban.',
+    not_banned: 'Dieser Ban ist nicht mehr aktiv.',
+    already_jailed: 'Dieser Charakter sitzt schon im A-Jail. Erst entlassen, dann neu vergeben.',
+    warn_not_found: 'Diese Verwarnung gibt es nicht mehr oder sie wurde schon zurückgenommen.',
+    rate_limited: 'Zu viele Anfragen. Warte kurz.',
+    not_jailed: 'Dieser Charakter sitzt nicht mehr im A-Jail.',
+    account_not_found: 'Diesen Login gibt es nicht.',
+    character_not_found: 'Dieser Charakter gehört nicht zu dieser Akte.',
+    target_too_high: 'Diese Person hat denselben oder einen höheren Rang als du.',
+    not_ready: 'Die Strafen-Tabellen fehlen. Siehe Serverkonsole.',
+    default: 'Etwas ist schiefgelaufen.',
+  },
+};
+
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal', 'info'];
+const TAB_KEYS = ['overview', 'characters', 'punishments', 'inventory', 'twink', 'money', 'item', 'death', 'connection', 'account', 'admin', 'security', 'all'];
+const LOG_TABS = new Set(['twink', 'money', 'item', 'death', 'connection', 'account', 'admin', 'security', 'all']);
+// Inventar nur, wenn core_inventory laeuft
+const visibleTabs = () => TAB_KEYS.filter((key) => key !== 'inventory' || (state.profile && state.profile.inventory));
+const MINUS_ACTIONS = new Set(['money.remove', 'money.transfer_out']);
+const PLUS_ACTIONS = new Set(['money.add', 'money.transfer_in']);
+const SKELETON_ROWS = 6;
+const DEFAULT_CURRENCY = 'USD';
+const POSITION_DECIMALS = 1;
+const SECONDS_PER_MINUTE = 60;
+const REASON_REQUIRED = new Set(['jail', 'ban', 'warn', 'kick']);
+const DURATION_PATTERN = /^(perm|permanent|\d+[mhdw])$/i;
+const DURATION_UNITS = { m: 1 / 1440, h: 1 / 24, d: 1, w: 7 };
+const DEFAULT_LIMITS = { jailMaxMinutes: 1440, banMaxDays: 365, reasonMin: 3, reasonMax: 200 };
+
+const state = {
+  open: false,
+  serverName: '',
+  self: null,
+  players: [],
+  results: null,        // null = Online-Liste oder Warnungen, Array = Suchergebnisse
+  mode: 'online',       // 'online' | 'all' | 'warnings'
+  accounts: null,       // { list, page, hasMore, loading }
+  warnings: null,       // null = noch nicht geladen
+  deviceAlerts: [],     // offene Geraete-Warnungen fuer die Liste
+  warningCount: 0,
+  warningsLoading: false,
+  searching: false,
+  selectedAccountId: null,
+  selectedCharacterId: null, // permanente ID, die in der Akte im Mittelpunkt steht
+  profile: null,
+  profileLoading: false,
+  tab: 'overview',
+  logs: null,           // { category, entries, page, hasMore, loading, error }
+  busy: null,           // null | 'duty' | 'refresh' | 'revive' | 'goto' | 'bring' | 'punish'
+  message: null,        // { tone, text }
+  punish: null,         // { type, banId?, scope: 'account' | characterId, duration, error }
+  view: 'profile',      // 'profile' | 'commands'
+  commands: [],
+  ticketsOpen: null,    // null = kein Recht auf Tickets
+};
+
+const $ = (id) => document.getElementById(id);
+const el = {
+  screen: $('screen'), title: $('title'), serverName: $('server-name'), ownRank: $('own-rank'),
+  dutyChip: $('duty-chip'), dutyChipLabel: $('duty-chip-label'), dutyBtn: $('duty-btn'),
+  refreshBtn: $('refresh-btn'), closeBtn: $('close-btn'),
+  ticketsBtn: $('tickets-btn'), ticketsLabel: $('tickets-label'), ticketsCount: $('tickets-count'), commandsBtn: $('commands-btn'),
+  commands: $('commands'), commandsTitle: $('commands-title'), commandsFilter: $('commands-filter'),
+  commandsBody: $('commands-body'), commandsEmpty: $('commands-empty'),
+  searchForm: $('search-form'), search: $('search'), searchBtn: $('search-btn'),
+  listTitle: $('list-title'), clearSearch: $('clear-search'), players: $('players'), listEmpty: $('list-empty'),
+  modeOnline: $('mode-online'), modeWarnings: $('mode-warnings'), modeAll: $('mode-all'), modeAllLabel: $('mode-all-label'),
+  modeOnlineLabel: $('mode-online-label'), modeWarningsLabel: $('mode-warnings-label'),
+  modeOnlineCount: $('mode-online-count'), modeWarningsCount: $('mode-warnings-count'),
+  placeholder: $('placeholder'), profile: $('profile'), profileTitle: $('profile-title'), profileMeta: $('profile-meta'),
+  actionsHint: $('actions-hint'), actRevive: $('act-revive'), actGoto: $('act-goto'), actBring: $('act-bring'),
+  message: $('message'), tabs: $('tabs'), content: $('content'),
+  warning: $('warning'), warningTitle: $('warning-title'), warningRows: $('warning-rows'),
+  actJail: $('act-jail'), actBan: $('act-ban'), actWarn: $('act-warn'), actKick: $('act-kick'),
+  punish: $('punish'), punishTitle: $('punish-title'), punishSub: $('punish-sub'),
+  punishScopeRow: $('punish-scope-row'), punishScopeLabel: $('punish-scope-label'), punishScope: $('punish-scope'),
+  punishDurationRow: $('punish-duration-row'), punishDurationLabel: $('punish-duration-label'),
+  punishDurationPresets: $('punish-duration-presets'), punishDuration: $('punish-duration'),
+  punishMinutesRow: $('punish-minutes-row'), punishMinutesLabel: $('punish-minutes-label'),
+  punishMinutesPresets: $('punish-minutes-presets'), punishMinutes: $('punish-minutes'),
+  punishReasonLabel: $('punish-reason-label'), punishReason: $('punish-reason'),
+  punishError: $('punish-error'), punishSubmit: $('punish-submit'), punishCancel: $('punish-cancel'),
+  deviceWarning: $('device-warning'), deviceWarningTitle: $('device-warning-title'), deviceWarningRows: $('device-warning-rows'),
+  twinks: $('twinks'), twinksTitle: $('twinks-title'), twinksRows: $('twinks-rows'),
+  punishStatus: $('punish-status'), punishStatusTitle: $('punish-status-title'), punishStatusRows: $('punish-status-rows'),
+};
+
+/* ---------- Hilfen ---------- */
+
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  COLOR_KEYS.forEach((key) => {
+    const value = colors[key];
+    if (typeof value === 'string' && COLOR_PATTERN.test(value.trim())) {
+      document.documentElement.style.setProperty(`--rgb-${key}`, value.trim());
+    }
+  });
+}
+
+function errorText(code) {
+  return TEXT.errors[code] || TEXT.errors.default;
+}
+
+function can(permission) {
+  return Boolean(state.self && state.self.permissions.includes(permission));
+}
+
+const dateFormat = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
+const dateTimeFormat = new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'medium' });
+const numberFormat = new Intl.NumberFormat('de-DE', { maximumFractionDigits: POSITION_DECIMALS });
+let moneyFormat = createMoneyFormat(DEFAULT_CURRENCY);
+
+function createMoneyFormat(currency) {
+  try {
+    return new Intl.NumberFormat('de-DE', { style: 'currency', currency, maximumFractionDigits: 0 });
+  } catch (err) {
+    return new Intl.NumberFormat('de-DE', { style: 'currency', currency: DEFAULT_CURRENCY, maximumFractionDigits: 0 });
+  }
+}
+
+function formatTime(ms) {
+  return Number.isFinite(ms) ? dateTimeFormat.format(new Date(ms)) : TEXT.never;
+}
+
+function formatDate(iso) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if (!match) return iso || '';
+  return dateFormat.format(new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))));
+}
+
+function formatMoney(value) {
+  return moneyFormat.format(Number(value) || 0);
+}
+
+function formatMinutes(seconds) {
+  const minutes = Math.max(0, Math.ceil((Number(seconds) || 0) / SECONDS_PER_MINUTE));
+  const hours = Math.floor(minutes / SECONDS_PER_MINUTE);
+  const rest = minutes % SECONDS_PER_MINUTE;
+  if (hours === 0) return `${minutes} Min.`;
+  return rest === 0 ? `${hours} Std.` : `${hours} Std. ${rest} Min.`;
+}
+
+function limits() {
+  return { ...DEFAULT_LIMITS, ...((state.self && state.self.limits) || {}) };
+}
+
+function punishments() {
+  return (state.profile && state.profile.punishments) || { bans: [], jails: [] };
+}
+
+function activeCharacterBans() {
+  return punishments().bans.filter((ban) => ban.active && ban.characterId);
+}
+
+function activeJails() {
+  return punishments().activeJails || [];
+}
+
+// Charakter, der in der Akte im Mittelpunkt steht
+function focusCharacter() {
+  if (!state.profile) return null;
+  return state.profile.characters.find((c) => c.id === state.selectedCharacterId) || null;
+}
+
+function characterName(c) {
+  return c ? `${c.firstname} ${c.lastname}` : '';
+}
+
+function parseData(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch (err) { return null; }
+}
+
+function formatValue(key, value) {
+  if (value === true) return TEXT.yes;
+  if (value === false) return TEXT.no;
+  if (key === 'account' && TEXT.accounts[value]) return TEXT.accounts[value];
+  if (key === 'position' && value && typeof value === 'object') {
+    return ['x', 'y', 'z'].map((axis) => numberFormat.format(Number(value[axis]) || 0)).join(', ');
+  }
+  if (Array.isArray(value)) return value.join(' ');
+  if (value && typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+/* ---------- Seitenleiste ---------- */
+
+function renderTopbar() {
+  setText(el.serverName, state.serverName);
+  const self = state.self;
+  setText(el.ownRank, self ? self.rank.label : '');
+  const duty = Boolean(self && self.duty);
+  el.dutyChip.hidden = !duty;
+  el.dutyBtn.hidden = !can('admin.duty');
+  setText(el.dutyBtn, duty ? TEXT.dutyStop : TEXT.dutyStart);
+  el.dutyBtn.className = duty ? 'btn btn--danger' : 'btn btn--primary';
+  el.dutyBtn.disabled = state.busy !== null;
+  el.refreshBtn.disabled = state.busy !== null;
+  el.ticketsBtn.hidden = state.ticketsOpen === null;
+  el.ticketsCount.hidden = !(state.ticketsOpen > 0);
+  setText(el.ticketsCount, state.ticketsOpen > 0 ? String(state.ticketsOpen) : '');
+  el.commandsBtn.setAttribute('aria-pressed', String(state.view === 'commands'));
+}
+
+function playerButton({ key, accountId, characterId, name, meta, duty, warning, warningLabel, jailed, banned, frozen, dimension, disabled, title }) {
+  const li = make('li');
+  const button = make('button', 'player');
+  button.type = 'button';
+  button.dataset.action = 'select';
+  if (accountId) button.dataset.accountId = String(accountId);
+  if (characterId) button.dataset.characterId = String(characterId);
+  button.dataset.key = key;
+  button.disabled = disabled;
+  if (title) button.title = title;
+  const pressed = characterId
+    ? characterId === state.selectedCharacterId
+    : Boolean(accountId) && accountId === state.selectedAccountId && !state.selectedCharacterId;
+  button.setAttribute('aria-pressed', String(pressed));
+
+  const text = make('span', 'player__text');
+  text.append(make('span', 'player__name', name), make('span', 'player__meta', meta));
+  button.append(text);
+
+  if (duty || warning || jailed || banned || frozen || dimension) {
+    const badges = make('span', 'player__badges');
+    if (duty) {
+      const badge = make('span', 'player__duty');
+      badge.append(make('span', 'dot'), document.createTextNode(TEXT.dutyActive));
+      badges.append(badge);
+    }
+    if (banned) badges.append(make('span', 'player__warning', TEXT.bannedBadge));
+    if (jailed) badges.append(make('span', 'player__jail', TEXT.jailBadge));
+    if (frozen) badges.append(make('span', 'player__jail', TEXT.frozenBadge));
+    if (dimension) badges.append(make('span', 'player__dim', TEXT.dimensionBadge(dimension)));
+    if (warning) badges.append(make('span', 'player__warning', warningLabel || TEXT.warningBadge));
+    button.append(badges);
+  }
+  li.append(button);
+  return li;
+}
+
+function renderModes() {
+  const searchMode = Array.isArray(state.results);
+  el.modeOnline.setAttribute('aria-selected', String(!searchMode && state.mode === 'online'));
+  el.modeWarnings.setAttribute('aria-selected', String(!searchMode && state.mode === 'warnings'));
+  el.modeAll.setAttribute('aria-selected', String(!searchMode && state.mode === 'all'));
+  setText(el.modeAllLabel, TEXT.modeAll);
+  setText(el.modeOnlineLabel, TEXT.modeOnline);
+  setText(el.modeWarningsLabel, TEXT.modeWarnings);
+  setText(el.modeOnlineCount, String(state.players.length));
+  setText(el.modeWarningsCount, String(state.warningCount));
+  el.modeWarningsCount.dataset.alert = String(state.warningCount > 0);
+}
+
+function warningButton(warning, index) {
+  const a = TEXT.whoLogin(warning.a.name, warning.a.accountId);
+  const b = TEXT.whoLogin(warning.b.name, warning.b.accountId);
+  const types = warning.types.map((type) => TEXT.identifierTypes[type] || type).join(', ');
+  return playerButton({
+    key: `w${index}`,
+    accountId: warning.a.accountId,
+    name: TEXT.warningPair(warning.a.name || TEXT.accountTitle(warning.a.accountId), warning.b.name || TEXT.accountTitle(warning.b.accountId)),
+    meta: [TEXT.sideState(warning.a), TEXT.sideState(warning.b), types].join(' · '),
+    duty: false,
+    warning: true,
+    warningLabel: TEXT.multiBadge,
+    disabled: false,
+    title: `${a} / ${b}`,
+  });
+}
+
+function deviceButton(alert, index) {
+  return playerButton({
+    key: `d${index}`,
+    accountId: alert.accountId,
+    name: TEXT.deviceListName(alert.name || TEXT.accountTitle(alert.accountId)),
+    meta: TEXT.deviceListMeta(alert, formatTime(alert.createdAt)),
+    duty: false,
+    warning: true,
+    warningLabel: TEXT.deviceBadge,
+    disabled: false,
+  });
+}
+
+function renderList() {
+  renderModes();
+  const searchMode = Array.isArray(state.results);
+  el.clearSearch.hidden = !searchMode;
+
+  let items = [];
+  if (!searchMode && state.mode === 'all') {
+    const accounts = state.accounts || { list: [], hasMore: false, loading: true };
+    setText(el.listTitle, accounts.loading && accounts.list.length === 0 ? TEXT.allLoading : TEXT.allTitle);
+    items = accounts.list.map((a, i) => playerButton({
+      key: `a${i}`,
+      accountId: a.accountId,
+      characterId: a.characterId,
+      name: a.name || TEXT.accountNoCharacter(a.accountId),
+      meta: TEXT.accountMeta(a, a.lastSeen ? formatTime(a.lastSeen) : TEXT.neverLoggedIn),
+      duty: false,
+      warning: a.warning,
+      banned: a.banned,
+      jailed: a.jailed,
+      disabled: false,
+    }));
+    if (accounts.hasMore) {
+      const li = make('li', 'more');
+      const button = make('button', 'btn', accounts.loading ? TEXT.loadingMore : TEXT.moreAccounts);
+      button.type = 'button';
+      button.dataset.action = 'more-accounts';
+      button.disabled = accounts.loading;
+      li.append(button);
+      items.push(li);
+    }
+    setText(el.listEmpty, TEXT.noAccounts);
+    el.listEmpty.hidden = accounts.loading || accounts.list.length > 0;
+    el.players.replaceChildren(...items);
+    return;
+  }
+  if (!searchMode && state.mode === 'warnings') {
+    setText(el.listTitle, state.warningsLoading ? TEXT.warningsLoading : TEXT.warningsTitle);
+    const warnings = state.warnings || [];
+    items = state.deviceAlerts.map(deviceButton).concat(warnings.map(warningButton));
+    setText(el.listEmpty, TEXT.noWarnings);
+    el.listEmpty.hidden = state.warningsLoading || warnings.length + state.deviceAlerts.length > 0;
+    el.players.replaceChildren(...items);
+    return;
+  }
+  if (searchMode) {
+    setText(el.listTitle, state.searching ? TEXT.searching : TEXT.results(state.results.length));
+    items = state.results.map((r, i) => playerButton({
+      key: `r${i}`,
+      accountId: r.accountId,
+      characterId: r.characterId,
+      name: r.characterName ? `${r.characterName}${r.deleted ? ` (${TEXT.deletedCharacter})` : ''}` : TEXT.accountTitle(r.accountId),
+      meta: TEXT.resultMeta(r),
+      duty: false,
+      warning: false,
+      disabled: false,
+    }));
+    setText(el.listEmpty, TEXT.noResults);
+    el.listEmpty.hidden = state.searching || state.results.length > 0;
+  } else {
+    setText(el.listTitle, TEXT.online(state.players.length));
+    items = state.players.map((p) => playerButton({
+      key: `s${p.serverId}`,
+      accountId: p.accountId,
+      characterId: p.characterId,
+      name: p.loggedIn ? (p.characterName || TEXT.noCharacter) : `${p.playerName} (${TEXT.notLoggedIn})`,
+      meta: TEXT.playerMeta(p),
+      duty: p.duty,
+      warning: p.warning,
+      jailed: p.jailed,
+      frozen: p.frozen,
+      dimension: p.dimension,
+      disabled: !p.accountId,
+    }));
+    setText(el.listEmpty, TEXT.noPlayers);
+    el.listEmpty.hidden = state.players.length > 0;
+  }
+  el.players.replaceChildren(...items);
+}
+
+/* ---------- Akte: Kopf und Aktionen ---------- */
+
+function onlineOf(profile) {
+  if (!profile) return null;
+  return state.players.find((p) => p.accountId === profile.account.id) || profile.online || null;
+}
+
+function renderProfileHead() {
+  const profile = state.profile;
+  const online = onlineOf(profile);
+
+  if (state.profileLoading && !profile) {
+    setText(el.profileTitle, TEXT.loadingProfile);
+    el.profileMeta.replaceChildren();
+  } else if (profile) {
+    const focus = focusCharacter();
+    const playingFocus = Boolean(online && focus && online.characterId === focus.id);
+    setText(el.profileTitle, focus ? characterName(focus) : TEXT.accountTitle(profile.account.id));
+    const parts = [];
+    if (focus) parts.push(make('span', null, TEXT.metaId(focus.id)));
+    parts.push(make('span', null, TEXT.metaLogin(profile.account.id)));
+    if (online) parts.push(make('span', null, TEXT.metaServer(online.serverId)));
+    let status = TEXT.metaOffline;
+    if (online) status = playingFocus || !online.characterName ? TEXT.metaOnline : TEXT.metaPlayingOther(online.characterName);
+    parts.push(make('span', online ? 'status-online' : null, status));
+    parts.push(make('span', 'chip', profile.account.rank));
+    if (online && online.duty) {
+      const chip = make('span', 'chip chip--duty');
+      chip.append(make('span', 'dot'), document.createTextNode(TEXT.dutyActive));
+      parts.push(chip);
+    }
+    el.profileMeta.replaceChildren(...parts);
+  }
+
+  const dutyMissing = Boolean(state.self && state.self.dutyRequired && !state.self.duty);
+  // Wiederbeleben und Teleport nur, wenn genau der angezeigte Charakter gerade spielt
+  const shown = focusCharacter();
+  const hasCharacter = Boolean(online && online.characterId && (!shown || shown.id === online.characterId));
+  const playsOther = Boolean(online && online.characterId && shown && shown.id !== online.characterId);
+  const isSelf = Boolean(online && state.self && online.accountId === state.self.accountId);
+
+  const buttons = [
+    [el.actRevive, 'revive', 'player.revive', false],
+    [el.actGoto, 'goto', 'player.teleport', isSelf],
+    [el.actBring, 'bring', 'player.teleport', isSelf],
+  ];
+  buttons.forEach(([button, action, permission, blocked]) => {
+    button.hidden = !can(permission) || blocked;
+    setText(button, state.busy === action ? TEXT.loadingMore : TEXT.actions[action]);
+    button.disabled = state.busy !== null || !profile || !hasCharacter || dutyMissing;
+  });
+
+  // Strafen gehen auch offline. A-Jail immer fuer den Charakter im Mittelpunkt.
+  const punishLocked = state.busy !== null || !profile || dutyMissing || state.punish !== null;
+  const focus = focusCharacter();
+  const focusJailed = Boolean(focus && activeJails().some((j) => j.characterId === focus.id));
+  el.actJail.hidden = !can('player.ajail') || !focus || Boolean(focus.deletedAt) || focusJailed;
+  el.actBan.hidden = !can('player.ban');
+  el.actWarn.hidden = !can('player.warn') || !focus || Boolean(focus.deletedAt);
+  el.actKick.hidden = !can('player.kick') || !online;
+  setText(el.actJail, TEXT.punish.open.jail);
+  setText(el.actBan, TEXT.punish.open.ban);
+  setText(el.actWarn, TEXT.punish.open.warn);
+  setText(el.actKick, TEXT.punish.open.kick);
+  [el.actJail, el.actBan, el.actWarn, el.actKick].forEach((button) => { button.disabled = punishLocked; });
+
+  let hint = '';
+  if (profile && !online) hint = TEXT.hintOffline;
+  else if (profile && playsOther) hint = TEXT.hintOtherCharacter;
+  else if (profile && !hasCharacter) hint = TEXT.hintNoCharacter;
+  else if (dutyMissing) hint = TEXT.hintDuty;
+  const anyAction = buttons.some(([button]) => !button.hidden) || [el.actJail, el.actBan, el.actWarn, el.actKick].some((b) => !b.hidden);
+  el.actionsHint.hidden = !hint || !anyAction;
+  setText(el.actionsHint, hint);
+
+  if (state.message) {
+    el.message.dataset.tone = state.message.tone;
+    setText(el.message, state.message.text);
+  } else {
+    el.message.removeAttribute('data-tone');
+    el.message.replaceChildren();
+  }
+}
+
+/* ---------- Akte: Multi-Account-Warnung ---------- */
+
+function linkRow(link, withButton) {
+  const row = make('div', 'warning__row');
+  const text = make('div', 'warning__text');
+  const types = link.types.map((type) => TEXT.identifierTypes[type] || type).join(', ');
+  text.append(make('div', null, TEXT.multiRow(TEXT.whoLogin(link.otherName, link.otherAccountId), types)));
+  const meta = link.active
+    ? TEXT.multiMeta(formatTime(link.firstSeen), link.timesSeen)
+    : TEXT.multiDismissed(link.dismissedBy ? TEXT.whoLogin(link.dismissedByName, link.dismissedBy) : null, formatTime(link.dismissedAt));
+  text.append(make('div', 'warning__meta', meta));
+  row.append(text);
+
+  const buttons = make('div', 'actions');
+  const openButton = make('button', 'btn', TEXT.openProfile);
+  openButton.type = 'button';
+  openButton.dataset.action = 'select';
+  openButton.dataset.accountId = String(link.otherAccountId);
+  buttons.append(openButton);
+  row.append(buttons);
+
+  if (withButton && can('accounts.links')) {
+    const button = make('button', 'btn', link.active ? TEXT.multiDismiss : TEXT.multiRestore);
+    button.type = 'button';
+    button.dataset.action = 'link';
+    button.dataset.other = String(link.otherAccountId);
+    button.dataset.dismiss = String(link.active);
+    button.disabled = state.busy !== null;
+    buttons.append(button);
+  }
+  return row;
+}
+
+function renderWarning() {
+  const links = (state.profile && state.profile.links) || [];
+  const active = links.filter((link) => link.active);
+  el.warning.hidden = active.length === 0;
+  setText(el.warningTitle, TEXT.multiTitle);
+  el.warningRows.replaceChildren(...active.map((link) => linkRow(link, true)));
+}
+
+function deviceRow(alert) {
+  const row = make('div', 'warning__row');
+  const text = make('div', 'warning__text');
+  text.append(make('div', null, TEXT.deviceRow(formatTime(alert.createdAt))));
+  const meta = [alert.ipKnown ? TEXT.deviceIpKnown : TEXT.deviceIpNew];
+  if (alert.ip) meta.push(TEXT.deviceIp(alert.ip));
+  text.append(make('div', 'warning__meta', meta.join(' · ')));
+  row.append(text);
+  if (can('accounts.links')) {
+    const button = make('button', 'btn', alert.active ? TEXT.deviceDismiss : TEXT.deviceRestore);
+    button.type = 'button';
+    button.dataset.action = 'device-alert';
+    button.dataset.alertId = String(alert.id);
+    button.dataset.dismiss = String(alert.active);
+    button.disabled = state.busy !== null;
+    row.append(button);
+  }
+  return row;
+}
+
+function renderDeviceWarning() {
+  const devices = (state.profile && state.profile.devices) || { alerts: [] };
+  const active = devices.alerts.filter((alert) => alert.active);
+  el.deviceWarning.hidden = active.length === 0;
+  setText(el.deviceWarningTitle, TEXT.deviceTitle);
+  el.deviceWarningRows.replaceChildren(...active.map(deviceRow));
+}
+
+function twinkLine(entry) {
+  const data = parseData(entry.data) || {};
+  const label = TEXT.actionNames[`twink.${entry.action}`] || data.label || entry.action;
+  const parts = [TEXT.twinkLine(label, TEXT.who(data.fromName, data.fromCharacterId), TEXT.who(data.toName, data.toCharacterId))];
+  if (Number.isFinite(entry.amount)) parts.push(formatMoney(entry.amount));
+  if (data.relation) parts.push(TEXT.twinkRelation[data.relation] || data.relation);
+  if (data.blocked) parts.push(TEXT.twinkBlocked);
+  const row = make('div', 'warning__row');
+  const text = make('div', 'warning__text');
+  text.append(make('div', null, parts.join(' · ')), make('div', 'warning__meta', formatTime(entry.time)));
+  row.append(text);
+  return row;
+}
+
+function renderTwinks() {
+  const twinks = (state.profile && state.profile.twinks) || { total: 0, recent: [] };
+  el.twinks.hidden = twinks.total === 0;
+  setText(el.twinksTitle, TEXT.twinkTitle(twinks.total));
+  const rows = twinks.recent.map(twinkLine);
+  const more = twinks.total - twinks.recent.length;
+  if (more > 0) rows.push(make('div', 'warning__meta', TEXT.twinkMore(more)));
+  el.twinksRows.replaceChildren(...rows);
+}
+
+async function setDeviceAlert(alertId, dismissed) {
+  if (!state.profile || state.busy) return;
+  state.busy = 'device';
+  renderDeviceWarning();
+  const result = await Bridge.send('admin_device_alert', { accountId: state.profile.account.id, alertId, dismissed });
+  state.busy = null;
+  if (result && result.ok && result.data) {
+    state.profile.devices = result.data.devices;
+    state.message = { tone: 'success', text: dismissed ? TEXT.deviceDismissedOk : TEXT.deviceRestoredOk };
+    state.warningCount = Math.max(0, state.warningCount + (dismissed ? -1 : 1));
+    if (state.mode === 'warnings') loadWarnings();
+  } else {
+    state.message = { tone: 'error', text: errorText(result && result.error) };
+  }
+  render();
+}
+
+async function setLink(otherAccountId, dismissed) {
+  if (!state.profile || state.busy) return;
+  state.busy = 'link';
+  renderWarning();
+  const result = await Bridge.send('admin_link', { accountId: state.profile.account.id, otherAccountId, dismissed });
+  state.busy = null;
+  if (result && result.ok && result.data) {
+    state.profile.links = result.data.links || [];
+    state.message = { tone: 'success', text: dismissed ? TEXT.linkDismissedOk : TEXT.linkRestoredOk };
+    const online = state.players.find((p) => p.accountId === state.profile.account.id);
+    if (online) online.warning = state.profile.links.some((link) => link.active);
+    state.warningCount = Math.max(0, state.warningCount + (dismissed ? -1 : 1));
+    if (state.mode === 'warnings') loadWarnings();
+  } else {
+    state.message = { tone: 'error', text: errorText(result && result.error) };
+  }
+  render();
+}
+
+/* ---------- Akte: Strafen ---------- */
+
+function presetButton(action, value, label) {
+  const button = make('button', 'choice', label);
+  button.type = 'button';
+  button.dataset.action = action;
+  button.dataset.value = String(value);
+  return button;
+}
+
+// Einmal beim Start, die Werte stehen fest in TEXT
+function buildPresets() {
+  el.punishDurationPresets.replaceChildren(...TEXT.punish.durationPresets.map(([value, label]) => presetButton('punish-duration-preset', value, label)));
+  el.punishMinutesPresets.replaceChildren(...TEXT.punish.minutesPresets.map((n) => presetButton('punish-minutes-preset', n, TEXT.punish.minutesPreset(n))));
+}
+
+function buildScope() {
+  const focus = focusCharacter();
+  const buttons = [];
+  if (focus && !focus.deletedAt) buttons.push(presetButton('punish-scope', 'character', TEXT.punish.scopeCharacter(TEXT.who(characterName(focus), focus.id))));
+  buttons.push(presetButton('punish-scope', 'login', TEXT.punish.scopeLogin));
+  el.punishScope.replaceChildren(...buttons);
+}
+
+function renderPunishForm() {
+  const form = state.punish;
+  el.punish.hidden = !form;
+  if (!form) return;
+
+  const t = TEXT.punish;
+  const lim = limits();
+  setText(el.punishTitle, t.titles[form.type]);
+  let sub = '';
+  const focus = focusCharacter();
+  if (form.type === 'jail' && focus) sub = t.jailSub(TEXT.who(characterName(focus), focus.id));
+  if (form.type === 'ban') sub = t.banSub;
+  if (form.type === 'unjail') {
+    const jail = activeJails().find((j) => j.characterId === form.characterId);
+    if (jail) sub = t.unjailSub(jail);
+  }
+  if (form.type === 'unban') {
+    const ban = punishments().bans.find((b) => b.id === form.banId);
+    if (ban) sub = t.unbanSub(ban);
+  }
+  if (form.type === 'warn' && focus) {
+    const p = punishments();
+    sub = t.warnSub(TEXT.who(characterName(focus), focus.id), (p.activeWarns || {})[String(focus.id)] || 0, p.warnBanAt || 3, p.warnBanDays || 7);
+  }
+  if (form.type === 'unwarn') {
+    const warn = (punishments().warns || []).find((w) => w.id === form.warnId);
+    if (warn) sub = t.unwarnSub(warn);
+  }
+  if (form.type === 'kick') {
+    const online = onlineOf(state.profile);
+    if (online) sub = t.kickSub(online.characterName ? TEXT.who(online.characterName, online.characterId) : TEXT.accountTitle(state.profile.account.id));
+  }
+  setText(el.punishSub, sub);
+
+  el.punishScopeRow.hidden = form.type !== 'ban';
+  el.punishDurationRow.hidden = form.type !== 'ban';
+  el.punishMinutesRow.hidden = form.type !== 'jail' && form.type !== 'warn';
+  setText(el.punishScopeLabel, t.scope);
+  setText(el.punishDurationLabel, t.duration);
+  setText(el.punishMinutesLabel, form.type === 'warn' ? t.warnMinutes : t.minutes);
+  setText(el.punishReasonLabel, REASON_REQUIRED.has(form.type) ? t.reason : t.reasonOptional);
+  el.punishMinutes.max = String(lim.jailMaxMinutes);
+  el.punishReason.maxLength = lim.reasonMax;
+
+  el.punishScope.querySelectorAll('.choice').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.value === String(form.scope)));
+  });
+  const duration = el.punishDuration.value.trim().toLowerCase();
+  el.punishDurationPresets.querySelectorAll('.choice').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.value === duration));
+  });
+  const minutes = el.punishMinutes.value.trim();
+  el.punishMinutesPresets.querySelectorAll('.choice').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.value === minutes));
+  });
+
+  const busy = state.busy === 'punish';
+  setText(el.punishSubmit, busy ? t.busy : t.submit[form.type]);
+  setText(el.punishCancel, t.cancel);
+  el.punishSubmit.disabled = state.busy !== null;
+  el.punishCancel.disabled = busy;
+  [el.punishDuration, el.punishMinutes, el.punishReason].forEach((input) => { input.readOnly = busy; });
+  setText(el.punishError, form.error || '');
+}
+
+function statusRow(text, meta, button) {
+  const row = make('div', 'warning__row');
+  const body = make('div', 'warning__text');
+  body.append(make('div', null, text), make('div', 'warning__meta', meta));
+  row.append(body);
+  if (button) row.append(button);
+  return row;
+}
+
+function statusButton(label, type, banId, characterId) {
+  const button = make('button', 'btn btn--small', label);
+  button.type = 'button';
+  button.dataset.action = 'punish-open';
+  button.dataset.type = type;
+  if (banId) button.dataset.banId = String(banId);
+  if (characterId) button.dataset.characterId = String(characterId);
+  button.disabled = state.busy !== null || state.punish !== null || Boolean(state.self && state.self.dutyRequired && !state.self.duty);
+  return button;
+}
+
+function renderPunishStatus() {
+  const t = TEXT.punish;
+  const data = punishments();
+  const rows = [];
+  if (data.activeBan) {
+    rows.push(statusRow(t.activeBan(data.activeBan), t.meta(data.activeBan.reason, data.activeBan.bannedByName && TEXT.whoLogin(data.activeBan.bannedByName, data.activeBan.bannedBy)),
+      can('player.unban') ? statusButton(t.unban, 'unban', data.activeBan.id) : null));
+  }
+  activeCharacterBans().forEach((ban) => {
+    rows.push(statusRow(t.activeCharBan(ban), t.meta(ban.reason, ban.bannedByName && TEXT.whoLogin(ban.bannedByName, ban.bannedBy)),
+      can('player.unban') ? statusButton(t.unban, 'unban', ban.id) : null));
+  });
+  Object.entries(data.activeWarns || {}).forEach(([characterId, count]) => {
+    if (!count) return;
+    const latest = (data.warns || []).find((w) => w.active && !w.banId && String(w.characterId) === characterId);
+    const who = TEXT.who(latest && latest.characterName, characterId);
+    rows.push(statusRow(t.activeWarns(who, count, data.warnBanAt || 3, data.warnExpireDays || 0),
+      latest ? t.meta(latest.reason, latest.warnedByName && TEXT.whoLogin(latest.warnedByName, latest.warnedBy)) : ''));
+  });
+  activeJails().forEach((jail) => {
+    rows.push(statusRow(t.activeJail(jail), t.meta(jail.reason, jail.jailedByName && TEXT.whoLogin(jail.jailedByName, jail.jailedBy)),
+      can('player.ajail') ? statusButton(t.unjail, 'unjail', null, jail.characterId) : null));
+  });
+  el.punishStatus.hidden = rows.length === 0;
+  setText(el.punishStatusTitle, t.statusTitle);
+  el.punishStatusRows.replaceChildren(...rows);
+}
+
+function openPunish(type, banId, characterId, warnId) {
+  if (!state.profile || state.busy) return;
+  const focus = focusCharacter();
+  const scope = focus && !focus.deletedAt ? 'character' : 'login';
+  let target = characterId || (focus ? focus.id : null);
+  // Kicken trifft den Charakter, der gerade gespielt wird, sonst den Login (z. B. im Login-Screen)
+  if (type === 'kick') {
+    const online = onlineOf(state.profile);
+    target = online && online.characterId ? online.characterId : null;
+  }
+  state.punish = { type, banId: banId || null, warnId: warnId || null, characterId: target, scope, error: '' };
+  state.message = null;
+  el.punishReason.value = '';
+  el.punishDuration.value = '';
+  el.punishMinutes.value = '';
+  el.punishDuration.placeholder = TEXT.punish.durationPlaceholder;
+  el.punishMinutes.placeholder = type === 'warn' ? TEXT.punish.warnMinutesPlaceholder : TEXT.punish.minutesPlaceholder;
+  el.punishReason.placeholder = TEXT.punish.reasonPlaceholder;
+  if (type === 'ban') buildScope();
+  render();
+  const first = { jail: el.punishMinutes, ban: el.punishScope.querySelector('.choice') }[type] || el.punishReason;
+  if (first) first.focus();
+}
+
+function closePunish() {
+  state.punish = null;
+  render();
+}
+
+function validatePunish() {
+  const form = state.punish;
+  const t = TEXT.punish;
+  const lim = limits();
+  const reason = el.punishReason.value.trim();
+  const payload = { type: form.type, accountId: state.profile.account.id, reason: reason || undefined };
+  if (form.characterId) payload.characterId = form.characterId;
+  const minutesText = el.punishMinutes.value.trim();
+  if (form.type === 'jail' || (form.type === 'warn' && minutesText !== '')) {
+    const minutes = Number(minutesText);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > lim.jailMaxMinutes) {
+      return { error: t.errors.minutes(lim.jailMaxMinutes), focus: el.punishMinutes };
+    }
+    payload.minutes = minutes;
+  }
+  if (form.type === 'ban') {
+    const duration = el.punishDuration.value.trim().toLowerCase();
+    const match = /^(\d+)([mhdw])$/.exec(duration);
+    const tooLong = match && Number(match[1]) * DURATION_UNITS[match[2]] > lim.banMaxDays;
+    if (!DURATION_PATTERN.test(duration) || tooLong || (match && Number(match[1]) === 0)) {
+      return { error: t.errors.duration(lim.banMaxDays), focus: el.punishDuration };
+    }
+    payload.duration = duration === 'permanent' ? 'perm' : duration;
+    payload.scope = form.scope;
+  }
+  if (form.type === 'unban') payload.banId = form.banId;
+  if (form.type === 'unwarn') payload.warnId = form.warnId;
+
+  const required = REASON_REQUIRED.has(form.type);
+  const length = Array.from(reason).length;
+  if ((required || length > 0) && (length < lim.reasonMin || length > lim.reasonMax)) {
+    return { error: t.errors.reason(lim.reasonMin, lim.reasonMax), focus: el.punishReason };
+  }
+  return { payload };
+}
+
+async function submitPunish() {
+  if (!state.punish || state.busy) return;
+  const { error, focus, payload } = validatePunish();
+  if (error) {
+    state.punish.error = error;
+    renderPunishForm();
+    focus.focus();
+    return;
+  }
+
+  const type = state.punish.type;
+  state.busy = 'punish';
+  state.punish.error = '';
+  render();
+
+  const result = await Bridge.send('admin_punish', payload);
+  state.busy = null;
+  if (result && result.ok && result.data) {
+    state.profile.punishments = result.data.punishments;
+    state.punish = null;
+    const doneKey = type === 'ban' && payload.scope === 'character' ? 'charBan' : type;
+    state.message = { tone: 'success', text: TEXT.punish.done[doneKey] };
+    await refresh();
+    return;
+  }
+  if (state.punish) state.punish.error = errorText(result && result.error);
+  render();
+}
+
+function banStatus(ban) {
+  const t = TEXT.punish;
+  if (ban.active) return make('span', 'tag tag--danger', t.statusActive);
+  const wrap = make('span');
+  if (ban.liftedAt) {
+    wrap.append(make('span', 'tag', t.statusLifted));
+    wrap.append(make('div', 'detail', t.liftedBy(ban.liftedBy ? TEXT.whoLogin(ban.liftedByName, ban.liftedBy) : TEXT.dataLabels.console, formatTime(ban.liftedAt), ban.liftReason)));
+  } else {
+    wrap.append(make('span', 'tag', t.statusExpired));
+  }
+  return wrap;
+}
+
+function jailStatus(jail) {
+  const t = TEXT.punish;
+  const online = onlineOf(state.profile);
+  if (jail.active) return make('span', 'tag tag--danger', online && online.characterId === jail.characterId ? t.jailRunning : t.jailWaiting);
+  if (!jail.releasedBy && jail.releaseReason === 'Zeit abgesessen') return make('span', 'tag', t.jailServed);
+  const wrap = make('span');
+  wrap.append(make('span', 'tag', t.jailReleased));
+  const by = jail.releasedBy ? TEXT.whoLogin(jail.releasedByName, jail.releasedBy) : TEXT.dataLabels.console;
+  wrap.append(make('div', 'detail', t.liftedBy(by, formatTime(jail.releasedAt), jail.releaseReason)));
+  return wrap;
+}
+
+function byWho(name, id) {
+  return id ? TEXT.whoLogin(name, id) : TEXT.dataLabels.console;
+}
+
+function renderPunishments() {
+  const t = TEXT.punish;
+  const c = t.columns;
+  const data = punishments();
+  const wrap = make('div');
+
+  const bans = make('section', 'section');
+  bans.append(make('h3', 'section-title', t.bansTitle));
+  if (data.bans.length === 0) bans.append(make('p', 'empty', t.noBans));
+  else {
+    const rows = data.bans.map((ban) => {
+      const tr = make('tr');
+      const action = ban.active && can('player.unban') ? statusButton(t.unban, 'unban', ban.id) : '';
+      tr.append(
+        cell(formatTime(ban.createdAt), 'nowrap muted'),
+        cell(ban.characterId ? t.character(ban.characterName, ban.characterId) : t.wholeAccount),
+        cell(ban.expiresAt ? t.until(formatTime(ban.expiresAt)) : t.permanent, 'nowrap'),
+        cell(ban.reason),
+        cell(byWho(ban.bannedByName, ban.bannedBy)),
+        cell(banStatus(ban)),
+        cell(action, 'num'),
+      );
+      return tr;
+    });
+    bans.append(table([[c.time], [c.target], [c.duration], [c.reason], [c.by], [c.state], [c.action, 'num']], rows));
+  }
+
+  const jails = make('section', 'section');
+  jails.append(make('h3', 'section-title', t.jailsTitle));
+  if (data.jails.length === 0) jails.append(make('p', 'empty', t.noJails));
+  else {
+    const rows = data.jails.map((jail) => {
+      const tr = make('tr');
+      tr.append(
+        cell(formatTime(jail.createdAt), 'nowrap muted'),
+        cell(jail.characterId ? t.character(jail.characterName, jail.characterId) : ''),
+        cell(t.minutesValue(jail.minutes), 'nowrap'),
+        cell(jail.active ? formatMinutes(jail.remaining) : '', 'nowrap'),
+        cell(jail.reason),
+        cell(byWho(jail.jailedByName, jail.jailedBy)),
+        cell(jailStatus(jail)),
+      );
+      return tr;
+    });
+    jails.append(table([[c.time], [c.character], [c.duration], [c.left], [c.reason], [c.by], [c.state]], rows));
+  }
+
+  const warns = make('section', 'section');
+  warns.append(make('h3', 'section-title', t.warnsTitle));
+  const warnList = data.warns || [];
+  if (warnList.length === 0) warns.append(make('p', 'empty', t.noWarns));
+  else {
+    const rows = warnList.map((warn) => {
+      const tr = make('tr');
+      let status;
+      if (warn.revokedAt) {
+        status = make('span');
+        status.append(make('span', 'tag', t.warnRevoked));
+        const by = warn.revokedBy ? TEXT.whoLogin(warn.revokedByName, warn.revokedBy) : TEXT.dataLabels.console;
+        status.append(make('div', 'detail', t.liftedBy(by, formatTime(warn.revokedAt), warn.revokeReason)));
+      } else if (warn.active) {
+        status = make('span', 'tag tag--danger', warn.banId ? t.warnBanned : (warn.seenAt ? t.warnSeen : t.warnUnseen));
+      } else {
+        status = make('span', 'tag', t.warnExpired);
+      }
+      const action = warn.active && can('player.warn') ? statusButton(t.unwarn, 'unwarn') : '';
+      if (action) action.dataset.warnId = String(warn.id);
+      tr.append(
+        cell(formatTime(warn.createdAt), 'nowrap muted'),
+        cell(String(warn.id), 'nowrap'),
+        cell(t.character(warn.characterName, warn.characterId)),
+        cell(warn.reason),
+        cell(byWho(warn.warnedByName, warn.warnedBy)),
+        cell(status),
+        cell(action, 'num'),
+      );
+      return tr;
+    });
+    warns.append(table([[c.time], [TEXT.dataLabels.warnId], [c.character], [c.reason], [c.by], [c.state], [c.action, 'num']], rows));
+  }
+
+  wrap.append(warns, bans, jails);
+  return wrap;
+}
+
+/* ---------- Akte: Tabs ---------- */
+
+function tabCount(key) {
+  const counts = (state.profile && state.profile.counts) || {};
+  if (key === 'all') return Object.values(counts).reduce((sum, n) => sum + Number(n || 0), 0);
+  if (key === 'characters') return state.profile ? state.profile.characters.length : 0;
+  if (key === 'punishments') return punishments().bans.length + punishments().jails.length + (punishments().warns || []).length;
+  if (key === 'overview' || key === 'inventory') return null;
+  return counts[key] || 0;
+}
+
+function renderTabs() {
+  const tabs = visibleTabs().map((key) => {
+    const button = make('button', 'tab');
+    button.type = 'button';
+    button.setAttribute('role', 'tab');
+    button.dataset.action = 'tab';
+    button.dataset.tab = key;
+    button.setAttribute('aria-selected', String(state.tab === key));
+    button.tabIndex = state.tab === key ? 0 : -1;
+    button.append(document.createTextNode(TEXT.tabs[key]));
+    const count = tabCount(key);
+    if (count !== null) button.append(make('span', 'tab__count', String(count)));
+    return button;
+  });
+  el.tabs.replaceChildren(...tabs);
+}
+
+/* ---------- Akte: Inhalt ---------- */
+
+function factItem(label, value, sub) {
+  const wrap = make('div', 'fact');
+  const dd = make('dd', null, value);
+  if (sub) dd.append(make('span', 'fact__sub', sub));
+  wrap.append(make('dt', null, label), dd);
+  return wrap;
+}
+
+function renderOverview() {
+  const { account, characters, identifiers } = state.profile;
+  const online = onlineOf(state.profile);
+  const deleted = characters.filter((c) => c.deletedAt).length;
+
+  const focus = focusCharacter();
+  const dl = make('dl', 'facts');
+  if (focus) dl.append(factItem(TEXT.facts.id, String(focus.id), characterName(focus)));
+  dl.append(
+    factItem(TEXT.facts.login, String(account.id)),
+    factItem(TEXT.facts.rank, account.rank),
+    factItem(TEXT.facts.status, online ? TEXT.statusOnline(online) : TEXT.statusOffline),
+    factItem(TEXT.facts.created, formatTime(account.createdAt)),
+    factItem(TEXT.facts.lastLogin, formatTime(account.lastLogin)),
+    factItem(TEXT.facts.characters, TEXT.charactersCount(characters.length - deleted, deleted)),
+  );
+  if (account.email) dl.append(factItem(TEXT.facts.email, account.email));
+  const devices = state.profile.devices;
+  if (devices && devices.known) dl.append(factItem(TEXT.facts.devices, String(devices.deviceCount)));
+  ((devices && devices.ips) || []).forEach((entry) => {
+    dl.append(factItem(TEXT.facts.ip, entry.ip, formatTime(entry.lastSeen)));
+  });
+  identifiers.forEach((identifier) => {
+    dl.append(factItem(
+      `${TEXT.facts.identifiers}: ${identifier.type}`,
+      identifier.value || TEXT.identifierHidden,
+      formatTime(identifier.lastSeen),
+    ));
+  });
+
+  const links = state.profile.links || [];
+  if (links.length === 0) return dl;
+
+  const wrap = make('div');
+  const section = make('section', 'links');
+  section.append(make('h3', 'links__title', TEXT.linksTitle));
+  links.forEach((link) => {
+    const box = make('div', link.active ? 'warning' : 'warning warning--off');
+    box.append(linkRow(link, true));
+    section.append(box);
+  });
+  wrap.append(dl, section);
+  return wrap;
+}
+
+function table(headers, rows) {
+  const tableNode = make('table', 'table');
+  const thead = make('thead');
+  const headRow = make('tr');
+  headers.forEach(([label, className]) => {
+    const th = make('th', className || null, label);
+    th.scope = 'col';
+    headRow.append(th);
+  });
+  thead.append(headRow);
+  const tbody = make('tbody');
+  tbody.append(...rows);
+  tableNode.append(thead, tbody);
+  return tableNode;
+}
+
+function cell(content, className) {
+  const td = make('td', className || null);
+  if (content instanceof Node) td.append(content);
+  else td.textContent = content ?? '';
+  return td;
+}
+
+function renderCharacters() {
+  const { characters } = state.profile;
+  if (characters.length === 0) return make('p', 'empty', TEXT.noCharacters);
+  const online = onlineOf(state.profile);
+  const c = TEXT.columns;
+
+  const rows = characters.map((character) => {
+    const tr = make('tr');
+    const status = make('span');
+    const ban = activeCharacterBans().find((b) => b.characterId === character.id);
+    const jailed = activeJails().some((j) => j.characterId === character.id);
+    if (character.deletedAt) status.append(make('span', 'tag tag--danger', TEXT.charDeleted(formatTime(character.deletedAt))));
+    else if (ban) status.append(make('span', 'tag tag--danger', TEXT.charBanned(ban.expiresAt ? TEXT.punish.until(formatTime(ban.expiresAt)) : TEXT.punish.permanent.toLowerCase())));
+    else if (online && online.characterId === character.id) status.append(make('span', 'tag tag--active', TEXT.charPlaying));
+    else status.append(make('span', 'tag', TEXT.charActive));
+    if (jailed) status.append(document.createTextNode(' '), make('span', 'tag tag--danger', TEXT.charJailed));
+
+    let action;
+    if (character.id === state.selectedCharacterId) action = make('span', 'muted', TEXT.focusCharacter);
+    else {
+      action = make('button', 'btn btn--small', TEXT.openCharacter);
+      action.type = 'button';
+      action.dataset.action = 'select';
+      action.dataset.accountId = String(state.profile.account.id);
+      action.dataset.characterId = String(character.id);
+      action.disabled = state.busy !== null;
+    }
+
+    tr.append(
+      cell(String(character.id), 'nowrap'),
+      cell(`${character.firstname} ${character.lastname}`),
+      cell(character.rank || ''),
+      cell(formatDate(character.dateOfBirth), 'nowrap'),
+      cell(TEXT.genders[character.gender] || character.gender),
+      cell(TEXT.jobs[character.job] || character.job),
+      cell(formatMoney(character.cash), 'num'),
+      cell(formatMoney(character.bank), 'num'),
+      cell(formatTime(character.lastPlayed), 'nowrap'),
+      cell(status),
+      cell(action, 'num'),
+    );
+    return tr;
+  });
+  return table([
+    [c.id], [c.name], [c.rank], [c.dob], [c.gender], [c.job], [c.cash, 'num'], [c.bank, 'num'], [c.lastPlayed], [c.state], ['', 'num'],
+  ], rows);
+}
+
+// Diese Felder werden oben als ganzer Satz angezeigt und nicht noch einmal einzeln
+const HANDLED_KEYS = new Set([
+  'victimName', 'killerAccountId', 'killerServerId', 'killerCharacterId', 'killerName', 'killerOnDuty',
+  'weapon', 'weaponName', 'toCharacterId', 'toName', 'fromCharacterId', 'fromName',
+  'interaction', 'label', 'relation', 'blocked',
+]);
+
+// Admins und andere Beteiligte sind im Log als Login gespeichert
+function who(accountId, storedName) {
+  const names = (state.logs && state.logs.names) || { accounts: {} };
+  return TEXT.whoLogin(storedName || names.accounts[String(accountId)], accountId);
+}
+
+// Charaktere mit ihrer permanenten ID
+function whoCharacter(characterId, storedName) {
+  const names = (state.logs && state.logs.names) || { characters: {} };
+  return TEXT.who(storedName || (names.characters || {})[String(characterId)], characterId);
+}
+
+function describeRole(entry) {
+  const id = state.profile.account.id;
+  if (entry.actorAccountId && entry.actorAccountId !== id && entry.accountId === id) return TEXT.byActor(who(entry.actorAccountId));
+  if (entry.actorAccountId === id && entry.accountId && entry.accountId !== id) return TEXT.onTarget(who(entry.accountId));
+  if (entry.targetAccountId && entry.targetAccountId !== id) return TEXT.withTarget(who(entry.targetAccountId));
+  if (entry.targetAccountId === id && entry.accountId && entry.accountId !== id) return TEXT.withTarget(who(entry.accountId));
+  return null;
+}
+
+// Feste Saetze fuer Tod und Geld: wer, von wem, an wen, womit
+function specialDetails(entry, data) {
+  const key = `${entry.category}.${entry.action}`;
+  const id = state.profile.account.id;
+
+  if (entry.category === 'twink') {
+    const parts = [TEXT.twinkFromTo(whoCharacter(data.fromCharacterId, data.fromName), whoCharacter(data.toCharacterId, data.toName))];
+    if (data.relation) parts.push(TEXT.twinkRelation[data.relation] || data.relation);
+    if (data.blocked) parts.push(TEXT.twinkBlocked);
+    return parts;
+  }
+
+  if (key === 'death.died') {
+    const parts = [];
+    const killer = data.killerAccountId || entry.actorAccountId;
+    const killerText = data.killerCharacterId ? whoCharacter(data.killerCharacterId, data.killerName) : who(killer, data.killerName);
+    if (entry.accountId === id) parts.push(killer ? TEXT.killedBy(killerText) : TEXT.noKiller);
+    else parts.push(TEXT.victim(entry.characterId ? whoCharacter(entry.characterId, data.victimName) : who(entry.accountId, data.victimName)));
+    if (data.killerOnDuty) parts.push(TEXT.killerOnDuty);
+    if (data.weaponName) parts.push(TEXT.weapon(data.weaponName));
+    else if (data.weapon) parts.push(TEXT.weapon(TEXT.unknownWeapon(data.weapon)));
+    return parts;
+  }
+  if (key === 'money.transfer_in' && entry.targetAccountId) {
+    return [TEXT.moneyFrom(data.fromCharacterId ? whoCharacter(data.fromCharacterId, data.fromName) : who(entry.targetAccountId, data.fromName))];
+  }
+  if (key === 'money.transfer_out' && entry.targetAccountId) {
+    return [TEXT.moneyTo(data.toCharacterId ? whoCharacter(data.toCharacterId, data.toName) : who(entry.targetAccountId, data.toName))];
+  }
+  if ((key === 'money.add' || key === 'money.remove') && entry.actorAccountId && entry.actorAccountId !== entry.accountId) {
+    return [TEXT.moneyByAdmin(who(entry.actorAccountId))];
+  }
+  return null;
+}
+
+function describeDetails(entry) {
+  const parts = [];
+  const data = parseData(entry.data) || {};
+  // Eintraege anderer Charaktere derselben Person kennzeichnen
+  if (entry.category !== 'twink' && entry.characterId && entry.accountId === state.profile.account.id && entry.characterId !== state.selectedCharacterId) {
+    parts.push(TEXT.asCharacter(whoCharacter(entry.characterId)));
+  }
+  const special = specialDetails(entry, data);
+  if (special) parts.push(...special);
+  else {
+    const role = describeRole(entry);
+    if (role) parts.push(role);
+  }
+  if (entry.reason) parts.push(entry.reason);
+  Object.entries(data).forEach(([key, value]) => {
+    if (value === null || value === undefined || HANDLED_KEYS.has(key)) return;
+    const label = TEXT.dataLabels[key] || key;
+    parts.push(`${label}: ${formatValue(key, value)}`);
+  });
+  if (entry.resource && entry.resource !== 'core') parts.push(`Script: ${entry.resource}`);
+  return parts.join(' · ');
+}
+
+function logRow(entry) {
+  const key = `${entry.category}.${entry.action}`;
+  const tr = make('tr');
+
+  let amountText = '';
+  let amountClass = 'num';
+  if (Number.isFinite(entry.amount)) {
+    const ownMoney = entry.accountId === state.profile.account.id;
+    if (MINUS_ACTIONS.has(key) && ownMoney) { amountText = `-${formatMoney(entry.amount)}`; amountClass += ' minus'; }
+    else if (PLUS_ACTIONS.has(key) && ownMoney) { amountText = `+${formatMoney(entry.amount)}`; amountClass += ' plus'; }
+    else amountText = formatMoney(entry.amount);
+  }
+  const balance = Number.isFinite(entry.balanceAfter)
+    ? `${formatMoney(entry.balanceBefore)} → ${formatMoney(entry.balanceAfter)}`
+    : '';
+
+  const isKiller = key === 'death.died' && entry.accountId !== state.profile.account.id;
+  const actionText = isKiller ? TEXT.actorDied : (TEXT.actionNames[key] || `${entry.category} / ${entry.action}`);
+  const action = make('span', isKiller ? 'action-name minus' : 'action-name', actionText);
+  tr.append(
+    cell(formatTime(entry.time), 'nowrap muted'),
+    cell(action),
+    cell(make('span', 'detail', describeDetails(entry))),
+    cell(amountText, amountClass),
+    cell(balance, 'num muted'),
+  );
+  return tr;
+}
+
+function skeletonRows() {
+  const rows = [];
+  for (let i = 0; i < SKELETON_ROWS; i += 1) {
+    const tr = make('tr', 'skeleton-row');
+    for (let col = 0; col < 5; col += 1) tr.append(cell(make('span', 'skeleton')));
+    rows.push(tr);
+  }
+  return rows;
+}
+
+function renderLogs() {
+  const logs = state.logs;
+  const c = TEXT.columns;
+  const headers = [[c.time], [c.action], [c.details], [c.amount, 'num'], [c.balance, 'num']];
+  const wrap = make('div');
+
+  if (!logs || (logs.loading && logs.entries.length === 0)) {
+    wrap.append(table(headers, skeletonRows()));
+    return wrap;
+  }
+  if (logs.error && logs.entries.length === 0) {
+    wrap.append(make('p', 'empty', `${TEXT.logLoadError} ${errorText(logs.error)}`));
+    return wrap;
+  }
+  if (logs.archive) wrap.append(archiveBar(logs));
+  if (logs.entries.length === 0) {
+    wrap.append(make('p', 'empty', logs.archive ? TEXT.archiveEmpty : TEXT.noLogs));
+    if (!logs.archive) wrap.append(archiveLink());
+    return wrap;
+  }
+
+  wrap.append(table(headers, logs.entries.map(logRow)));
+
+  const more = make('div', 'more');
+  more.hidden = !logs.hasMore;
+  const button = make('button', 'btn', logs.loading ? TEXT.loadingMore : TEXT.loadMore);
+  button.type = 'button';
+  button.dataset.action = 'more';
+  button.disabled = logs.loading;
+  more.append(button);
+  wrap.append(more);
+  // Am Ende der aktuellen Eintraege: Weg ins Archiv
+  if (!logs.hasMore && !logs.loading && !logs.archive) wrap.append(archiveLink());
+  return wrap;
+}
+
+function archiveLink() {
+  const box = make('div', 'more');
+  const button = make('button', 'link', TEXT.archiveOpen);
+  button.type = 'button';
+  button.dataset.action = 'logs-archive';
+  box.append(button);
+  return box;
+}
+
+function archiveBar(logs) {
+  const bar = make('div', 'archive-bar');
+  bar.append(make('span', '', logs.archiveDays ? TEXT.archiveTitle(logs.archiveDays) : TEXT.archiveTitleShort));
+  const back = make('button', 'link', TEXT.archiveBack);
+  back.type = 'button';
+  back.dataset.action = 'logs-current';
+  bar.append(back);
+  return bar;
+}
+
+/* ---------- Akte: Inventar ---------- */
+
+const GRAMS_PER_KG = 1000;
+const kgFormat = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 });
+const formatKg = (grams) => `${kgFormat.format((Number(grams) || 0) / GRAMS_PER_KG)} kg`;
+
+let inventoryRequest = 0;
+
+async function loadInventory(characterId) {
+  const request = ++inventoryRequest;
+  state.inventory = { characterId, loading: true, data: null, error: null };
+  renderContent();
+  const result = await Bridge.send('admin_inventory', { characterId });
+  if (request !== inventoryRequest) return;
+  state.inventory = result && result.ok
+    ? { characterId, loading: false, data: result.data, error: null }
+    : { characterId, loading: false, data: null, error: (result && result.error) || 'default' };
+  if (state.tab === 'inventory') renderContent();
+}
+
+function inventoryRows(list, items, withSlot) {
+  return list.map((entry) => {
+    const def = items[entry.name] || {};
+    const tr = make('tr');
+    if (withSlot) tr.append(make('td', 'num', entry.slot));
+    tr.append(
+      make('td', null, entry.meta && entry.meta.serial ? `${def.label || entry.name} · ${entry.meta.serial}${entry.meta.ammo !== undefined ? ` · ${entry.meta.ammo} Schuss` : ''}` : (def.label || entry.name)),
+      make('td', 'num', String(entry.count)),
+      make('td', 'num', formatKg((def.weight || 0) * entry.count + Number((entry.meta && entry.meta.contentWeight) || 0))),
+    );
+    return tr;
+  });
+}
+
+function renderInventory() {
+  const characterId = state.selectedCharacterId;
+  const wrap = make('div', 'inventory');
+  if (!characterId) {
+    wrap.append(make('p', 'empty', TEXT.inventory.pick));
+    return wrap;
+  }
+  if (!state.inventory || state.inventory.characterId !== characterId) {
+    loadInventory(characterId);
+    return wrap;
+  }
+  const inv = state.inventory;
+  if (inv.loading) {
+    wrap.append(table([[TEXT.inventory.item]], skeletonRows()));
+    return wrap;
+  }
+  if (inv.error) {
+    wrap.append(make('p', 'empty', TEXT.inventory.error));
+    return wrap;
+  }
+  const { state: invState, items, layout } = inv.data;
+  // Lua schickt leere Listen als {}
+  const all = Array.isArray(invState.items) ? invState.items : [];
+  const bagList = invState.bag == null ? null : (Array.isArray(invState.bag) ? invState.bag : []);
+  const equipIds = new Set((layout.equip || []).map((slot) => slot.id));
+  const pocket = all.filter((e) => !equipIds.has(e.slot)).sort((a, b) => Number(a.slot) - Number(b.slot));
+  const worn = (layout.equip || []).map((slot) => ({ slot, entry: all.find((e) => e.slot === slot.id) })).filter((x) => x.entry);
+  const c = TEXT.inventory;
+
+  wrap.append(make('p', 'inventory__weight', c.weight(formatKg(invState.weight), formatKg(invState.maxWeight))));
+
+  wrap.append(make('h3', 'inventory__title', c.worn));
+  if (worn.length === 0) wrap.append(make('p', 'empty', c.nothingWorn));
+  else {
+    wrap.append(table([[c.slot], [c.item]], worn.map(({ slot, entry }) => {
+      const tr = make('tr');
+      tr.append(make('td', null, slot.label), make('td', null, (items[entry.name] || {}).label || entry.name));
+      return tr;
+    })));
+  }
+
+  wrap.append(make('h3', 'inventory__title', c.pockets));
+  if (pocket.length === 0) wrap.append(make('p', 'empty', c.empty));
+  else wrap.append(table([[c.slot, 'num'], [c.item], [c.count, 'num'], [c.weightCol, 'num']], inventoryRows(pocket, items, true)));
+
+  if (bagList) {
+    wrap.append(make('h3', 'inventory__title', c.bag(formatKg(invState.bagWeight), formatKg(invState.bagMaxWeight))));
+    const bag = [...bagList].sort((a, b) => Number(a.slot) - Number(b.slot));
+    if (bag.length === 0) wrap.append(make('p', 'empty', c.empty));
+    else wrap.append(table([[c.slot, 'num'], [c.item], [c.count, 'num'], [c.weightCol, 'num']], inventoryRows(bag, items, true)));
+  }
+  return wrap;
+}
+
+function renderContent() {
+  if (!state.profile) {
+    el.content.replaceChildren();
+    return;
+  }
+  let node;
+  if (state.tab === 'overview') node = renderOverview();
+  else if (state.tab === 'characters') node = renderCharacters();
+  else if (state.tab === 'punishments') node = renderPunishments();
+  else if (state.tab === 'inventory') node = renderInventory();
+  else node = renderLogs();
+  el.content.replaceChildren(node);
+}
+
+/* ---------- Befehlsliste ---------- */
+
+function applyExtras(data) {
+  state.commands = Array.isArray(data.commands) ? data.commands : [];
+  state.ticketsOpen = Number.isFinite(Number(data.ticketsOpen)) && data.ticketsOpen !== null && data.ticketsOpen !== undefined ? Number(data.ticketsOpen) : null;
+}
+
+function commandRow(entry) {
+  const tr = make('tr');
+  if (!entry.allowed) tr.dataset.locked = '';
+  tr.append(
+    make('td', 'cmd-usage', entry.usage),
+    make('td', 'cmd-text', entry.text),
+    make('td', 'cmd-rank', entry.rank ? TEXT.commandsRank(entry.level) : TEXT.commandsEveryone),
+  );
+  if (entry.rank) tr.lastChild.title = entry.rank;
+  return tr;
+}
+
+function renderCommands() {
+  const query = el.commandsFilter.value.trim().toLowerCase();
+  const tables = [];
+  state.commands.forEach((group) => {
+    const entries = (Array.isArray(group.entries) ? group.entries : []).filter((entry) => !query
+      || entry.usage.toLowerCase().includes(query) || entry.text.toLowerCase().includes(query));
+    if (entries.length === 0) return;
+    const table = make('table', 'cmd-table');
+    const caption = make('caption');
+    caption.append(make('span', 'cmd-table__title', group.title));
+    if (group.hint) caption.append(make('span', 'cmd-table__hint', group.hint));
+    const body = make('tbody');
+    body.append(...entries.map(commandRow));
+    table.append(caption, body);
+    tables.push(table);
+  });
+  el.commandsBody.replaceChildren(...tables);
+  el.commandsEmpty.hidden = tables.length > 0;
+}
+
+/* ---------- Gesamt ---------- */
+
+function render() {
+  el.screen.hidden = !state.open;
+  if (!state.open) return;
+  renderTopbar();
+  renderList();
+  const showCommands = state.view === 'commands';
+  const showProfile = !showCommands && (state.selectedAccountId !== null || state.selectedCharacterId !== null);
+  el.commands.hidden = !showCommands;
+  el.placeholder.hidden = showProfile || showCommands;
+  el.profile.hidden = !showProfile;
+  if (showCommands) renderCommands();
+  if (showProfile) {
+    renderProfileHead();
+    renderPunishForm();
+    renderPunishStatus();
+    renderDeviceWarning();
+    renderWarning();
+    renderTwinks();
+    renderTabs();
+    renderContent();
+  }
+}
+
+/* ---------- Laden ---------- */
+
+let profileRequest = 0;
+let logsRequest = 0;
+
+// archive = true: aeltere Eintraege aus dem Log-Archiv. Beim Nachladen bleibt die gewaehlte Quelle.
+async function loadLogs(append = false, archive = false) {
+  if (!state.profile || !LOG_TABS.has(state.tab)) return;
+  const category = state.tab;
+  if (append && state.logs) archive = state.logs.archive === true;
+  const page = append && state.logs ? state.logs.page + 1 : 0;
+  const previous = append && state.logs ? state.logs.entries : [];
+  const request = ++logsRequest;
+
+  state.logs = {
+    category, archive, entries: previous, page: append ? state.logs.page : 0, hasMore: false, loading: true, error: null,
+    names: (append && state.logs && state.logs.names) || { accounts: {}, characters: {} },
+  };
+  renderContent();
+
+  const result = await Bridge.send('admin_logs', { accountId: state.profile.account.id, category, page, archive });
+  if (request !== logsRequest) return;
+
+  if (result && result.ok && result.data) {
+    const oldNames = (append && state.logs && state.logs.names) || { accounts: {}, characters: {} };
+    const newNames = result.data.names || {};
+    state.logs = {
+      category,
+      archive,
+      archiveDays: result.data.archiveDays,
+      names: {
+        accounts: { ...oldNames.accounts, ...(newNames.accounts || {}) },
+        characters: { ...oldNames.characters, ...(newNames.characters || {}) },
+      },
+      entries: previous.concat(result.data.entries || []),
+      page: result.data.page ?? page,
+      hasMore: Boolean(result.data.hasMore),
+      loading: false,
+      error: null,
+    };
+  } else {
+    state.logs = { ...state.logs, loading: false, error: (result && result.error) || 'default' };
+  }
+  renderContent();
+}
+
+async function openProfile(accountId, characterId) {
+  if (!accountId && !characterId) return;
+  state.view = 'profile';
+  // Andere Charaktere derselben Person: Akte bleibt, nur der Mittelpunkt wechselt
+  if (accountId && state.profile && state.profile.account.id === accountId && characterId
+      && state.profile.characters.some((c) => c.id === characterId)) {
+    state.selectedCharacterId = characterId;
+    state.punish = null;
+    render();
+    return;
+  }
+  const request = ++profileRequest;
+  state.selectedAccountId = accountId || null;
+  state.selectedCharacterId = characterId || null;
+  state.profile = null;
+  state.profileLoading = true;
+  state.logs = null;
+  state.message = null;
+  state.punish = null;
+  state.tab = 'overview';
+  render();
+
+  const result = await Bridge.send('admin_profile', { accountId: accountId || undefined, characterId: characterId || undefined });
+  if (request !== profileRequest) return;
+  state.profileLoading = false;
+
+  if (result && result.ok && result.data) {
+    state.profile = result.data;
+    state.selectedAccountId = result.data.account.id;
+    state.selectedCharacterId = result.data.focusCharacterId || null;
+  } else {
+    state.message = { tone: 'error', text: errorText(result && result.error) };
+  }
+  render();
+}
+
+async function loadAccounts(append = false) {
+  const previous = append && state.accounts ? state.accounts.list : [];
+  const page = append && state.accounts ? state.accounts.page + 1 : 0;
+  state.accounts = { list: previous, page: append ? state.accounts.page : 0, hasMore: false, loading: true };
+  renderList();
+  const result = await Bridge.send('admin_accounts', { page });
+  if (result && result.ok && result.data) {
+    state.accounts = {
+      list: previous.concat(result.data.accounts || []),
+      page: result.data.page ?? page,
+      hasMore: Boolean(result.data.hasMore),
+      loading: false,
+    };
+  } else {
+    state.accounts = { ...state.accounts, loading: false };
+    state.message = { tone: 'error', text: errorText(result && result.error) };
+  }
+  render();
+}
+
+async function loadWarnings() {
+  state.warningsLoading = true;
+  renderList();
+  const result = await Bridge.send('admin_warnings', {});
+  state.warningsLoading = false;
+  if (result && result.ok && result.data) {
+    state.warnings = result.data.warnings || [];
+    state.deviceAlerts = result.data.devices || [];
+    state.warningCount = state.warnings.length + state.deviceAlerts.length;
+  } else {
+    state.warnings = [];
+    state.deviceAlerts = [];
+    state.message = { tone: 'error', text: errorText(result && result.error) };
+  }
+  render();
+}
+
+async function refresh() {
+  if (state.busy) return;
+  state.busy = 'refresh';
+  renderTopbar();
+  const result = await Bridge.send('admin_refresh', {});
+  state.busy = null;
+  if (result && result.ok && result.data) {
+    state.self = result.data.self;
+    state.players = result.data.players || [];
+    state.warningCount = Number(result.data.warningCount) || 0;
+    applyExtras(result.data);
+  }
+  render();
+  if (state.mode === 'warnings') loadWarnings();
+  if (state.mode === 'all') loadAccounts(false);
+}
+
+async function toggleDuty() {
+  if (state.busy) return;
+  state.busy = 'duty';
+  renderTopbar();
+  const result = await Bridge.send('admin_duty', {});
+  state.busy = null;
+  if (result && result.ok && result.data) {
+    state.self = result.data.self;
+    state.message = { tone: 'success', text: state.self.duty ? TEXT.dutyOn : TEXT.dutyOff };
+    await refresh();
+    return;
+  }
+  state.message = { tone: 'error', text: errorText(result && result.error) };
+  render();
+}
+
+async function playerAction(action) {
+  const online = onlineOf(state.profile);
+  if (!online || state.busy) return;
+  state.busy = action;
+  state.message = null;
+  renderProfileHead();
+
+  const result = await Bridge.send('admin_action', { action, serverId: online.serverId });
+  state.busy = null;
+  state.message = result && result.ok
+    ? { tone: 'success', text: TEXT.actionsDone[action] }
+    : { tone: 'error', text: errorText(result && result.error) };
+  renderProfileHead();
+}
+
+async function search(query) {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    state.results = null;
+    render();
+    return;
+  }
+  state.results = [];
+  state.searching = true;
+  renderList();
+  const result = await Bridge.send('admin_search', { query: trimmed });
+  state.searching = false;
+  if (result && result.ok && result.data) {
+    state.results = result.data.results || [];
+  } else {
+    state.results = [];
+    state.message = { tone: 'error', text: errorText(result && result.error) };
+  }
+  render();
+}
+
+function close() {
+  Bridge.send('admin_close', {});
+}
+
+/* ---------- Ereignisse ---------- */
+
+const ACTIONS = {
+  select(target) { openProfile(Number(target.dataset.accountId) || null, Number(target.dataset.characterId) || null); },
+  tab(target) {
+    state.tab = target.dataset.tab;
+    renderTabs();
+    if (LOG_TABS.has(state.tab)) loadLogs(false);
+    else renderContent();
+    el.tabs.querySelector(`[data-tab="${state.tab}"]`).focus();
+  },
+  more() { loadLogs(true); },
+  'logs-archive'() { loadLogs(false, true); },
+  'logs-current'() { loadLogs(false, false); },
+  duty() { toggleDuty(); },
+  refresh() { refresh(); },
+  close() { close(); },
+  commands() {
+    state.view = state.view === 'commands' ? 'profile' : 'commands';
+    render();
+    if (state.view === 'commands') el.commandsFilter.focus();
+  },
+  tickets() { Bridge.send('admin_open_tickets', {}); },
+  'clear-search'() {
+    el.search.value = '';
+    state.results = null;
+    render();
+    el.search.focus();
+  },
+  'player-action'(target) { playerAction(target.dataset.playerAction); },
+  link(target) { setLink(Number(target.dataset.other), target.dataset.dismiss === 'true'); },
+  'device-alert'(target) { setDeviceAlert(Number(target.dataset.alertId), target.dataset.dismiss === 'true'); },
+  mode(target) {
+    state.mode = target.dataset.mode;
+    state.results = null;
+    el.search.value = '';
+    if (state.mode === 'warnings') loadWarnings();
+    else if (state.mode === 'all') loadAccounts(false);
+    else render();
+  },
+  'more-accounts'() { loadAccounts(true); },
+  'punish-open'(target) {
+    openPunish(target.dataset.type, Number(target.dataset.banId) || null, Number(target.dataset.characterId) || null, Number(target.dataset.warnId) || null);
+  },
+  'punish-cancel'() { closePunish(); },
+  'punish-scope'(target) {
+    if (!state.punish) return;
+    state.punish.scope = target.dataset.value === 'login' ? 'login' : 'character';
+    renderPunishForm();
+  },
+  'punish-duration-preset'(target) {
+    el.punishDuration.value = target.dataset.value;
+    if (state.punish) state.punish.error = '';
+    renderPunishForm();
+    el.punishReason.focus();
+  },
+  'punish-minutes-preset'(target) {
+    el.punishMinutes.value = target.dataset.value;
+    if (state.punish) state.punish.error = '';
+    renderPunishForm();
+    el.punishReason.focus();
+  },
+};
+
+document.addEventListener('click', (e) => {
+  const target = e.target.closest('[data-action]');
+  if (!target || target.disabled) return;
+  const action = ACTIONS[target.dataset.action];
+  if (action) action(target);
+});
+
+el.searchForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  search(el.search.value);
+});
+
+el.punish.addEventListener('submit', (e) => {
+  e.preventDefault();
+  submitPunish();
+});
+
+// Fehler verschwindet beim Tippen, Vorauswahl folgt dem eingegebenen Wert
+el.punish.addEventListener('input', () => {
+  if (!state.punish) return;
+  state.punish.error = '';
+  renderPunishForm();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (!state.open) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    // Erst das Strafen-Formular schliessen, dann das Menue
+    if (state.punish && state.busy !== 'punish') closePunish();
+    else if (!state.punish) close();
+    return;
+  }
+  // Pfeiltasten in der Spielerliste und in den Tabs
+  const vertical = e.key === 'ArrowDown' || e.key === 'ArrowUp';
+  const horizontal = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
+  if (vertical && e.target.closest('#players')) {
+    e.preventDefault();
+    const buttons = Array.from(el.players.querySelectorAll('.player:not(:disabled)'));
+    const index = buttons.indexOf(e.target.closest('.player'));
+    const next = buttons[(index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length];
+    if (next) next.focus();
+  }
+  if (horizontal && e.target.closest('#tabs')) {
+    e.preventDefault();
+    const keys = visibleTabs();
+    const index = keys.indexOf(state.tab);
+    const next = keys[(index + (e.key === 'ArrowRight' ? 1 : -1) + keys.length) % keys.length];
+    ACTIONS.tab({ dataset: { tab: next } });
+  }
+});
+
+/* ---------- Bridge-Events ---------- */
+
+Bridge.on('admin_open', (data) => {
+  applyColors(data.colors);
+  if (typeof data.currency === 'string') moneyFormat = createMoneyFormat(data.currency);
+  state.open = true;
+  state.serverName = typeof data.serverName === 'string' ? data.serverName : '';
+  state.self = data.self || null;
+  state.players = Array.isArray(data.players) ? data.players : [];
+  state.warningCount = Number(data.warningCount) || 0;
+  applyExtras(data);
+  state.view = 'profile';
+  state.warnings = null;
+  state.accounts = null;
+  state.mode = 'online';
+  state.busy = null;
+  state.message = null;
+  state.punish = null;
+  render();
+  el.search.focus();
+});
+
+Bridge.on('admin_close', () => {
+  state.open = false;
+  state.busy = null;
+  render();
+});
+
+/* ---------- Start ---------- */
+
+setText(el.title, TEXT.title);
+setText(el.commandsBtn, TEXT.commandsButton);
+setText(el.ticketsLabel, TEXT.ticketsButton);
+setText(el.commandsTitle, TEXT.commandsTitle);
+el.commandsFilter.placeholder = TEXT.commandsFilter;
+el.commandsFilter.setAttribute('aria-label', TEXT.commandsFilter);
+setText(el.commandsEmpty, TEXT.commandsEmpty);
+el.commandsFilter.addEventListener('input', renderCommands);
+el.search.placeholder = TEXT.searchPlaceholder;
+el.searchBtn.setAttribute('aria-label', TEXT.searchButton);
+el.refreshBtn.setAttribute('aria-label', TEXT.refresh);
+el.closeBtn.setAttribute('aria-label', TEXT.close);
+setText(el.dutyChipLabel, TEXT.dutyActive);
+setText(el.clearSearch, TEXT.backToOnline);
+setText(el.placeholder, TEXT.placeholder);
+buildPresets();
+Bridge.send('ui_ready', { ui: 'admin', version: CONTRACT_VERSION });
+
+if (Bridge.platform === 'mock') {
+  // Im Browser: vier Spieler, Akte von ID 12 mit Beispiel-Einträgen. Aktionen gehen erst nach "Admin-Dienst starten".
+  Mock.push('admin_open', {
+    colors: { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72', info: '84 140 220' },
+    currency: 'USD', serverName: 'Testserver', self: Mock.self, players: Mock.players, warningCount: 3,
+    ticketsOpen: 2,
+    // Befehlsliste aus der Core, Ansicht eines Junior Administrators
+    commands: [{"title": "Allgemein", "entries": [{"level": 0, "text": "Zeigt deine permanente ID und deine Login-Nummer.", "usage": "/meineid", "allowed": true}, {"level": 0, "text": "Ticket an das Team schreiben. Für alle Spieler.", "usage": "/report", "allowed": true}, {"level": 0, "text": "Eigenen Rang und alle Ränge anzeigen.", "usage": "/rang, /raenge", "allowed": true}, {"level": 0, "text": "Kontostand, Überweisung, Bargeld geben. Für alle Spieler.", "usage": "/geld, /ueberweisen, /geben", "allowed": true}, {"level": 0, "text": "Zurück zum Login.", "usage": "/relog", "allowed": true}, {"level": 1, "text": "Admin-Menü öffnen.", "usage": "/admin oder F10", "allowed": true, "rank": "Administrator Assistant"}, {"level": 1, "text": "Admin-Dienst an oder aus. Die meisten Befehle gehen nur im Dienst.", "usage": "/aduty", "allowed": true, "rank": "Administrator Assistant"}, {"level": 1, "text": "Erkennungsmodus: Name, IDs, Gesundheit und Warnungen über jedem Spieler.", "usage": "Tab", "allowed": true, "rank": "Administrator Assistant"}]}, {"title": "Tickets", "entries": [{"level": 1, "text": "Alle offenen Tickets, eigene und geschlossene ansehen.", "usage": "/tickets", "allowed": true, "rank": "Administrator Assistant"}, {"level": 1, "text": "Ticket 12 übernehmen. Danach kannst du antworten und es schließen.", "usage": "/claim 12", "allowed": true, "rank": "Administrator Assistant"}]}, {"title": "Bewegen", "entries": [{"level": 2, "text": "Noclip. W A S D, Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam.", "usage": "Z oder /nc", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Zu einem zufälligen anderen Spieler.", "usage": "/tp", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Zu ID 17 teleportieren.", "usage": "/tp 17, /goto 17", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Zu Koordinaten. Ohne Höhe auf den Boden.", "usage": "/tp x y [z]", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "ID 17 zu dir holen. Nicht aus dem A-Jail.", "usage": "/bring 17", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Am Steuer mit Fahrzeug und Insassen teleportieren.", "usage": "/cartp 17, /cartp x y", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "ID 17 unsichtbar beobachten. Nochmal /spec beendet und bringt dich zurück.", "usage": "/spec 17", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Eigene Dimension anzeigen oder wechseln. 0 ist die normale Welt.", "usage": "/dim, /dim 5", "allowed": true, "rank": "Junior Administrator"}, {"level": 3, "text": "ID 17 in Dimension 5 setzen.", "usage": "/setdim 17 5", "allowed": false, "rank": "Administrator"}]}, {"entries": [{"level": 2, "text": "Wiederbeleben. Ohne ID dich selbst.", "usage": "/revive [17]", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Volle Gesundheit. Ohne Ziel dich selbst.", "usage": "/heal [ziel]", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Weste geben, ohne Wert 100.", "usage": "/armor [ziel] [wert]", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Einfrieren und wieder frei lassen.", "usage": "/freeze ziel, /unfreeze ziel", "allowed": true, "rank": "Junior Administrator"}, {"level": 3, "text": "Bewusstlos machen. Admins im Dienst werden übersprungen.", "usage": "/kill [ziel]", "allowed": false, "rank": "Administrator"}, {"level": 1, "text": "Teamnachricht in der Bildschirmmitte.", "usage": "/dm ziel Text", "allowed": true, "rank": "Administrator Assistant"}, {"level": 4, "text": "Waffe geben, ohne Angabe Pistole mit 250 Schuss.", "usage": "/gun [ziel] [waffe] [munition]", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Waffen wieder wegnehmen, die ein Admin gegeben hat.", "usage": "/regun [ziel] [waffe]", "allowed": false, "rank": "Server Administrator"}], "title": "Spieler", "hint": "Ziel: permanente ID, \"r 20\" für alle im Umkreis von 20 m oder \"all\" für alle (ab Server Administrator)."}, {"title": "Fahrzeuge", "entries": [{"level": 4, "text": "Fahrzeug spawnen, du sitzt am Steuer.", "usage": "/car adder", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Fahrzeug löschen, in dem du sitzt oder das nächste bis 6 m.", "usage": "/dv", "allowed": false, "rank": "Server Administrator"}, {"level": 2, "text": "Fahrzeug reparieren, auf das du schaust, oder alle im Umkreis.", "usage": "/fixcars, /fixcars r 30", "allowed": true, "rank": "Junior Administrator"}, {"level": 5, "text": "Fahrzeug bis zu 300 % schneller. /boost 0 schaltet ab.", "usage": "/boost 300", "allowed": false, "rank": "Senior Administrator"}]}, {"title": "Strafen", "entries": [{"level": 2, "text": "30 Minuten A-Jail für Charakter 17.", "usage": "/ajail 17 30 Grund", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Aus dem A-Jail entlassen.", "usage": "/unjail 17", "allowed": true, "rank": "Junior Administrator"}, {"level": 3, "text": "Vom Server werfen, mit Grund.", "usage": "/kick 17 Grund", "allowed": false, "rank": "Administrator"}, {"level": 4, "text": "Verwarnen, optional mit A-Jail. Die dritte gibt 7 Tage Charakter-Ban.", "usage": "/warn 17 [min] Grund", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Verwarnung 15 zurücknehmen.", "usage": "/unwarn 15", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Kick, der wie ein Verbindungsabbruch aussieht. Der Grund steht nur in der Akte.", "usage": "/silentk 17 [grund]", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Nur Charakter 17 bannen. Dauer 30m, 12h, 7d, 2w oder perm.", "usage": "/ban 17 3d Grund", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Den ganzen Login mit allen Charakteren bannen.", "usage": "/loginban 17 7d Grund", "allowed": false, "rank": "Server Administrator"}, {"level": 5, "text": "Ban aufheben.", "usage": "/unban 17, /loginunban 17", "allowed": false, "rank": "Senior Administrator"}]}, {"title": "Geld und Team", "entries": [{"level": 5, "text": "Geld geben, cash oder bank. Geht auch offline.", "usage": "/givemoney cash 17 500", "allowed": false, "rank": "Senior Administrator"}, {"level": 5, "text": "Geld abziehen.", "usage": "/removemoney bank 17 500", "allowed": false, "rank": "Senior Administrator"}, {"level": 6, "text": "Teamrang eines Charakters setzen. Nicht für eigene Charaktere.", "usage": "/setrank 17 junior", "allowed": false, "rank": "Deputy Chief Administrator"}]}],
+  });
+}
+</script>
+</body>
+</html>

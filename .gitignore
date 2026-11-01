@@ -1,5 +1,18 @@
-# Created by GitHub Copilot
-
-node_modules/
+# Echte Server-Konfiguration mit Zugangsdaten nie ins Repo
+server.cfg
 .env
+
+# Datenbank-Sicherungen und Logs
+*.sql.gz
+backups/
 *.log
+
+# Pakete und Zwischendateien
+*.zip
+node_modules/
+__pycache__/
+*.pyc
+
+# System
+.DS_Store
+Thumbs.db

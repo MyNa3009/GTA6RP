@@ -1,0 +1,1831 @@
+<!DOCTYPE html>
+<!--
+  UI: Inventar
+  CONTRACT_VERSION: 1
+  Fenster (mit Maus und Tastatur) und Schnellzugriff-Leiste (ohne Fokus, kurz eingeblendet).
+  Was erlaubt ist, prueft der Server. Jede Antwort bringt den neuen Stand mit.
+
+  EINGEHEND (Lua -> UI)
+  inv_open   { colors, items: { [name]: ItemDef }, state: State, drop?: Drop, other?: Other, layout: Layout, players: Player[] }
+  inv_state  { state: State, drop?: Drop, other?: Other | false }   // Aenderung von aussen, other fehlt oder false: zweites Fenster zu
+  inv_close  {}
+  inv_hotbar { colors, items, state: State, slot: number, error?: string }   // Taste 1 bis 5 gedrueckt
+
+  ItemDef { label, weight, stack, equip?, description? }        // Gewicht in Gramm
+  State   { items: Entry[], bag?: Entry[], weight, maxWeight, bagWeight?, bagMaxWeight?, bagSlots?, bagLevel? }  // bagSlots: freie Rucksack-Plaetze nach Level
+  Entry   { slot: string, name: string, count: number, meta?: object }   // slot "1" bis "30" oder "jacket" usw.
+  Drop    { id: number, items: Entry[] }                  // Haufen am Boden in Reichweite
+  Layout  { slots, hotbar, bagSlots, dropSlots, equip: { id, label, clothing? }[], giveDistance }
+  Player  { serverId, characterId, distance }
+  Other   { kind: "search" | "trunk" | "stash" | "admin", title, canPut, weight, maxWeight, slots, items: Entry[], weaponSlot?,
+            bag?: { items: Entry[], slots, weight, maxWeight }, equip?: { id, label }[], documents?: { id, label }[] }
+          // Zweites Fenster: Durchsuchen (nur nehmen), Kofferraum, /invsee (Admin, alles)
+
+  AUSGEHEND (UI -> Lua), Antwort { ok, data?: { state, drop?, other? }, error? }
+  ui_ready    { ui: "inventory", version: 1 }
+  inv_move    { from: Ref, to: Ref, count? }              // Ref { inv: "self" | "bag" | "drop" | "other" | "otherbag", slot?, id? }
+  inv_use     { inv, slot }
+  inv_give    { from: Ref, count, target: serverId }
+  inv_players {}                                          -> data: { players: Player[] }
+  inv_close   {}
+
+  FEHLERCODES
+  too_heavy, no_space, wrong_slot, bag_in_bag, no_bag, stack_full, invalid_count, invalid_slot, empty_slot,
+  not_usable, not_enough, too_far, target_offline, target_full, target_too_heavy, twink_blocked, drop_gone,
+  no_weapon, wrong_ammo, weapon_full, wrong_gender,
+  no_position, no_character, rate_limited, timeout,
+  bound, not_allowed, search_ended, trunk_closed, stash_closed, view_closed
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inventar</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Explore (Inventar). Vollbild, dunkel, graue Kacheln, Aktionen per Rechtsklick.
+  Dichte 7, Bewegung 2 (per Taste geoeffnet, sehr oft), Varianz 3.
+  Farbe nur fuer Auswahl, Ziel beim Ziehen und Fehler. Alles andere sind Graustufen aus --rgb-ink.
+*/
+:root {
+  /* Grundfarben, werden aus der Config der Core ueberschrieben */
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+
+  --c-screen:      rgb(var(--rgb-base) / 0.9);
+  --c-strip:       rgb(var(--rgb-ink) / 0.05);
+  --c-slot:        rgb(var(--rgb-ink) / 0.06);
+  --c-slot-hover:  rgb(var(--rgb-ink) / 0.1);
+  --c-slot-line:   rgb(var(--rgb-ink) / 0.07);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.6);
+  --c-text-faint:  rgb(var(--rgb-ink) / 0.32);
+  --c-ghost-icon:  rgb(var(--rgb-ink) / 0.16);
+  --c-badge:       rgb(var(--rgb-ink) / 0.92);
+  --c-on-badge:    rgb(var(--rgb-base));
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.16);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-menu:        rgb(var(--rgb-base) / 0.98);
+  --c-menu-line:   rgb(var(--rgb-ink) / 0.12);
+
+  --shadow-float: 0 12px 32px rgb(var(--rgb-base) / 0.7);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-sm: 4px; --radius-md: 8px;
+
+  --fs-xs: clamp(10px, 0.55vw, 12px);
+  --fs-sm: clamp(11px, 0.62vw, 13px);
+  --fs-md: clamp(13px, 0.72vw, 15px);
+
+  --dur-fast: 100ms; --dur-hud: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --z-screen: 10; --z-float: 20; --z-ghost: 30;
+
+  /* Kachelgroesse richtet sich nach Breite und Hoehe, damit 9 Reihen auch bei 720p passen */
+  --slot: clamp(60px, min(5.8vw, 9.6vh), 150px);
+  --gap: max(4px, calc(var(--slot) * 0.08));
+  --slot-font: max(9px, calc(var(--slot) * 0.115));
+  --strip: max(24px, calc(var(--slot) * 0.32));
+  --column-gap: clamp(24px, 9vw, 260px);
+  --badge: max(16px, calc(var(--slot) * 0.24));
+  --hud-slot: clamp(48px, 3.4vw, 76px);
+  --hud-bottom: clamp(20px, 3.5vh, 44px);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+button, input { font: inherit; color: inherit; }
+h1, h2, p { margin: 0; }
+svg { display: block; }
+
+/* ---------- Vollbild ---------- */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-screen);
+  display: grid;
+  grid-template-rows: 1fr auto;
+  background: var(--c-screen);
+  outline: none;
+}
+.screen[hidden] { display: none; }
+
+.layout {
+  display: grid;
+  grid-auto-flow: column;
+  place-content: center;
+  align-items: start;
+  gap: var(--column-gap);
+  min-height: 0;
+  padding: var(--space-5) var(--space-5) 0;
+}
+
+.left { display: flex; gap: calc(var(--gap) * 2.5); align-items: flex-start; }
+.middle { display: flex; flex-direction: column; gap: calc(var(--gap) * 2.5); }
+.right { display: flex; flex-direction: column; gap: calc(var(--gap) * 2.5); max-height: 100%; min-height: 0; }
+.right__own { display: flex; flex-direction: column; gap: calc(var(--gap) * 2.5); }
+.right__own[hidden], .other[hidden], .other section[hidden] { display: none; }
+
+/* Zweites Fenster: fremdes Inventar statt Ausruestung und Boden. Lange Kofferraeume scrollen. */
+.other {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--gap) * 2.5);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--space-2);
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--rgb-ink) / 0.16) transparent;
+}
+.other::-webkit-scrollbar { width: 6px; }
+.other::-webkit-scrollbar-thumb { border-radius: var(--radius-sm); background: rgb(var(--rgb-ink) / 0.16); }
+.other__note { font-size: var(--fs-xs); color: var(--c-text-faint); }
+.other__note:empty { display: none; }
+
+/* Kopfleiste ueber jedem Raster */
+.strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: var(--strip);
+  padding: 0 var(--space-3);
+  margin-bottom: var(--gap);
+  border-radius: var(--radius-sm);
+  background: var(--c-strip);
+}
+.strip__title {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--c-text-muted);
+}
+.strip__meta {
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.strip__meta[data-full] { color: var(--c-signal); }
+.strip__meta--quiet { font-weight: 600; text-transform: none; color: var(--c-text-faint); font-size: var(--fs-xs); }
+
+/* Schnellzugriff: eigene Spalte links */
+.quick { display: flex; flex-direction: column; align-items: center; }
+.quick__title {
+  height: calc(var(--strip) + var(--gap));
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.15;
+  text-transform: uppercase;
+  text-align: center;
+  white-space: pre-line;
+}
+.quick__list { display: flex; flex-direction: column; gap: var(--gap); padding-left: calc(var(--badge) * 0.6); }
+.quick__row { position: relative; }
+.quick__key {
+  position: absolute;
+  left: calc(var(--badge) * -0.6);
+  top: 50%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: calc(var(--badge) * 0.8);
+  height: var(--badge);
+  border-radius: var(--radius-sm);
+  background: var(--c-badge);
+  color: var(--c-on-badge);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 5), var(--slot));
+  gap: var(--gap);
+}
+
+/* ---------- Kachel ---------- */
+
+.slot {
+  position: relative;
+  width: var(--slot);
+  height: var(--slot);
+  padding: 0;
+  border: 1px solid var(--c-slot-line);
+  border-radius: var(--radius-md);
+  background: var(--c-slot);
+  overflow: hidden;
+  cursor: default;
+  touch-action: none;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.slot[data-filled] { cursor: grab; }
+.slot:hover { background: var(--c-slot-hover); }
+.slot:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.slot[aria-pressed="true"] { border-color: var(--c-accent); }
+.slot[data-target] { border-color: var(--c-accent); background: var(--c-accent-soft); }
+.slot[data-dragging] { opacity: 0.3; }
+.slot[data-locked] { cursor: not-allowed; }
+.slot[data-locked]:hover { background: var(--c-slot); }
+
+.slot__img {
+  position: absolute;
+  inset: 16% 12% 20%;
+  width: 76%;
+  height: 64%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.slot__count {
+  position: absolute;
+  left: calc(var(--slot) * 0.08);
+  top: calc(var(--slot) * 0.06);
+  font-size: var(--slot-font);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.slot__name {
+  position: absolute;
+  left: calc(var(--slot) * 0.08);
+  right: calc(var(--slot) * 0.06);
+  bottom: calc(var(--slot) * 0.06);
+  font-size: var(--slot-font);
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* Kein Bild vorhanden: Anfangsbuchstabe gross in die Mitte, der Name steht unten */
+.slot__fallback {
+  position: absolute;
+  inset: 22% 8% 24%;
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--slot) * 0.3);
+  font-weight: 800;
+  color: var(--c-ghost-icon);
+  pointer-events: none;
+}
+/* Leere Ausruestung: Umriss und Name, sehr blass */
+.slot__ghost {
+  position: absolute;
+  inset: 20% 26% 32%;
+  background-color: var(--c-ghost-icon);
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+  pointer-events: none;
+}
+.slot__label {
+  position: absolute;
+  left: var(--space-1);
+  right: var(--space-1);
+  bottom: calc(var(--slot) * 0.07);
+  font-size: var(--slot-font);
+  font-weight: 600;
+  text-align: center;
+  color: var(--c-text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.slot__label--middle { top: 50%; bottom: auto; transform: translateY(-50%); }
+.slot[data-bound] { cursor: pointer; }
+.slot__lock {
+  position: absolute;
+  inset: 34%;
+  color: var(--c-ghost-icon);
+  pointer-events: none;
+}
+.slot__lock svg { width: 100%; height: 100%; }
+
+/* Gezogenes Item am Mauszeiger */
+.ghost {
+  position: fixed;
+  z-index: var(--z-ghost);
+  border-color: var(--c-accent);
+  background: rgb(var(--rgb-base) / 0.95);
+  box-shadow: var(--shadow-float);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.ghost[hidden] { display: none; }
+
+/* ---------- Fusszeile ---------- */
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  font-size: var(--fs-xs);
+  color: var(--c-text-muted);
+}
+.foot__item { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+.key {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--c-menu-line);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  color: var(--c-text);
+}
+.close {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  color: var(--c-text-muted);
+}
+.close:hover { color: var(--c-text); }
+.close:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 4px; border-radius: var(--radius-sm); }
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--space-6) * 2);
+  z-index: var(--z-float);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid rgb(var(--rgb-signal) / 0.4);
+  border-radius: var(--radius-md);
+  background: var(--c-menu);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-signal);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.toast:empty { display: none; }
+
+/* ---------- Info beim Drueberfahren ---------- */
+
+.tip {
+  position: fixed;
+  z-index: var(--z-float);
+  max-width: 280px;
+  padding: var(--space-3);
+  border: 1px solid var(--c-menu-line);
+  border-radius: var(--radius-md);
+  background: var(--c-menu);
+  box-shadow: var(--shadow-float);
+  pointer-events: none;
+}
+.tip[hidden] { display: none; }
+.tip__name { font-size: var(--fs-md); font-weight: 700; }
+.tip__meta { margin-top: 2px; font-size: var(--fs-xs); color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+.tip__text { margin-top: var(--space-2); font-size: var(--fs-xs); line-height: 1.45; color: var(--c-text-muted); }
+.tip__text:empty { display: none; }
+.tip__serial { margin-top: var(--space-2); font-size: var(--fs-xs); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+.tip__serial:empty { display: none; }
+
+/* ---------- Rechtsklick-Menue ---------- */
+
+.menu {
+  position: fixed;
+  z-index: var(--z-float);
+  min-width: 200px;
+  padding: var(--space-1);
+  border: 1px solid var(--c-menu-line);
+  border-radius: var(--radius-md);
+  background: var(--c-menu);
+  box-shadow: var(--shadow-float);
+  transform-origin: top left;
+  animation: menu-in var(--dur-fast) var(--ease-out);
+}
+.menu[hidden] { display: none; }
+@keyframes menu-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.menu__head { padding: var(--space-2) var(--space-3) var(--space-1); font-size: var(--fs-sm); font-weight: 700; }
+.menu__amount {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--c-text-muted);
+}
+.amount {
+  width: 7ch;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--c-menu-line);
+  border-radius: var(--radius-sm);
+  background: var(--c-strip);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: text;
+}
+.amount:focus-visible { outline: none; border-color: var(--c-text-muted); }
+.menu__line { height: 1px; margin: var(--space-1) 0; background: var(--c-menu-line); }
+.menu__btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.menu__btn:hover:not(:disabled), .menu__btn:focus-visible { background: var(--c-slot-hover); outline: none; }
+.menu__btn:disabled { opacity: 0.4; cursor: default; }
+.menu__btn--main { color: var(--c-accent); }
+.menu__hint { font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-faint); font-variant-numeric: tabular-nums; }
+.menu__empty { padding: var(--space-2) var(--space-3); font-size: var(--fs-xs); color: var(--c-text-muted); }
+
+/* ---------- Schnellzugriff-Leiste ohne Fenster ---------- */
+
+.hud {
+  --slot: var(--hud-slot);
+  --slot-font: max(9px, calc(var(--hud-slot) * 0.13));
+  position: fixed;
+  left: 50%;
+  bottom: var(--hud-bottom);
+  display: flex;
+  gap: var(--space-1);
+  transform: translateX(-50%);
+  pointer-events: none;
+  animation: hud-in var(--dur-hud) var(--ease-out);
+}
+.hud[hidden] { display: none; }
+.hud[data-leaving] { opacity: 0; transition: opacity var(--dur-hud) var(--ease-out); }
+@keyframes hud-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.hud .slot { background: rgb(var(--rgb-base) / 0.82); border-color: rgb(var(--rgb-ink) / 0.12); }
+.hud .slot[aria-current="true"] { border-color: var(--c-accent); }
+.hud .slot__name { display: none; }
+.hud__key {
+  position: absolute;
+  right: calc(var(--slot) * 0.08);
+  top: calc(var(--slot) * 0.06);
+  font-size: var(--slot-font);
+  font-weight: 800;
+  color: var(--c-text-faint);
+}
+.hud__error {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--hud-bottom) + var(--hud-slot) + var(--space-2));
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: rgb(var(--rgb-base) / 0.82);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-signal);
+  pointer-events: none;
+}
+.hud__error:empty, .hud__error[hidden] { display: none; }
+
+/* ---------- Gezeigtes Dokument (ohne Fokus, rechts am Rand) ---------- */
+
+.card {
+  --card-w: clamp(300px, 21vw, 440px);
+  position: fixed;
+  right: clamp(16px, 3vw, 56px);
+  top: 50%;
+  z-index: var(--z-float);
+  width: var(--card-w);
+  border: 1px solid var(--c-menu-line);
+  border-radius: var(--radius-md);
+  background: var(--c-menu);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  transform: translateY(-50%);
+  animation: card-in var(--dur-hud) var(--ease-out);
+  pointer-events: none;
+}
+.card[hidden] { display: none; }
+@keyframes card-in {
+  from { opacity: 0; transform: translate(12px, -50%); }
+  to   { opacity: 1; transform: translate(0, -50%); }
+}
+.card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--c-strip);
+}
+.card__title { font-size: var(--fs-sm); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.card__state { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--c-text-muted); }
+.card__state[data-tone="bad"] { color: var(--c-signal); }
+.card__body { display: flex; gap: var(--space-4); padding: var(--space-4); }
+.card__photo {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(var(--card-w) * 0.3);
+  aspect-ratio: 3 / 4;
+  border-radius: var(--radius-sm);
+  background: var(--c-slot) center / cover no-repeat;
+  font-size: calc(var(--card-w) * 0.09);
+  font-weight: 800;
+  color: var(--c-text-faint);
+}
+.card__photo[hidden] { display: none; }
+.card__fields { display: grid; grid-template-columns: auto 1fr; align-content: start; gap: var(--space-2) var(--space-3); margin: 0; min-width: 0; }
+.card__fields dt { font-size: var(--fs-xs); color: var(--c-text-muted); white-space: nowrap; }
+.card__fields dd { margin: 0; font-size: var(--fs-sm); font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.card__timer { height: 3px; background: var(--c-strip); }
+.card__timer-fill { height: 100%; background: var(--c-text-faint); transform-origin: left center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .menu, .hud, .card { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="screen" id="screen" hidden tabindex="-1" role="dialog" aria-modal="true" aria-label="Inventar">
+  <main class="layout">
+    <div class="left">
+      <section class="quick" aria-labelledby="quick-title">
+        <h2 class="quick__title" id="quick-title"></h2>
+        <div class="quick__list" id="quick"></div>
+      </section>
+
+      <div class="middle">
+        <section aria-labelledby="pocket-title">
+          <div class="strip">
+            <h2 class="strip__title" id="pocket-title"></h2>
+            <span class="strip__meta" id="pocket-weight"></span>
+          </div>
+          <div class="grid" id="pocket"></div>
+        </section>
+
+        <section aria-labelledby="bag-title">
+          <div class="strip">
+            <h2 class="strip__title" id="bag-title"></h2>
+            <span class="strip__meta" id="bag-weight"></span>
+          </div>
+          <div class="grid" id="bag"></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="right__own" id="own-side">
+      <section aria-labelledby="equip-title">
+        <div class="strip">
+          <h2 class="strip__title" id="equip-title"></h2>
+        </div>
+        <div class="grid" id="equip"></div>
+      </section>
+
+      <section aria-labelledby="docs-title">
+        <div class="strip">
+          <h2 class="strip__title" id="docs-title"></h2>
+        </div>
+        <div class="grid" id="docs"></div>
+      </section>
+
+      <section aria-labelledby="drop-title">
+        <div class="strip">
+          <h2 class="strip__title" id="drop-title"></h2>
+          <span class="strip__meta strip__meta--quiet" id="drop-meta"></span>
+        </div>
+        <div class="grid" id="drop"></div>
+      </section>
+      </div>
+
+      <div class="other" id="other" hidden>
+        <section aria-labelledby="other-title">
+          <div class="strip">
+            <h2 class="strip__title" id="other-title"></h2>
+            <span class="strip__meta" id="other-weight"></span>
+          </div>
+          <div class="grid" id="other-grid"></div>
+        </section>
+        <section id="other-bag-section" aria-labelledby="other-bag-title">
+          <div class="strip">
+            <h2 class="strip__title" id="other-bag-title"></h2>
+            <span class="strip__meta" id="other-bag-weight"></span>
+          </div>
+          <div class="grid" id="other-bag"></div>
+        </section>
+        <section id="other-equip-section" aria-labelledby="other-equip-title">
+          <div class="strip">
+            <h2 class="strip__title" id="other-equip-title"></h2>
+          </div>
+          <div class="grid" id="other-equip"></div>
+        </section>
+        <section id="other-docs-section" aria-labelledby="other-docs-title">
+          <div class="strip">
+            <h2 class="strip__title" id="other-docs-title"></h2>
+          </div>
+          <div class="grid" id="other-docs"></div>
+        </section>
+        <p class="other__note" id="other-note"></p>
+      </div>
+    </div>
+  </main>
+
+  <footer class="foot" id="foot"></footer>
+</div>
+
+<div class="slot ghost" id="ghost" hidden></div>
+<div class="tip" id="tip" hidden>
+  <p class="tip__name" id="tip-name"></p>
+  <p class="tip__meta" id="tip-meta"></p>
+  <p class="tip__text" id="tip-text"></p>
+  <p class="tip__serial" id="tip-serial"></p>
+</div>
+<div class="menu" id="menu" role="menu" hidden></div>
+<p class="toast" id="toast" role="alert" aria-live="polite"></p>
+<div class="hud" id="hud" hidden aria-hidden="true"></div>
+<article class="card" id="card" hidden aria-live="polite">
+  <header class="card__head">
+    <h2 class="card__title" id="card-title"></h2>
+    <span class="card__state" id="card-state"></span>
+  </header>
+  <div class="card__body">
+    <div class="card__photo" id="card-photo"></div>
+    <dl class="card__fields" id="card-fields"></dl>
+  </div>
+  <div class="card__timer"><div class="card__timer-fill" id="card-timer"></div></div>
+</article>
+<p class="hud__error" id="hud-error" hidden></p>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();
+</script>
+
+<script id="mock">
+/* Nur im Browser: Beispieldaten, damit man das Fenster ohne FiveM ansehen kann */
+const Mock = {
+  delay: 40,
+  async handle(event, data) {
+    await new Promise((r) => setTimeout(r, this.delay));
+    if (event === 'inv_players') return { ok: true, data: { players: [{ serverId: 4, characterId: 17, distance: 1.4 }, { serverId: 9, characterId: 230, distance: 2.6 }] } };
+    if (event === 'inv_give') return { ok: false, error: 'target_too_heavy' };
+    console.info(`[mock] ${event}`, data);
+    return { ok: true };
+  },
+};
+</script>
+
+<script id="app">
+const TEXT = {
+  quick: 'Schnell-\nzugriff',
+  pocket: 'Taschen',
+  bag: 'Rucksack',
+  bagLocked: 'Kein Rucksack',
+  bagMeta: (level, now, max) => (level ? `Level ${level} · ${now} / ${max}` : `${now} / ${max}`),
+  equip: 'Dich anziehen',
+  docs: 'Dokumente',
+  show: 'Zeigen',
+  docValid: (date) => `Gültig bis ${date}`,
+  docExpired: 'Abgelaufen',
+  docRevoked: 'Entzogen',
+  docClasses: (list) => `Klassen ${list}`,
+  drop: 'Boden',
+  dropEmpty: 'Hierher ziehen zum Ablegen',
+  dropHere: 'Beutel in der Nähe',
+  count: (n) => `${n} Stück`,
+  weight: (now, max) => `${now} / ${max}`,
+  tipMeta: (count, weight) => `${count} Stück · ${weight}`,
+  tipWeapon: (ammo, weight) => (ammo === undefined ? weight : `${ammo} Schuss · ${weight}`),
+  rounds: (n) => `${n} Schuss`,
+  money: (n) => `${moneyFormat.format(n)} $`,
+  serial: (s) => (s ? `Seriennummer ${s}` : 'Keine Seriennummer'),
+  amount: 'Anzahl',
+  use: 'Benutzen',
+  equipIt: 'Anziehen',
+  unequip: 'Ausziehen',
+  pickUp: 'Aufheben',
+  give: 'Geben',
+  dropIt: 'Ablegen',
+  split: 'Hälfte abteilen',
+  take: 'Nehmen',
+  put: { trunk: 'In den Kofferraum', stash: 'Ins Lager', admin: 'Hineinlegen' },
+  weaponSlot: 'Waffe',
+  otherBag: 'Rucksack',
+  otherEquip: 'Kleidung',
+  otherDocs: 'Dokumente',
+  otherNote: { search: 'Du kannst nur nehmen. Die Person sieht, dass du sie durchsuchst.', admin: 'Jede Änderung wird geloggt.' },
+  docStays: 'Dokumente bleiben bei der Person.',
+  nobody: (m) => `Niemand in ${m} m Nähe`,
+  loading: 'Sucht Spieler…',
+  player: (p) => `ID ${p.characterId}`,
+  distance: (p) => `${p.distance.toLocaleString('de-DE')} m`,
+  emptySlot: 'Leerer Platz',
+  emptyEquip: (label) => `${label}, leer`,
+  foot: [
+    ['Rechtsklick', 'Aktionen'],
+    ['Doppelklick', 'Benutzen'],
+    ['Shift + Ziehen', 'Hälfte'],
+  ],
+  close: 'Schließen',
+  closeKey: 'Esc',
+  errors: {
+    too_heavy: 'Das ist zu schwer.',
+    no_space: 'Dafür ist kein Platz mehr.',
+    wrong_slot: 'Das passt hier nicht hin.',
+    bag_in_bag: 'Der Rucksack passt nicht in sich selbst.',
+    no_bag: 'Leg erst einen Rucksack an.',
+    stack_full: 'Der Stapel ist schon voll.',
+    invalid_count: 'Diese Anzahl geht nicht.',
+    invalid_slot: 'Dieser Platz geht nicht.',
+    empty_slot: 'Da liegt nichts.',
+    not_usable: 'Das kann man nicht benutzen.',
+    not_enough: 'Davon hast du nicht genug.',
+    too_far: 'Die Person steht zu weit weg.',
+    target_offline: 'Die Person ist nicht mehr da.',
+    target_full: 'Die Person hat keinen Platz mehr.',
+    target_too_heavy: 'Das ist der Person zu schwer.',
+    twink_blocked: 'An eigene Charaktere kann man nichts geben.',
+    drop_gone: 'Der Beutel ist nicht mehr da.',
+    no_position: 'Deine Position konnte nicht gelesen werden.',
+    rate_limited: 'Etwas langsamer bitte.',
+    timeout: 'Der Server antwortet nicht.',
+    no_weapon: 'Du hast keine Waffe in der Hand.',
+    wrong_ammo: 'Die Munition passt nicht in diese Waffe.',
+    weapon_full: 'Die Waffe ist schon voll geladen.',
+    wrong_gender: 'Das Teil passt nicht zu deinem Charakter.',
+    bound: 'Dokumente bleiben bei dir. Zeigen geht mit Rechtsklick.',
+    not_allowed: 'Das geht hier nicht.',
+    search_ended: 'Die Durchsuchung ist vorbei.',
+    trunk_closed: 'Der Kofferraum ist nicht mehr offen.',
+    stash_closed: 'Du stehst nicht mehr am Lager.',
+    view_closed: 'Das andere Inventar ist zu.',
+    fallback: 'Das hat nicht geklappt.',
+  },
+};
+
+// Schloss fuer gesperrte Rucksack-Reihen (die Umrisse der Ausruestung liegen als Bilder in html/icons/)
+const SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+const ICONS = {
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+};
+const icon = (name) => `${SVG_OPEN}${ICONS[name] || ''}</svg>`;
+
+const CARD_TEXT = {
+  surname: 'Name',
+  firstname: 'Vorname',
+  born: 'Geburtsdatum',
+  gender: 'Geschlecht',
+  number: 'Ausweisnummer',
+  classes: 'Klassen',
+  valid: 'Gültig bis',
+  genders: { male: 'männlich', female: 'weiblich' },
+  states: { valid: 'Gültig', expired: 'Abgelaufen', revoked: 'Entzogen' },
+  classItem: (c) => `${c.id} (${c.label})`,
+};
+
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const GRAMS_PER_KG = 1000;
+const DRAG_THRESHOLD_PX = 5;
+const TIP_DELAY_MS = 280;
+const TOAST_MS = 3500;
+const HUD_VISIBLE_MS = 2200;
+const HUD_FADE_MS = 180;
+const POCKET_COLS = 5;
+const SIDE_COLS = 4;
+const FLOAT_MARGIN = 12;
+const DEFAULT_LAYOUT = { slots: 10, hotbar: 5, bagSlots: 25, dropSlots: 30, equip: [], giveDistance: 3 };
+const IMAGE_BASE = '../images/';
+
+const kgFormat = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 });
+const moneyFormat = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
+const dateFormat = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const formatKg = (grams) => `${kgFormat.format((Number(grams) || 0) / GRAMS_PER_KG)} kg`;
+
+const state = {
+  open: false,
+  items: {},
+  layout: DEFAULT_LAYOUT,
+  inv: { items: [], weight: 0, maxWeight: 0 },
+  drop: null,
+  other: null,         // zweites Fenster, siehe Other
+  selected: null,      // { inv, slot }
+  menu: null,          // { ref, giving, players }
+  busy: false,
+};
+
+const missingImages = new Set();
+
+const $ = (id) => document.getElementById(id);
+const el = {
+  screen: $('screen'), foot: $('foot'),
+  quick: $('quick'), quickTitle: $('quick-title'),
+  pocket: $('pocket'), pocketTitle: $('pocket-title'), pocketWeight: $('pocket-weight'),
+  bag: $('bag'), bagTitle: $('bag-title'), bagWeight: $('bag-weight'),
+  equip: $('equip'), equipTitle: $('equip-title'), docs: $('docs'), docsTitle: $('docs-title'),
+  drop: $('drop'), dropTitle: $('drop-title'), dropMeta: $('drop-meta'),
+  ghost: $('ghost'), tip: $('tip'), tipName: $('tip-name'), tipMeta: $('tip-meta'), tipText: $('tip-text'), tipSerial: $('tip-serial'),
+  menu: $('menu'), toast: $('toast'), hud: $('hud'), hudError: $('hud-error'),
+  ownSide: $('own-side'), other: $('other'), otherTitle: $('other-title'), otherWeight: $('other-weight'), otherGrid: $('other-grid'),
+  otherBagSection: $('other-bag-section'), otherBagTitle: $('other-bag-title'), otherBagWeight: $('other-bag-weight'), otherBag: $('other-bag'),
+  otherEquipSection: $('other-equip-section'), otherEquipTitle: $('other-equip-title'), otherEquip: $('other-equip'),
+  otherDocsSection: $('other-docs-section'), otherDocsTitle: $('other-docs-title'), otherDocs: $('other-docs'), otherNote: $('other-note'),
+};
+
+/* ---------- Hilfen ---------- */
+
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  COLOR_KEYS.forEach((key) => {
+    const value = colors[key];
+    if (typeof value === 'string' && COLOR_PATTERN.test(value.trim())) {
+      document.documentElement.style.setProperty(`--rgb-${key}`, value.trim());
+    }
+  });
+}
+
+// Lua schickt leere Tabellen manchmal als {} statt []
+const asArray = (value) => (Array.isArray(value) ? value : []);
+const hasBag = () => state.inv.bag != null;
+
+function bySlot(list) {
+  const map = {};
+  asArray(list).forEach((entry) => { map[entry.slot] = entry; });
+  return map;
+}
+
+const isOther = (inv) => inv === 'other' || inv === 'otherbag';
+
+function containerOf(inv) {
+  if (inv === 'bag') return bySlot(state.inv.bag);
+  if (inv === 'other') return bySlot(state.other && state.other.items);
+  if (inv === 'otherbag') return bySlot(state.other && state.other.bag && state.other.bag.items);
+  if (inv === 'drop') return bySlot(state.drop && state.drop.items);
+  return bySlot(state.inv.items);
+}
+
+function entryAt(ref) {
+  return ref ? containerOf(ref.inv)[ref.slot] || null : null;
+}
+
+// Eigener Name aus den Metadaten (z. B. Kleidung "Lederjacke schwarz"), sonst der Item-Name
+function labelOf(entry) {
+  const own = entry && entry.meta && entry.meta.label;
+  return typeof own === 'string' && own !== '' ? own : def(entry.name).label;
+}
+
+function def(name) {
+  return state.items[name] || { label: name, weight: 0, stack: 1 };
+}
+
+const isEquipSlot = (ref) => ref.inv === 'self' && !/^\d+$/.test(ref.slot);
+
+function errorText(code) {
+  return TEXT.errors[code] || TEXT.errors.fallback;
+}
+
+let toastTimer = null;
+function showError(code) {
+  setText(el.toast, errorText(code));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => setText(el.toast, ''), TOAST_MS);
+}
+
+/* ---------- Kacheln bauen ---------- */
+
+// Dokumente zeigen oben Klassen oder den Stand statt einer Anzahl
+function docBadge(meta) {
+  if (meta.status === 'revoked') return TEXT.docRevoked;
+  if (meta.status === 'expired') return TEXT.docExpired;
+  return meta.classes ? meta.classes.split(',').join(' ') : '';
+}
+
+function itemContent(node, entry) {
+  const item = def(entry.name);
+  const ammo = entry.meta && entry.meta.ammo;
+  let countText = TEXT.count(entry.count);
+  if (item.document) countText = docBadge(entry.meta || {});
+  else if (item.money) countText = TEXT.money(entry.count);
+  else if (ammo !== undefined && ammo !== null) countText = TEXT.rounds(ammo);
+  node.append(make('span', 'slot__count', countText));
+  const fallback = () => make('span', 'slot__fallback', (labelOf(entry) || '?').charAt(0).toUpperCase());
+  if (missingImages.has(entry.name)) {
+    node.append(fallback());
+  } else {
+    const img = make('img', 'slot__img');
+    img.alt = '';
+    img.draggable = false;
+    img.src = `${IMAGE_BASE}${entry.name}.png`;
+    img.addEventListener('error', () => {
+      missingImages.add(entry.name);
+      img.replaceWith(fallback());
+    }, { once: true });
+    node.append(img);
+  }
+  node.append(make('span', 'slot__name', labelOf(entry)));
+}
+
+function slotNode(inv, slot, entry, options = {}) {
+  const node = make('button', 'slot');
+  node.type = 'button';
+  node.dataset.inv = inv;
+  node.dataset.slot = slot;
+  if (options.locked) {
+    node.dataset.locked = '';
+    node.tabIndex = -1;
+    node.setAttribute('aria-label', TEXT.bagLocked);
+    const lock = make('span', 'slot__lock');
+    lock.innerHTML = icon('lock');
+    node.append(lock);
+    return node;
+  }
+  if (entry) {
+    node.dataset.filled = '';
+    if (def(entry.name).document) node.dataset.bound = '';
+    node.setAttribute('aria-label', `${labelOf(entry)}, ${TEXT.count(entry.count)}`);
+    itemContent(node, entry);
+  } else if (options.docLabel) {
+    node.append(make('span', 'slot__label slot__label--middle', options.docLabel));
+    node.setAttribute('aria-label', TEXT.emptyEquip(options.docLabel));
+  } else if (options.ghost) {
+    // Umriss aus html/icons/<platz>.png, eingefaerbt ueber --c-ghost-icon
+    const ghost = make('span', 'slot__ghost');
+    ghost.style.setProperty('--icon', `url("icons/${options.ghost}.png")`);
+    node.append(ghost, make('span', 'slot__label', options.label));
+    node.setAttribute('aria-label', TEXT.emptyEquip(options.label));
+  } else {
+    node.setAttribute('aria-label', TEXT.emptySlot);
+  }
+  const selected = state.selected && state.selected.inv === inv && state.selected.slot === slot;
+  node.setAttribute('aria-pressed', String(Boolean(selected)));
+  return node;
+}
+
+function renderQuick() {
+  const items = containerOf('self');
+  const rows = [];
+  for (let i = 1; i <= state.layout.hotbar; i += 1) {
+    const row = make('div', 'quick__row');
+    row.append(make('span', 'quick__key', String(i)), slotNode('self', String(i), items[String(i)]));
+    rows.push(row);
+  }
+  el.quick.replaceChildren(...rows);
+}
+
+function renderGrid(node, inv, from, to, cols, options = {}) {
+  const items = containerOf(inv);
+  const slots = [];
+  for (let i = from; i <= to; i += 1) {
+    const key = String(i);
+    const locked = options.locked || (options.openUpTo !== undefined && i > options.openUpTo);
+    slots.push(slotNode(inv, key, items[key], { ...options, locked }));
+  }
+  node.style.setProperty('--cols', String(cols));
+  node.replaceChildren(...slots);
+}
+
+function renderWeight(meta, now, max) {
+  setText(meta, TEXT.weight(formatKg(now), formatKg(max)));
+  meta.toggleAttribute('data-full', max > 0 && now >= max);
+}
+
+function renderEquip() {
+  const items = containerOf('self');
+  el.equip.style.setProperty('--cols', String(SIDE_COLS));
+  el.equip.replaceChildren(...state.layout.equip.map((slot) => slotNode('self', slot.id, items[slot.id], { ghost: slot.id, label: slot.label })));
+}
+
+function renderDocs() {
+  const items = containerOf('self');
+  el.docs.style.setProperty('--cols', String(SIDE_COLS));
+  el.docs.replaceChildren(...asArray(state.layout.documents).map((slot) => slotNode('self', slot.id, items[slot.id], { docLabel: slot.label })));
+}
+
+function equipLabel(id, fallback) {
+  const slot = state.layout.equip.find((e) => e.id === id);
+  return slot ? slot.label : fallback;
+}
+
+function renderOther() {
+  const other = state.other;
+  el.ownSide.hidden = Boolean(other);
+  el.other.hidden = !other;
+  if (!other) return;
+
+  setText(el.otherTitle, other.title || '');
+  renderWeight(el.otherWeight, other.weight, other.maxWeight);
+  renderGrid(el.otherGrid, 'other', 1, Number(other.slots) || 0, POCKET_COLS);
+  // Beim Durchsuchen steht die Waffe in der Hand mit im Raster, beim Admin bei der Kleidung
+  if (other.weaponSlot && !other.equip) {
+    el.otherGrid.append(slotNode('other', 'weapon', containerOf('other').weapon, { ghost: 'weapon', label: equipLabel('weapon', TEXT.weaponSlot) }));
+  }
+
+  const bag = other.bag;
+  el.otherBagSection.hidden = !bag;
+  if (bag) {
+    renderGrid(el.otherBag, 'otherbag', 1, Number(bag.slots) || 0, POCKET_COLS);
+    renderWeight(el.otherBagWeight, bag.weight, bag.maxWeight);
+  }
+
+  const items = containerOf('other');
+  const equip = asArray(other.equip);
+  el.otherEquipSection.hidden = equip.length === 0;
+  el.otherEquip.style.setProperty('--cols', String(SIDE_COLS));
+  el.otherEquip.replaceChildren(...equip.map((slot) => slotNode('other', slot.id, items[slot.id], { ghost: slot.id, label: slot.label })));
+
+  const docs = asArray(other.documents);
+  el.otherDocsSection.hidden = docs.length === 0;
+  el.otherDocs.style.setProperty('--cols', String(SIDE_COLS));
+  el.otherDocs.replaceChildren(...docs.map((slot) => slotNode('other', slot.id, items[slot.id], { docLabel: slot.label })));
+
+  setText(el.otherNote, TEXT.otherNote[other.kind] || '');
+}
+
+function render() {
+  el.screen.hidden = !state.open;
+  if (!state.open) return;
+
+  renderQuick();
+  renderGrid(el.pocket, 'self', state.layout.hotbar + 1, state.layout.slots, POCKET_COLS);
+  renderWeight(el.pocketWeight, state.inv.weight, state.inv.maxWeight);
+
+  if (hasBag()) {
+    // Jedes Rucksack-Level gibt eine Reihe frei, der Rest bleibt mit Schloss sichtbar
+    const open = Number(state.inv.bagSlots) || state.layout.bagSlots;
+    renderGrid(el.bag, 'bag', 1, state.layout.bagSlots, POCKET_COLS, { openUpTo: open });
+    setText(el.bagWeight, TEXT.bagMeta(state.inv.bagLevel, formatKg(state.inv.bagWeight), formatKg(state.inv.bagMaxWeight)));
+    el.bagWeight.toggleAttribute('data-full', state.inv.bagMaxWeight > 0 && state.inv.bagWeight >= state.inv.bagMaxWeight);
+  } else {
+    renderGrid(el.bag, 'bag', 1, state.layout.bagSlots, POCKET_COLS, { locked: true });
+    setText(el.bagWeight, TEXT.bagLocked);
+    el.bagWeight.removeAttribute('data-full');
+  }
+
+  renderEquip();
+  renderDocs();
+
+  // Boden: der Beutel in Reichweite, sonst eine Reihe freier Plaetze zum Ablegen
+  const used = asArray(state.drop && state.drop.items).reduce((max, e) => Math.max(max, Number(e.slot) || 0), 0);
+  const count = Math.min(state.layout.dropSlots, Math.max(SIDE_COLS, Math.ceil((used + 1) / SIDE_COLS) * SIDE_COLS));
+  renderGrid(el.drop, 'drop', 1, count, SIDE_COLS);
+  setText(el.dropMeta, state.drop ? TEXT.dropHere : TEXT.dropEmpty);
+
+  renderOther();
+}
+
+/* ---------- Server ---------- */
+
+async function request(event, payload) {
+  if (state.busy) return null;
+  state.busy = true;
+  const result = await Bridge.send(event, payload);
+  state.busy = false;
+  if (result && result.data && result.data.state) {
+    state.inv = result.data.state;
+    state.drop = result.data.drop || null;
+    state.other = result.data.other || null;
+  }
+  if (!result || !result.ok) showError(result && result.error);
+  if (state.selected && !entryAt(state.selected)) state.selected = null;
+  render();
+  return result;
+}
+
+function refOf(node) {
+  const ref = { inv: node.dataset.inv, slot: node.dataset.slot };
+  if (ref.inv === 'drop' && state.drop) ref.id = state.drop.id;
+  return ref;
+}
+
+const dropTarget = () => (state.drop ? { inv: 'drop', id: state.drop.id } : { inv: 'drop' });
+
+function freePocket() {
+  const items = containerOf('self');
+  for (let i = state.layout.hotbar + 1; i <= state.layout.slots; i += 1) {
+    if (!items[String(i)]) return String(i);
+  }
+  for (let i = 1; i <= state.layout.hotbar; i += 1) {
+    if (!items[String(i)]) return String(i);
+  }
+  return null;
+}
+
+function freeOther() {
+  const other = state.other;
+  if (!other) return null;
+  const items = containerOf('other');
+  for (let i = 1; i <= (Number(other.slots) || 0); i += 1) {
+    if (!items[String(i)]) return String(i);
+  }
+  return null;
+}
+
+function take(ref, count) {
+  const free = freePocket();
+  if (!free) {
+    showError('no_space');
+    return;
+  }
+  const payload = { from: ref, to: { inv: 'self', slot: free } };
+  if (count) payload.count = count;
+  request('inv_move', payload);
+}
+
+function move(from, to, count) {
+  if (from.inv === to.inv && from.slot === to.slot) return;
+  const payload = { from, to };
+  if (count) payload.count = count;
+  request('inv_move', payload);
+}
+
+function use(ref) {
+  if (isOther(ref.inv)) {
+    take(ref);
+    return;
+  }
+  if (ref.inv === 'drop') {
+    // Aus dem Beutel aufheben: in den ersten freien Taschenplatz
+    const free = freePocket();
+    if (!free) {
+      showError('no_space');
+      return;
+    }
+    request('inv_move', { from: ref, to: { inv: 'self', slot: free } });
+    return;
+  }
+  request('inv_use', { inv: ref.inv, slot: ref.slot });
+}
+
+function close() {
+  closeMenu();
+  hideTip();
+  Bridge.send('inv_close', {});
+}
+
+/* ---------- Info beim Drueberfahren ---------- */
+
+let tipTimer = null;
+let tipFor = null;
+
+function placeFloating(node, x, y) {
+  const w = node.offsetWidth;
+  const h = node.offsetHeight;
+  const left = Math.min(Math.max(FLOAT_MARGIN, x), window.innerWidth - w - FLOAT_MARGIN);
+  const top = Math.min(Math.max(FLOAT_MARGIN, y), window.innerHeight - h - FLOAT_MARGIN);
+  node.style.left = `${left}px`;
+  node.style.top = `${top}px`;
+}
+
+function showTip(slot) {
+  if (!slot.isConnected) return;
+  const entry = entryAt(refOf(slot));
+  if (!entry) return;
+  const item = def(entry.name);
+  setText(el.tipName, labelOf(entry));
+  const meta = entry.meta || {};
+  const weight = formatKg(item.weight * entry.count + Number(meta.contentWeight || 0));
+  if (item.document) {
+    const parts = [];
+    if (meta.classes) parts.push(TEXT.docClasses(meta.classes.split(',').join(', ')));
+    if (meta.status === 'expired') parts.push(TEXT.docExpired);
+    else if (meta.status === 'revoked') parts.push(TEXT.docRevoked);
+    else if (meta.expires) parts.push(TEXT.docValid(dateFormat.format(new Date(meta.expires * 1000))));
+    setText(el.tipMeta, parts.join(' · '));
+  } else if (item.money) setText(el.tipMeta, TEXT.money(entry.count));
+  else setText(el.tipMeta, item.weapon ? TEXT.tipWeapon(meta.ammo, weight) : TEXT.tipMeta(entry.count, weight));
+  setText(el.tipSerial, item.weapon ? TEXT.serial(meta.serial) : '');
+  setText(el.tipText, item.description || '');
+  el.tip.hidden = false;
+  const rect = slot.getBoundingClientRect();
+  const right = rect.right + FLOAT_MARGIN;
+  const fitsRight = right + el.tip.offsetWidth < window.innerWidth - FLOAT_MARGIN;
+  placeFloating(el.tip, fitsRight ? right : rect.left - el.tip.offsetWidth - FLOAT_MARGIN, rect.top);
+}
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  tipFor = null;
+  el.tip.hidden = true;
+}
+
+document.addEventListener('pointerover', (e) => {
+  if (!state.open || drag.active || state.menu) return;
+  const slot = e.target.closest('.slot[data-filled]');
+  if (slot === tipFor) return;
+  hideTip();
+  if (!slot || !el.screen.contains(slot)) return;
+  tipFor = slot;
+  tipTimer = setTimeout(() => showTip(slot), TIP_DELAY_MS);
+});
+
+/* ---------- Rechtsklick-Menue ---------- */
+
+function menuButton(label, action, options = {}) {
+  const button = make('button', `menu__btn${options.main ? ' menu__btn--main' : ''}`);
+  button.type = 'button';
+  button.setAttribute('role', 'menuitem');
+  button.dataset.action = action;
+  button.append(make('span', null, label));
+  if (options.hint) button.append(make('span', 'menu__hint', options.hint));
+  if (options.target !== undefined) button.dataset.target = String(options.target);
+  return button;
+}
+
+function amountRow(value, max) {
+  const row = make('label', 'menu__amount');
+  const input = make('input', 'amount');
+  input.id = 'amount';
+  input.name = 'amount';
+  input.type = 'number';
+  input.inputMode = 'numeric';
+  input.min = '1';
+  input.max = String(max);
+  input.step = '1';
+  input.value = value;
+  row.append(make('span', null, TEXT.amount), input);
+  return row;
+}
+
+function renderMenu() {
+  const menu = state.menu;
+  const entry = menu && entryAt(menu.ref);
+  if (!entry) {
+    closeMenu();
+    return;
+  }
+  const item = def(entry.name);
+  const previous = el.menu.querySelector('#amount');
+  const amountValue = previous ? previous.value : String(entry.count);
+  const nodes = [make('p', 'menu__head', labelOf(entry))];
+
+  const fromDrop = menu.ref.inv === 'drop';
+  const equipped = isEquipSlot(menu.ref);
+
+  // Fremdes Inventar: nur nehmen, Dokumente bleiben
+  if (isOther(menu.ref.inv)) {
+    if (item.document) {
+      nodes.push(make('p', 'menu__empty', TEXT.docStays));
+    } else {
+      if (entry.count > 1) nodes.push(amountRow(amountValue, entry.count));
+      nodes.push(menuButton(TEXT.take, 'take', { main: true }));
+    }
+    el.menu.replaceChildren(...nodes);
+    el.menu.querySelectorAll('.menu__btn').forEach((b) => { b.disabled = state.busy; });
+    return;
+  }
+
+  if (item.document) {
+    if (menu.mode) {
+      nodes.push(make('div', 'menu__line'));
+      if (!menu.players) nodes.push(make('p', 'menu__empty', TEXT.loading));
+      else if (menu.players.length === 0) nodes.push(make('p', 'menu__empty', TEXT.nobody(state.layout.giveDistance)));
+      else menu.players.forEach((p) => nodes.push(menuButton(TEXT.player(p), 'show-to', { hint: TEXT.distance(p), target: p.serverId })));
+    } else {
+      nodes.push(menuButton(TEXT.show, 'show', { main: true }));
+    }
+    el.menu.replaceChildren(...nodes);
+    return;
+  }
+
+  if (entry.count > 1 && !equipped) nodes.push(amountRow(amountValue, entry.count));
+
+  if (menu.mode) {
+    nodes.push(make('div', 'menu__line'));
+    if (!menu.players) nodes.push(make('p', 'menu__empty', TEXT.loading));
+    else if (menu.players.length === 0) nodes.push(make('p', 'menu__empty', TEXT.nobody(state.layout.giveDistance)));
+    else menu.players.forEach((p) => nodes.push(menuButton(TEXT.player(p), 'give-to', { hint: TEXT.distance(p), target: p.serverId })));
+  } else {
+    let useLabel = TEXT.use;
+    if (fromDrop) useLabel = TEXT.pickUp;
+    else if (equipped) useLabel = TEXT.unequip;
+    else if (item.equip && item.equip !== 'weapon') useLabel = TEXT.equipIt;
+    nodes.push(menuButton(useLabel, 'use', { main: true }));
+    const putLabel = state.other && state.other.canPut && TEXT.put[state.other.kind];
+    if (putLabel && !fromDrop) nodes.push(menuButton(putLabel, 'put'));
+    if (!fromDrop && !equipped) {
+      nodes.push(menuButton(TEXT.give, 'give'));
+      nodes.push(menuButton(TEXT.dropIt, 'drop'));
+      if (entry.count > 1) nodes.push(menuButton(TEXT.split, 'split'));
+    }
+  }
+  el.menu.replaceChildren(...nodes);
+  el.menu.querySelectorAll('.menu__btn').forEach((b) => { b.disabled = state.busy; });
+}
+
+function openMenu(slot, x, y) {
+  hideTip();
+  const ref = refOf(slot);
+  state.selected = ref;
+  state.menu = { ref, mode: null, players: null };
+  el.menu.replaceChildren();
+  renderMenu();
+  el.menu.hidden = false;
+  placeFloating(el.menu, x, y);
+  render();
+  const first = el.menu.querySelector('.menu__btn');
+  if (first) first.focus();
+}
+
+function closeMenu() {
+  if (!state.menu) return;
+  state.menu = null;
+  el.menu.hidden = true;
+  el.menu.replaceChildren();
+}
+
+function menuCount(entry) {
+  const input = el.menu.querySelector('#amount');
+  const value = input ? Math.floor(Number(input.value)) : entry.count;
+  return Number.isInteger(value) && value >= 1 ? Math.min(value, entry.count) : entry.count;
+}
+
+async function menuAction(name, button) {
+  const menu = state.menu;
+  const entry = menu && entryAt(menu.ref);
+  if (!entry) return;
+  const ref = menu.ref;
+  const count = menuCount(entry);
+  if (name === 'use') {
+    closeMenu();
+    use(ref);
+  } else if (name === 'take') {
+    closeMenu();
+    take(ref, count);
+  } else if (name === 'put') {
+    closeMenu();
+    const free = freeOther();
+    if (!free) {
+      showError('no_space');
+      return;
+    }
+    request('inv_move', { from: ref, to: { inv: 'other', slot: free }, count });
+  } else if (name === 'drop') {
+    closeMenu();
+    request('inv_move', { from: ref, to: dropTarget(), count });
+  } else if (name === 'split') {
+    closeMenu();
+    const free = freePocket();
+    if (!free) {
+      showError('no_space');
+      return;
+    }
+    request('inv_move', { from: ref, to: { inv: 'self', slot: free }, count: Math.floor(entry.count / 2) });
+  } else if (name === 'give' || name === 'show') {
+    menu.mode = name;
+    renderMenu();
+    const result = await Bridge.send('inv_players', {});
+    if (state.menu !== menu) return;
+    menu.players = result && result.ok ? asArray(result.data && result.data.players) : [];
+    renderMenu();
+    const first = el.menu.querySelector('[data-action="give-to"], [data-action="show-to"]');
+    if (first) first.focus();
+  } else if (name === 'give-to') {
+    closeMenu();
+    request('inv_give', { from: ref, count, target: Number(button.dataset.target) });
+  } else if (name === 'show-to') {
+    closeMenu();
+    render();
+    Bridge.send('inv_show', { type: def(entry.name).document, target: Number(button.dataset.target) });
+  }
+}
+
+el.menu.addEventListener('click', (e) => {
+  const button = e.target.closest('.menu__btn');
+  if (button && !button.disabled) menuAction(button.dataset.action, button);
+});
+
+/* ---------- Ziehen und Ablegen ---------- */
+
+const drag = { start: null, from: null, node: null, active: false, target: null, half: false };
+
+function clearTarget() {
+  if (drag.target) drag.target.removeAttribute('data-target');
+  drag.target = null;
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (!state.open) return;
+  if (state.menu && !el.menu.contains(e.target)) {
+    closeMenu();
+    render();
+  }
+  if (e.button !== 0) return;
+  const node = e.target.closest('.slot[data-filled]');
+  if (!node || !el.screen.contains(node) || node.hasAttribute('data-bound')) return;
+  drag.start = { x: e.clientX, y: e.clientY };
+  drag.from = refOf(node);
+  drag.node = node;
+  drag.half = e.shiftKey;
+});
+
+document.addEventListener('pointermove', (e) => {
+  if (!drag.start) return;
+  if (!drag.active) {
+    if (Math.hypot(e.clientX - drag.start.x, e.clientY - drag.start.y) < DRAG_THRESHOLD_PX) return;
+    drag.active = true;
+    hideTip();
+    drag.node.setAttribute('data-dragging', '');
+    el.ghost.replaceChildren(...Array.from(drag.node.children).map((child) => child.cloneNode(true)));
+    el.ghost.hidden = false;
+  }
+  el.ghost.style.left = `${e.clientX}px`;
+  el.ghost.style.top = `${e.clientY}px`;
+  const over = document.elementFromPoint(e.clientX, e.clientY);
+  const slot = over && over.closest('.slot');
+  if (slot !== drag.target) {
+    clearTarget();
+    const blocked = slot && isOther(slot.dataset.inv) && !isOther(drag.from.inv) && !(state.other && state.other.canPut);
+    if (slot && slot !== drag.node && el.screen.contains(slot) && !slot.hasAttribute('data-locked') && !blocked) {
+      drag.target = slot;
+      slot.setAttribute('data-target', '');
+    }
+  }
+});
+
+document.addEventListener('pointerup', (e) => {
+  if (!drag.start) return;
+  const wasDrag = drag.active;
+  const { from, node } = drag;
+  const target = drag.target;
+  const half = drag.half || e.shiftKey;
+  clearTarget();
+  el.ghost.hidden = true;
+  if (node) node.removeAttribute('data-dragging');
+  drag.start = null;
+  drag.active = false;
+  drag.node = null;
+  if (!wasDrag || !target) return;
+  const entry = entryAt(from);
+  const count = entry && half && entry.count > 1 ? Math.floor(entry.count / 2) : null;
+  move(from, refOf(target), count);
+});
+
+/* ---------- Klicks und Tasten ---------- */
+
+document.addEventListener('click', (e) => {
+  if (!state.open) return;
+  if (e.target.closest('[data-action="close"]')) {
+    close();
+    return;
+  }
+  const slot = e.target.closest('.slot[data-filled]');
+  if (!slot || !el.screen.contains(slot)) return;
+  const ref = refOf(slot);
+  const same = state.selected && state.selected.inv === ref.inv && state.selected.slot === ref.slot;
+  state.selected = same ? null : ref;
+  render();
+});
+
+document.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (!state.open) return;
+  const slot = e.target.closest('.slot[data-filled]');
+  if (!slot || !el.screen.contains(slot)) {
+    closeMenu();
+    render();
+    return;
+  }
+  openMenu(slot, e.clientX, e.clientY);
+});
+
+document.addEventListener('dblclick', (e) => {
+  const slot = e.target.closest('.slot[data-filled]');
+  if (!slot || !el.screen.contains(slot)) return;
+  if (slot.hasAttribute('data-bound')) {
+    openMenu(slot, e.clientX, e.clientY);
+    return;
+  }
+  closeMenu();
+  state.selected = refOf(slot);
+  use(state.selected);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (!state.open) return;
+  if (e.key === 'Escape' || e.key === 'F2') {
+    e.preventDefault();
+    if (state.menu && e.key === 'Escape') {
+      closeMenu();
+      render();
+    } else {
+      close();
+    }
+    return;
+  }
+  const focused = document.activeElement;
+  if (e.key === 'Enter' && !state.menu && state.selected && !(focused && focused.matches('button'))) {
+    e.preventDefault();
+    use(state.selected);
+  }
+  // Menue auch per Tastatur (Menue-Taste oder Shift+F10)
+  if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && focused && focused.matches('.slot[data-filled]')) {
+    e.preventDefault();
+    const rect = focused.getBoundingClientRect();
+    openMenu(focused, rect.right, rect.top);
+  }
+});
+
+/* ---------- Schnellzugriff-Leiste ---------- */
+
+let hudTimer = null;
+let hudFade = null;
+
+function showHud(data) {
+  applyColors(data.colors);
+  if (data.items) state.items = data.items;
+  if (data.state) state.inv = data.state;
+  const items = containerOf('self');
+  const slots = [];
+  for (let i = 1; i <= (state.layout.hotbar || DEFAULT_LAYOUT.hotbar); i += 1) {
+    const node = slotNode('hud', String(i), items[String(i)]);
+    node.tabIndex = -1;
+    node.setAttribute('aria-current', String(i === Number(data.slot)));
+    node.append(make('span', 'hud__key', String(i)));
+    slots.push(node);
+  }
+  el.hud.replaceChildren(...slots);
+  el.hud.removeAttribute('data-leaving');
+  el.hud.hidden = false;
+  el.hudError.hidden = !data.error;
+  setText(el.hudError, data.error ? errorText(data.error) : '');
+  clearTimeout(hudTimer);
+  clearTimeout(hudFade);
+  hudTimer = setTimeout(() => {
+    el.hud.setAttribute('data-leaving', '');
+    el.hudError.hidden = true;
+    hudFade = setTimeout(() => { el.hud.hidden = true; }, HUD_FADE_MS);
+  }, HUD_VISIBLE_MS);
+}
+
+/* ---------- Bridge ---------- */
+
+Bridge.on('inv_open', (data) => {
+  applyColors(data.colors);
+  state.open = true;
+  state.items = data.items || {};
+  state.layout = { ...DEFAULT_LAYOUT, ...(data.layout || {}), equip: asArray(data.layout && data.layout.equip) };
+  state.inv = data.state || state.inv;
+  state.drop = data.drop || null;
+  state.other = data.other || null;
+  state.selected = null;
+  state.busy = false;
+  closeMenu();
+  hideTip();
+  setText(el.toast, '');
+  el.hud.hidden = true;
+  render();
+  el.screen.focus();
+});
+
+Bridge.on('inv_state', (data) => {
+  if (data.state) state.inv = data.state;
+  // other: false kommt vom Client, wenn nur das zweite Fenster zugeht: Boden dann so lassen
+  if (data.other !== false) state.drop = data.drop || null;
+  state.other = data.other || null;
+  if (state.selected && !entryAt(state.selected)) state.selected = null;
+  render();
+  if (state.menu) renderMenu();
+});
+
+Bridge.on('inv_close', () => {
+  state.open = false;
+  closeMenu();
+  hideTip();
+  render();
+});
+
+Bridge.on('inv_hotbar', showHud);
+
+/* ---------- Gezeigtes Dokument ---------- */
+
+let cardTimer = null;
+const cardEl = {
+  root: $('card'), title: $('card-title'), state: $('card-state'), photo: $('card-photo'), fields: $('card-fields'), timer: $('card-timer'),
+};
+
+function formatBirth(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : (value || '');
+}
+
+Bridge.on('inv_document', (data) => {
+  const card = data.card || {};
+  applyColors(data.colors);
+  const isId = card.type === 'id';
+  setText(cardEl.title, card.title || '');
+  const status = card.status;
+  setText(cardEl.state, status ? CARD_TEXT.states[status] || '' : '');
+  if (status && status !== 'valid') cardEl.state.dataset.tone = 'bad'; else delete cardEl.state.dataset.tone;
+
+  cardEl.photo.hidden = !isId;
+  cardEl.photo.style.backgroundImage = isId && data.photo ? `url("${data.photo}")` : '';
+  setText(cardEl.photo, isId && !data.photo ? `${(card.firstname || '?').charAt(0)}${(card.lastname || '').charAt(0)}` : '');
+
+  const rows = [[CARD_TEXT.surname, card.lastname], [CARD_TEXT.firstname, card.firstname]];
+  if (isId) {
+    rows.push([CARD_TEXT.born, formatBirth(card.dateOfBirth)], [CARD_TEXT.gender, CARD_TEXT.genders[card.gender] || card.gender]);
+  }
+  rows.push([CARD_TEXT.number, String(card.number)]);
+  if (asArray(card.classes).length) rows.push([CARD_TEXT.classes, card.classes.map(CARD_TEXT.classItem).join(', ')]);
+  if (card.expiresAt) rows.push([CARD_TEXT.valid, dateFormat.format(new Date(card.expiresAt * 1000))]);
+  cardEl.fields.replaceChildren(...rows.flatMap(([label, value]) => [make('dt', null, label), make('dd', null, value || '')]));
+
+  const seconds = Math.max(1, Number(data.seconds) || 10);
+  cardEl.timer.style.transition = 'none';
+  cardEl.timer.style.transform = 'scaleX(1)';
+  cardEl.root.hidden = false;
+  requestAnimationFrame(() => {
+    cardEl.timer.style.transition = `transform ${seconds}s linear`;
+    cardEl.timer.style.transform = 'scaleX(0)';
+  });
+  clearTimeout(cardTimer);
+  cardTimer = setTimeout(() => { cardEl.root.hidden = true; }, seconds * 1000);
+});
+
+/* ---------- Feste Texte ---------- */
+
+setText(el.quickTitle, TEXT.quick);
+setText(el.pocketTitle, TEXT.pocket);
+setText(el.bagTitle, TEXT.bag);
+setText(el.equipTitle, TEXT.equip);
+setText(el.docsTitle, TEXT.docs);
+setText(el.dropTitle, TEXT.drop);
+setText(el.otherBagTitle, TEXT.otherBag);
+setText(el.otherEquipTitle, TEXT.otherEquip);
+setText(el.otherDocsTitle, TEXT.otherDocs);
+(() => {
+  const nodes = TEXT.foot.map(([key, label]) => {
+    const item = make('span', 'foot__item');
+    item.append(make('span', 'key', key), make('span', null, label));
+    return item;
+  });
+  const closeButton = make('button', 'close foot__item');
+  closeButton.type = 'button';
+  closeButton.dataset.action = 'close';
+  closeButton.append(make('span', 'key', TEXT.closeKey), make('span', null, TEXT.close));
+  el.foot.replaceChildren(...nodes, closeButton);
+})();
+
+Bridge.send('ui_ready', { ui: 'inventory', version: CONTRACT_VERSION });
+
+if (Bridge.platform === 'mock') {
+  const items = {
+    id_card: { label: 'Personalausweis', weight: 0, stack: 1, document: 'id', description: 'Zeigt, wer du bist.' },
+    license_driver: { label: 'Führerschein', weight: 0, stack: 1, document: 'driver', description: 'Fahrerlaubnis mit Klassen.' },
+    cash: { label: 'Bargeld', weight: 0, stack: 1000000000000, money: true, description: 'Scheine und Münzen.' },
+    weapon_combatpistol: { label: 'Dienstpistole', weight: 1000, stack: 1, equip: 'weapon', description: 'Standardwaffe im Streifendienst.' },
+    water: { label: 'Wasser', weight: 500, stack: 10, description: 'Eine Flasche stilles Wasser.' },
+    bread: { label: 'Brot', weight: 250, stack: 10, description: 'Ein Laib Brot vom Bäcker.' },
+    sandwich: { label: 'Sandwich', weight: 200, stack: 10, description: 'Belegtes Sandwich mit Käse.' },
+    bandage: { label: 'Verband', weight: 100, stack: 20, description: 'Stoppt leichte Blutungen. Gibt 25 Gesundheit.' },
+    lockpick: { label: 'Dietrich', weight: 50, stack: 10, description: 'Zum Öffnen einfacher Schlösser.' },
+    phone: { label: 'Handy', weight: 200, stack: 1, description: 'Dein Smartphone.' },
+    backpack_4: { label: 'Rucksack Level 4', weight: 1200, stack: 1, equip: 'backpack', description: '25 Plätze, bis 30 kg.' },
+    mask_balaclava: { label: 'Sturmhaube', weight: 100, stack: 1, equip: 'mask', description: 'Schwarze Sturmhaube.' },
+    jacket_bomber: { label: 'Bomberjacke', weight: 900, stack: 1, equip: 'jacket', description: 'Kurze Jacke mit Bündchen.' },
+    shirt_white: { label: 'Weißes T-Shirt', weight: 200, stack: 1, equip: 'shirt', description: 'Schlichtes T-Shirt.' },
+    pants_cargo: { label: 'Cargohose', weight: 650, stack: 1, equip: 'pants', description: 'Mit vielen Taschen.' },
+    shoes_sneaker: { label: 'Sneaker', weight: 700, stack: 1, equip: 'shoes', description: 'Bequeme Turnschuhe.' },
+    watch_gold: { label: 'Goldene Armbanduhr', weight: 80, stack: 1, equip: 'watch', description: 'Schwer und glänzend.' },
+  };
+  const equip = [
+    { id: 'mask', label: 'Maske' }, { id: 'hat', label: 'Kopfbedeckung' }, { id: 'glasses', label: 'Brille' }, { id: 'ears', label: 'Ohrringe' },
+    { id: 'jacket', label: 'Jacke' }, { id: 'shirt', label: 'T-Shirt' }, { id: 'watch', label: 'Uhr' }, { id: 'gloves', label: 'Handschuhe' },
+    { id: 'pants', label: 'Hose' }, { id: 'shoes', label: 'Schuhe' }, { id: 'weapon', label: 'Waffe' }, { id: 'backpack', label: 'Rucksack' },
+  ];
+  const withBag = location.hash !== '#ohne-rucksack';
+  const mockState = {
+    items: [
+      { slot: '1', name: 'water', count: 3 }, { slot: '2', name: 'sandwich', count: 2 }, { slot: '3', name: 'bandage', count: 7 },
+      { slot: '5', name: 'phone', count: 1 }, { slot: '6', name: 'cash', count: 1240 }, { slot: '7', name: 'lockpick', count: 4 }, { slot: '8', name: 'watch_gold', count: 1 }, { slot: 'weapon', name: 'weapon_combatpistol', count: 1, meta: { serial: 'SN-7KQ4-X2MD', ammo: 48 } },
+      { slot: 'mask', name: 'mask_balaclava', count: 1 }, { slot: 'jacket', name: 'jacket_bomber', count: 1 }, { slot: 'shirt', name: 'shirt_white', count: 1 },
+      { slot: 'pants', name: 'pants_cargo', count: 1 }, { slot: 'shoes', name: 'shoes_sneaker', count: 1 },
+      ...(withBag ? [{ slot: 'backpack', name: 'backpack_4', count: 1 }] : []),
+      { slot: 'doc_id', name: 'id_card', count: 1 }, { slot: 'doc_driver', name: 'license_driver', count: 1, meta: { classes: 'B,C', expires: 1795996800 } },
+    ],
+    bag: withBag ? [{ slot: '1', name: 'bread', count: 6 }, { slot: '2', name: 'water', count: 10 }] : undefined,
+    weight: 4180, maxWeight: 15000, bagWeight: withBag ? 6500 : undefined, bagMaxWeight: withBag ? 30000 : undefined,
+    bagSlots: withBag ? 25 : undefined, bagLevel: withBag ? 4 : undefined,
+  };
+  const drop = location.hash === '#boden' ? { id: 3, items: [{ slot: '1', name: 'bread', count: 2 }] } : null;
+  const others = {
+    '#durchsuchen': {
+      kind: 'search', title: 'ID 230 durchsuchen', canPut: false, weight: 2350, maxWeight: 15000, slots: 10, weaponSlot: true,
+      items: [{ slot: '1', name: 'water', count: 1 }, { slot: '4', name: 'lockpick', count: 3 }, { slot: '6', name: 'cash', count: 385 }, { slot: 'weapon', name: 'weapon_combatpistol', count: 1, meta: { ammo: 12 } }],
+    },
+    '#kofferraum': {
+      kind: 'trunk', title: 'Kofferraum LS 4821', canPut: true, weight: 18650, maxWeight: 100000, slots: 20,
+      items: [{ slot: '1', name: 'bread', count: 8 }, { slot: '2', name: 'water', count: 10 }, { slot: '3', name: 'bandage', count: 14 }, { slot: '7', name: 'jacket_bomber', count: 1 }],
+    },
+    '#invsee': {
+      kind: 'admin', title: 'Inventar von ID 17', canPut: true, weight: 3120, maxWeight: 15000, slots: 10, weaponSlot: true, equip,
+      documents: [{ id: 'doc_id', label: 'Ausweis' }, { id: 'doc_driver', label: 'Führerschein' }, { id: 'doc_weapon', label: 'Waffenschein' }, { id: 'doc_pilot', label: 'Flugschein' }, { id: 'doc_boat', label: 'Bootsschein' }, { id: 'doc_fishing', label: 'Angelschein' }],
+      items: [{ slot: '1', name: 'sandwich', count: 2 }, { slot: '2', name: 'phone', count: 1 }, { slot: '6', name: 'cash', count: 72 }, { slot: 'shirt', name: 'shirt_white', count: 1 }, { slot: 'pants', name: 'pants_cargo', count: 1 }, { slot: 'shoes', name: 'shoes_sneaker', count: 1 }, { slot: 'doc_id', name: 'id_card', count: 1 }],
+    },
+  };
+  const other = others[location.hash] || null;
+  const colors = { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72' };
+  if (location.hash === '#karte') {
+    Bridge.emit('inv_document', { colors, seconds: 10, card: { type: 'id', title: 'Personalausweis', firstname: 'Mira', lastname: 'Brandt', dateOfBirth: '1998-07-14', gender: 'female', number: 17 } });
+  } else if (location.hash === '#fuehrerschein') {
+    Bridge.emit('inv_document', { colors, seconds: 10, card: { type: 'driver', title: 'Führerschein', firstname: 'Mira', lastname: 'Brandt', number: 17, status: 'expired', expiresAt: 1793404800, classes: [{ id: 'B', label: 'PKW' }, { id: 'C', label: 'LKW und Transporter' }] } });
+  } else if (location.hash === '#leiste') {
+    Bridge.emit('inv_hotbar', { colors, items, state: mockState, slot: 3 });
+  } else {
+    Bridge.emit('inv_open', { colors, items, state: mockState, drop, other, players: [], layout: { slots: 10, hotbar: 5, bagSlots: 25, dropSlots: 30, equip, giveDistance: 3, documents: [
+      { id: 'doc_id', label: 'Ausweis' }, { id: 'doc_driver', label: 'Führerschein' }, { id: 'doc_weapon', label: 'Waffenschein' },
+      { id: 'doc_pilot', label: 'Flugschein' }, { id: 'doc_boat', label: 'Bootsschein' }, { id: 'doc_fishing', label: 'Angelschein' }] } });
+  }
+}
+</script>
+</body>
+</html>

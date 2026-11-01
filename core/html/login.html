@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<!--
+  UI: Login
+  CONTRACT_VERSION: 1
+
+  EINGEHEND (Server -> UI)
+  login_open  {
+    serverName: string,
+    colors: { base: string, ink: string, accent: string, signal: string },  // RGB-Kanaele, z. B. "214 164 72"
+    mode: "login" | "register",
+    email?: string,              // volle E-Mail des Accounts auf diesem Geraet, wird ins Feld eingetragen
+    emailHint?: string,          // z. B. "fa•••@gmail.com", wenn RememberEmail aus ist
+    players?: { online: number, max: number },
+    passwordMinLength: number,
+    passwordMaxLength: number
+  }
+  login_close {}
+
+  AUSGEHEND (UI -> Server), Antwort immer { ok: boolean, data?: any, error?: string }
+  ui_ready         { ui: "login", version: 1 }
+  login_submit     { email: string, password: string }   -> data: { accountId: number }
+  login_register   { email: string, password: string }   -> data: { accountId: number }
+  login_disconnect {}
+
+  FEHLERCODES
+  invalid_email, password_too_short, password_too_long, already_registered, email_taken,
+  wrong_credentials, too_many_attempts (data.retryIn: Sekunden), already_logged_in,
+  banned (data: { id, reason, expiresAt? }, Zeit in Millisekunden, ohne expiresAt = permanent),
+  db_error, server_error, timeout, bridge_error, client_error
+
+  HINWEIS ESCAPE
+  Escape schliesst den Login bewusst nicht, weil niemand ohne Login spielen darf.
+  Escape bricht die Nachfrage "Verbindung trennen" ab bzw. wechselt von Registrieren zu Einloggen.
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400..600,0..1,0&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  /* Die 4 Grundfarben, werden aus der Config ueberschrieben */
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+
+  /* Abgeleitete Stufen, nur ueber Alpha */
+  --c-bg:          rgb(var(--rgb-base) / 0.96);
+  --c-scrim:       rgb(var(--rgb-base) / 0.45);
+  --c-surface:     rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.09);
+  --c-border:      rgb(var(--rgb-ink) / 0.12);
+  --c-border-hi:   rgb(var(--rgb-ink) / 0.24);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.62);
+  --c-text-faint:  rgb(var(--rgb-ink) / 0.42);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.16);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.12);
+
+  --shadow-panel: 0 16px 48px rgb(var(--rgb-base) / 0.55);
+
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
+
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+  --fs-2xl: clamp(26px, 1.8vw, 38px);
+
+  --dur-fast: 120ms; --dur-base: 180ms; --dur-panel: 240ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --z-base: 1; --z-overlay: 10;
+
+  --sheet-width: clamp(720px, 56vw, 1080px);
+  --sheet-min-height: clamp(440px, 50vh, 620px);
+  --sheet-pad: clamp(var(--space-6), 3vw, var(--space-8));
+  --field-height: clamp(42px, 2.4vw, 48px);
+  --icon-size: 20px;
+  --input-icon-space: calc(var(--space-4) + var(--icon-size) + var(--space-3));
+  --texture-gap: 10px;
+  --dot-size: 8px;
+  --text-max: 46ch;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button, input { font: inherit; color: inherit; }
+
+.material-symbols-rounded {
+  font-size: var(--icon-size);
+  line-height: 1;
+  font-variation-settings: 'wght' 400, 'opsz' 20;
+}
+
+/* ---------- Bildschirm ---------- */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: var(--c-scrim);
+}
+.screen[hidden] { display: none; }
+
+.sheet {
+  width: min(var(--sheet-width), 100%);
+  min-height: var(--sheet-min-height);
+  max-height: calc(100vh - 2 * var(--space-5));
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  animation: sheet-in var(--dur-panel) var(--ease-out);
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.brand {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.sheet__aside {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--sheet-pad);
+  background-color: var(--c-surface);
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgb(var(--rgb-ink) / 0.025) 0 1px,
+    transparent 1px var(--texture-gap)
+  );
+  border-right: 1px solid var(--c-border);
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+
+.sheet__lead { margin-block: auto; position: relative; z-index: var(--z-base); }
+
+.aside__top {
+  position: relative;
+  z-index: var(--z-base);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.status {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: rgb(var(--rgb-base) / 0.4);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.status[hidden] { display: none; }
+.status__dot {
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: 50%;
+  background: var(--c-accent);
+}
+.status strong { color: var(--c-text); font-weight: 700; }
+
+.sheet__foot { position: relative; z-index: var(--z-base); }
+
+.sheet__main {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sheet-pad);
+}
+.sheet__main .switch { margin-top: auto; }
+.sheet__main .form { margin-bottom: var(--space-6); }
+.sheet__main .sheet__foot { margin-top: auto; }
+
+/* ---------- Modus-Umschalter ---------- */
+
+.switch {
+  display: inline-grid;
+  grid-auto-flow: column;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  margin-bottom: var(--space-6);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  align-self: flex-start;
+}
+
+.switch__btn {
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-4);
+  border-radius: calc(var(--radius-md) - var(--space-1));
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.switch__btn:hover { color: var(--c-text); }
+.switch__btn[aria-selected="true"] {
+  background: var(--c-surface-hi);
+  color: var(--c-text);
+}
+.switch__btn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+
+/* ---------- Kopf ---------- */
+
+.title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.intro {
+  margin: 0 0 var(--space-6);
+  max-width: var(--text-max);
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  color: var(--c-text-muted);
+  overflow-wrap: anywhere;
+}
+.intro strong { color: var(--c-text); font-weight: 600; }
+
+/* ---------- Formular ---------- */
+
+.form { display: flex; flex-direction: column; gap: var(--space-5); }
+
+.field { display: flex; flex-direction: column; gap: var(--space-2); }
+.field[hidden] { display: none; }
+
+.field__label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.field__control { position: relative; }
+
+.input {
+  width: 100%;
+  height: var(--field-height);
+  padding: 0 var(--space-4);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.input::placeholder { color: var(--c-text-faint); }
+.input:hover { border-color: var(--c-border-hi); }
+.input:focus-visible {
+  outline: none;
+  border-color: var(--c-accent);
+  background: var(--c-surface-hi);
+  box-shadow: 0 0 0 3px var(--c-accent-soft);
+}
+.input[aria-invalid="true"] { border-color: var(--c-signal); }
+.input[aria-invalid="true"]:focus-visible { box-shadow: 0 0 0 3px var(--c-signal-soft); }
+.input--with-toggle { padding-right: calc(var(--field-height) + var(--space-1)); }
+.input--with-icon { padding-left: var(--input-icon-space); }
+
+.field__icon {
+  position: absolute;
+  top: 50%;
+  left: var(--space-4);
+  transform: translateY(-50%);
+  width: var(--icon-size);
+  overflow: hidden;
+  color: var(--c-text-faint);
+  pointer-events: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.field__control:focus-within .field__icon { color: var(--c-accent); }
+
+.toggle {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: calc(var(--field-height) - var(--space-3));
+  height: calc(var(--field-height) - var(--space-3));
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  overflow: hidden;
+  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.toggle:hover { color: var(--c-text); background: var(--c-surface-hi); }
+.toggle:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 0; }
+
+.field__hint, .field__error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+.field__hint { color: var(--c-text-faint); }
+.field__error { color: var(--c-signal); font-weight: 500; }
+.field__error:empty { display: none; }
+
+/* ---------- Meldung und Hauptaktion ---------- */
+
+.message {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.message:empty { display: none; }
+.message[data-tone="error"]   { background: var(--c-signal-soft); color: var(--c-text); border: 1px solid rgb(var(--rgb-signal) / 0.35); }
+.message[data-tone="success"] { background: var(--c-accent-soft); color: var(--c-text); border: 1px solid rgb(var(--rgb-accent) / 0.35); }
+.message__count { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--field-height);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--c-accent);
+  color: var(--c-on-accent);
+  font-size: var(--fs-md);
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.btn-primary:hover { opacity: 0.9; }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:focus-visible { outline: 2px solid var(--c-text); outline-offset: 3px; }
+.btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
+.btn-primary[aria-busy="true"] { cursor: progress; }
+.btn-primary__icon {
+  width: var(--icon-size);
+  overflow: hidden;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.btn-primary:hover:not(:disabled) .btn-primary__icon { transform: translateX(2px); }
+.btn-primary__icon[hidden] { display: none; }
+
+/* ---------- Fuss ---------- */
+
+.sheet__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--field-height);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--c-border);
+  font-size: var(--fs-sm);
+}
+
+.link {
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.link:hover { color: var(--c-text); }
+.link:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+.link--danger { color: var(--c-signal); }
+.link--danger:hover { color: var(--c-signal); text-decoration: underline; }
+
+.confirm { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.confirm[hidden] { display: none; }
+.confirm__text { color: var(--c-text); font-weight: 500; }
+.confirm__actions { display: inline-flex; gap: var(--space-4); }
+
+/* Schmale Fenster: Spalten untereinander */
+@media (max-width: 820px) {
+  .sheet { grid-template-columns: 1fr; }
+  .sheet__aside {
+    border-right: 0;
+    border-bottom: 1px solid var(--c-border);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet { animation: none; }
+  * { transition-duration: 0ms !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="screen" id="screen" hidden>
+  <main class="sheet" role="dialog" aria-modal="true" aria-labelledby="title" aria-describedby="intro">
+    <aside class="sheet__aside">
+      <div class="aside__top">
+        <p class="brand" id="server-name"></p>
+        <p class="status" id="status" hidden>
+          <span class="status__dot" aria-hidden="true"></span>
+          <span id="status-text"></span>
+        </p>
+      </div>
+
+      <div class="sheet__lead">
+        <h1 class="title" id="title"></h1>
+        <p class="intro" id="intro"></p>
+      </div>
+    </aside>
+
+    <section class="sheet__main">
+      <div class="switch" role="tablist" aria-label="Login oder Registrierung" id="switch">
+        <button class="switch__btn" type="button" role="tab" id="tab-login" aria-controls="form" data-action="mode" data-mode="login"></button>
+        <button class="switch__btn" type="button" role="tab" id="tab-register" aria-controls="form" data-action="mode" data-mode="register"></button>
+      </div>
+
+      <form class="form" id="form" novalidate>
+        <div class="field">
+          <label class="field__label" for="email" id="label-email"></label>
+          <div class="field__control">
+            <span class="material-symbols-rounded field__icon" aria-hidden="true">mail</span>
+            <input class="input input--with-icon" id="email" name="email" type="email" inputmode="email"
+                   autocomplete="email" spellcheck="false" maxlength="255"
+                   aria-describedby="email-error">
+          </div>
+          <p class="field__error" id="email-error"></p>
+        </div>
+
+        <div class="field">
+          <label class="field__label" for="password" id="label-password"></label>
+          <div class="field__control">
+            <span class="material-symbols-rounded field__icon" aria-hidden="true">lock</span>
+            <input class="input input--with-icon input--with-toggle" id="password" name="password" type="password"
+                   autocomplete="current-password" aria-describedby="password-hint password-error">
+            <button class="toggle" type="button" data-action="toggle-password" id="toggle-password" aria-pressed="false">
+              <span class="material-symbols-rounded" aria-hidden="true" id="toggle-icon">visibility</span>
+            </button>
+          </div>
+          <p class="field__hint" id="password-hint"></p>
+          <p class="field__error" id="password-error"></p>
+        </div>
+
+        <div class="field" id="field-repeat" hidden>
+          <label class="field__label" for="password-repeat" id="label-repeat"></label>
+          <div class="field__control">
+            <span class="material-symbols-rounded field__icon" aria-hidden="true">lock_reset</span>
+            <input class="input input--with-icon" id="password-repeat" name="password-repeat" type="password"
+                   autocomplete="new-password" aria-describedby="repeat-error">
+          </div>
+          <p class="field__error" id="repeat-error"></p>
+        </div>
+
+        <p class="message" id="message" role="status" aria-live="polite"></p>
+
+        <button class="btn-primary" type="submit" id="submit">
+          <span id="submit-label"></span>
+          <span class="material-symbols-rounded btn-primary__icon" aria-hidden="true" id="submit-icon">arrow_forward</span>
+        </button>
+      </form>
+
+      <footer class="sheet__foot">
+        <button class="link" type="button" data-action="leave" id="leave"></button>
+        <div class="confirm" id="confirm" hidden>
+          <span class="confirm__text" id="confirm-text"></span>
+          <span class="confirm__actions">
+            <button class="link link--danger" type="button" data-action="leave-yes" id="leave-yes"></button>
+            <button class="link" type="button" data-action="leave-no" id="leave-no"></button>
+          </span>
+        </div>
+      </footer>
+    </section>
+  </main>
+</div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  const isFiveM = resourceName !== null;
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = isFiveM ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();
+
+const Mock = {
+  delay: 450,
+  failures: 0,
+  responses: {
+    login_submit(data) {
+      if (Mock.failures >= 4) {
+        Mock.failures = 0;
+        return { ok: false, error: 'too_many_attempts', data: { retryIn: 60 } };
+      }
+      if (data.email === 'test@beispiel.de' && data.password === 'testpasswort') {
+        Mock.failures = 0;
+        return { ok: true, data: { accountId: 1 } };
+      }
+      Mock.failures += 1;
+      return { ok: false, error: 'wrong_credentials' };
+    },
+    login_register(data) {
+      if (data.email === 'vergeben@beispiel.de') return { ok: false, error: 'email_taken' };
+      return { ok: true, data: { accountId: 17 } };
+    },
+  },
+  async handle(event, data) {
+    await new Promise((r) => setTimeout(r, this.delay));
+    const fn = this.responses[event];
+    console.info(`[mock] ${event}`, data);
+    return fn ? fn(data) : { ok: true };
+  },
+  push(event, data) {
+    Bridge.emit(event, data);
+  },
+};
+</script>
+
+<script id="app">
+const TEXT = {
+  playersOnline: (max) => ` von ${max} online`,
+  tabLogin: 'Einloggen',
+  tabRegister: 'Registrieren',
+  titleLogin: 'Einloggen',
+  titleRegister: 'Account erstellen',
+  introLogin: 'Melde dich mit deiner E-Mail-Adresse und deinem Passwort an.',
+  introWelcome: 'Willkommen zurück. Deine E-Mail-Adresse ist schon eingetragen, gib nur noch dein Passwort ein.',
+  introLoginHintBefore: 'Auf diesem Gerät ist schon ein Account bekannt: ',
+  introLoginHintAfter: '. Melde dich mit dieser Adresse an.',
+  introRegister: 'Dein Account bekommt eine feste ID, die sich nie ändert. Alle deine Charaktere hängen daran.',
+  labelEmail: 'E-Mail-Adresse',
+  labelPassword: 'Passwort',
+  labelRepeat: 'Passwort wiederholen',
+  placeholderEmail: 'name@gmail.com',
+  hintPassword: (min, max) => `Mindestens ${min}, höchstens ${max} Zeichen.`,
+  submitLogin: 'Einloggen',
+  submitRegister: 'Account erstellen',
+  busyLogin: 'Prüft…',
+  busyRegister: 'Erstellt…',
+  successLogin: 'Eingeloggt. Viel Spaß auf dem Server.',
+  successRegister: (id) => `Account erstellt. Deine permanente ID ist ${id}.`,
+  showPassword: 'Passwort anzeigen',
+  hidePassword: 'Passwort verbergen',
+  leave: 'Verbindung trennen',
+  leaveConfirm: 'Wirklich trennen?',
+  leaveYes: 'Trennen',
+  leaveNo: 'Abbrechen',
+  banned: (ban) => `Dieser Account ist gesperrt ${ban.expiresAt
+    ? `bis ${new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(ban.expiresAt))}`
+    : 'für immer'}. Grund: ${ban.reason}. Ban-ID ${ban.id}.`,
+  lockedBefore: 'Zu viele Fehlversuche. Nächster Versuch in ',
+  lockedAfter: (s) => (s === 1 ? ' Sekunde.' : ' Sekunden.'),
+  validation: {
+    emailEmpty: 'Gib deine E-Mail-Adresse ein.',
+    emailInvalid: 'Das ist keine gültige E-Mail-Adresse. Beispiel: name@gmail.com',
+    passwordEmpty: 'Gib dein Passwort ein.',
+    passwordShort: (min) => `Zu kurz. Das Passwort braucht mindestens ${min} Zeichen.`,
+    passwordLong: (max) => `Zu lang. Erlaubt sind höchstens ${max} Zeichen.`,
+    repeatMismatch: 'Die Passwörter stimmen nicht überein.',
+  },
+  errors: {
+    invalid_email: 'Das ist keine gültige E-Mail-Adresse. Beispiel: name@gmail.com',
+    password_too_short: 'Das Passwort ist zu kurz.',
+    password_too_long: 'Das Passwort ist zu lang.',
+    already_registered: 'Auf diesem Gerät gibt es schon einen Account. Logge dich stattdessen ein.',
+    email_taken: 'Diese E-Mail-Adresse ist schon registriert. Logge dich ein oder nimm eine andere Adresse.',
+    wrong_credentials: 'E-Mail-Adresse oder Passwort falsch.',
+    banned: 'Dieser Account ist gesperrt.',
+    already_logged_in: 'Du bist schon eingeloggt.',
+    db_error: 'Der Server konnte gerade nicht speichern. Versuch es in ein paar Sekunden noch einmal.',
+    server_error: 'Auf dem Server ist ein Fehler passiert. Versuch es noch einmal.',
+    timeout: 'Der Server antwortet nicht. Versuch es noch einmal.',
+    bridge_error: 'Die Verbindung zum Spiel ist unterbrochen. Versuch es noch einmal.',
+    client_error: 'Im Spiel ist ein Fehler passiert. Versuch es noch einmal.',
+    default: 'Etwas ist schiefgelaufen. Versuch es noch einmal.',
+  },
+};
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const LOCK_TICK_MS = 1000;
+const MS_PER_SECOND = 1000;
+const DEFAULT_PASSWORD_MIN = 8;
+const DEFAULT_PASSWORD_MAX = 72;
+
+// Fehlercodes, die zu einem bestimmten Feld gehoeren
+const FIELD_FOR_ERROR = {
+  invalid_email: 'email',
+  email_taken: 'email',
+  password_too_short: 'password',
+  password_too_long: 'password',
+};
+
+const state = {
+  open: false,
+  mode: 'login',
+  serverName: '',
+  players: null, // { online, max }
+  emailHint: null,
+  rememberedEmail: null,
+  passwordMin: DEFAULT_PASSWORD_MIN,
+  passwordMax: DEFAULT_PASSWORD_MAX,
+  busy: false,
+  done: false,
+  showPassword: false,
+  confirmLeave: false,
+  errors: { email: '', password: '', repeat: '' },
+  message: null, // { tone: 'error' | 'success', text } oder { tone: 'error', lockedUntil }
+};
+
+const el = {
+  screen: document.getElementById('screen'),
+  serverName: document.getElementById('server-name'),
+  status: document.getElementById('status'),
+  statusText: document.getElementById('status-text'),
+  tabLogin: document.getElementById('tab-login'),
+  tabRegister: document.getElementById('tab-register'),
+  title: document.getElementById('title'),
+  intro: document.getElementById('intro'),
+  form: document.getElementById('form'),
+  email: document.getElementById('email'),
+  password: document.getElementById('password'),
+  repeat: document.getElementById('password-repeat'),
+  fieldRepeat: document.getElementById('field-repeat'),
+  labelEmail: document.getElementById('label-email'),
+  labelPassword: document.getElementById('label-password'),
+  labelRepeat: document.getElementById('label-repeat'),
+  passwordHint: document.getElementById('password-hint'),
+  toggle: document.getElementById('toggle-password'),
+  toggleIcon: document.getElementById('toggle-icon'),
+  emailError: document.getElementById('email-error'),
+  passwordError: document.getElementById('password-error'),
+  repeatError: document.getElementById('repeat-error'),
+  message: document.getElementById('message'),
+  submit: document.getElementById('submit'),
+  submitLabel: document.getElementById('submit-label'),
+  submitIcon: document.getElementById('submit-icon'),
+  leave: document.getElementById('leave'),
+  confirm: document.getElementById('confirm'),
+  confirmText: document.getElementById('confirm-text'),
+  leaveYes: document.getElementById('leave-yes'),
+  leaveNo: document.getElementById('leave-no'),
+};
+
+let lockTimer = null;
+
+/* ---------- Hilfen ---------- */
+
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  COLOR_KEYS.forEach((key) => {
+    const value = colors[key];
+    if (typeof value === 'string' && COLOR_PATTERN.test(value.trim())) {
+      document.documentElement.style.setProperty(`--rgb-${key}`, value.trim());
+    }
+  });
+}
+
+function errorText(code) {
+  return TEXT.errors[code] || TEXT.errors.default;
+}
+
+function secondsLeft() {
+  if (!state.message || !state.message.lockedUntil) return 0;
+  return Math.max(0, Math.ceil((state.message.lockedUntil - Date.now()) / MS_PER_SECOND));
+}
+
+function isLocked() {
+  return secondsLeft() > 0;
+}
+
+/* ---------- Rendern ---------- */
+
+function renderStatic() {
+  setText(el.tabLogin, TEXT.tabLogin);
+  setText(el.tabRegister, TEXT.tabRegister);
+  setText(el.labelEmail, TEXT.labelEmail);
+  setText(el.labelPassword, TEXT.labelPassword);
+  setText(el.labelRepeat, TEXT.labelRepeat);
+  el.email.placeholder = TEXT.placeholderEmail;
+  setText(el.leave, TEXT.leave);
+  setText(el.confirmText, TEXT.leaveConfirm);
+  setText(el.leaveYes, TEXT.leaveYes);
+  setText(el.leaveNo, TEXT.leaveNo);
+}
+
+function renderIntro() {
+  el.intro.replaceChildren();
+  if (state.mode === 'register') {
+    el.intro.textContent = TEXT.introRegister;
+    return;
+  }
+  if (state.rememberedEmail && el.email.value.trim() === state.rememberedEmail) {
+    el.intro.textContent = TEXT.introWelcome;
+    return;
+  }
+  if (state.emailHint) {
+    const strong = document.createElement('strong');
+    strong.textContent = state.emailHint;
+    el.intro.append(TEXT.introLoginHintBefore, strong, TEXT.introLoginHintAfter);
+    return;
+  }
+  el.intro.textContent = TEXT.introLogin;
+}
+
+function renderStatus() {
+  const players = state.players;
+  el.status.hidden = !players;
+  if (!players) return;
+  const format = new Intl.NumberFormat('de-DE');
+  const strong = document.createElement('strong');
+  strong.textContent = format.format(players.online);
+  el.statusText.replaceChildren(strong, TEXT.playersOnline(format.format(players.max)));
+}
+
+function renderMode() {
+  const isRegister = state.mode === 'register';
+
+  el.tabLogin.setAttribute('aria-selected', String(!isRegister));
+  el.tabRegister.setAttribute('aria-selected', String(isRegister));
+  el.tabLogin.tabIndex = isRegister ? -1 : 0;
+  el.tabRegister.tabIndex = isRegister ? 0 : -1;
+
+  setText(el.title, isRegister ? TEXT.titleRegister : TEXT.titleLogin);
+  renderIntro();
+
+  el.fieldRepeat.hidden = !isRegister;
+  el.password.autocomplete = isRegister ? 'new-password' : 'current-password';
+  setText(el.passwordHint, isRegister ? TEXT.hintPassword(state.passwordMin, state.passwordMax) : '');
+  el.passwordHint.hidden = !isRegister;
+}
+
+function renderPasswordToggle() {
+  const type = state.showPassword ? 'text' : 'password';
+  el.password.type = type;
+  el.repeat.type = type;
+  el.toggle.setAttribute('aria-pressed', String(state.showPassword));
+  el.toggle.setAttribute('aria-label', state.showPassword ? TEXT.hidePassword : TEXT.showPassword);
+  setText(el.toggleIcon, state.showPassword ? 'visibility_off' : 'visibility');
+}
+
+function renderFieldErrors() {
+  const pairs = [
+    [el.email, el.emailError, state.errors.email],
+    [el.password, el.passwordError, state.errors.password],
+    [el.repeat, el.repeatError, state.errors.repeat],
+  ];
+  pairs.forEach(([input, out, text]) => {
+    setText(out, text);
+    input.setAttribute('aria-invalid', String(Boolean(text)));
+  });
+}
+
+function renderMessage() {
+  const msg = state.message;
+  if (!msg) {
+    el.message.replaceChildren();
+    el.message.removeAttribute('data-tone');
+    return;
+  }
+  el.message.dataset.tone = msg.tone;
+
+  if (msg.lockedUntil) {
+    const seconds = secondsLeft();
+    const count = document.createElement('span');
+    count.className = 'message__count';
+    count.textContent = new Intl.NumberFormat('de-DE').format(seconds);
+    el.message.replaceChildren(TEXT.lockedBefore, count, TEXT.lockedAfter(seconds));
+    return;
+  }
+  setText(el.message, msg.text);
+}
+
+function renderSubmit() {
+  const isRegister = state.mode === 'register';
+  let label = isRegister ? TEXT.submitRegister : TEXT.submitLogin;
+  if (state.busy) label = isRegister ? TEXT.busyRegister : TEXT.busyLogin;
+
+  setText(el.submitLabel, label);
+  el.submitIcon.hidden = state.busy || state.done;
+  el.submit.disabled = state.busy || state.done || isLocked();
+  el.submit.setAttribute('aria-busy', String(state.busy));
+
+  const inputsLocked = state.busy || state.done;
+  [el.email, el.password, el.repeat].forEach((input) => { input.readOnly = inputsLocked; });
+  el.tabLogin.disabled = inputsLocked;
+  el.tabRegister.disabled = inputsLocked;
+}
+
+function renderLeave() {
+  el.leave.hidden = state.confirmLeave;
+  el.confirm.hidden = !state.confirmLeave;
+  el.leave.disabled = state.done;
+}
+
+function render() {
+  el.screen.hidden = !state.open;
+  if (!state.open) return;
+  setText(el.serverName, state.serverName);
+  renderStatus();
+  renderMode();
+  renderPasswordToggle();
+  renderFieldErrors();
+  renderMessage();
+  renderSubmit();
+  renderLeave();
+}
+
+/* ---------- Sperre nach Fehlversuchen ---------- */
+
+function stopLockTimer() {
+  if (lockTimer) {
+    clearInterval(lockTimer);
+    lockTimer = null;
+  }
+}
+
+function startLock(seconds) {
+  state.message = { tone: 'error', lockedUntil: Date.now() + seconds * MS_PER_SECOND };
+  stopLockTimer();
+  lockTimer = setInterval(() => {
+    if (!isLocked()) {
+      stopLockTimer();
+      state.message = null;
+      renderSubmit();
+    }
+    renderMessage();
+  }, LOCK_TICK_MS);
+}
+
+/* ---------- Pruefen und Absenden ---------- */
+
+function validate() {
+  const email = el.email.value.trim();
+  const password = el.password.value;
+  const errors = { email: '', password: '', repeat: '' };
+
+  if (!email) errors.email = TEXT.validation.emailEmpty;
+  else if (!EMAIL_PATTERN.test(email)) errors.email = TEXT.validation.emailInvalid;
+
+  if (!password) errors.password = TEXT.validation.passwordEmpty;
+  else if (state.mode === 'register' && password.length < state.passwordMin) errors.password = TEXT.validation.passwordShort(state.passwordMin);
+  else if (password.length > state.passwordMax) errors.password = TEXT.validation.passwordLong(state.passwordMax);
+
+  if (state.mode === 'register' && !errors.password && el.repeat.value !== password) {
+    errors.repeat = TEXT.validation.repeatMismatch;
+  }
+
+  state.errors = errors;
+  return errors;
+}
+
+function focusFirstError() {
+  if (state.errors.email) el.email.focus();
+  else if (state.errors.password) el.password.focus();
+  else if (state.errors.repeat) el.repeat.focus();
+}
+
+async function submit() {
+  if (state.busy || state.done || isLocked()) return;
+
+  state.message = null;
+  validate();
+  renderFieldErrors();
+  renderMessage();
+  if (state.errors.email || state.errors.password || state.errors.repeat) {
+    focusFirstError();
+    return;
+  }
+
+  const isRegister = state.mode === 'register';
+  state.busy = true;
+  renderSubmit();
+
+  const result = await Bridge.send(isRegister ? 'login_register' : 'login_submit', {
+    email: el.email.value.trim(),
+    password: el.password.value,
+  });
+
+  state.busy = false;
+
+  if (result && result.ok) {
+    state.done = true;
+    const accountId = result.data && result.data.accountId;
+    state.message = {
+      tone: 'success',
+      text: isRegister ? TEXT.successRegister(accountId) : TEXT.successLogin,
+    };
+    render();
+    return;
+  }
+
+  const code = (result && result.error) || 'default';
+
+  if (code === 'too_many_attempts') {
+    const retryIn = Number(result.data && result.data.retryIn) || 0;
+    startLock(retryIn);
+  } else if (code === 'banned' && result.data && result.data.reason) {
+    state.message = { tone: 'error', text: TEXT.banned(result.data) };
+  } else if (FIELD_FOR_ERROR[code]) {
+    state.errors[FIELD_FOR_ERROR[code]] = errorText(code);
+  } else {
+    state.message = { tone: 'error', text: errorText(code) };
+  }
+
+  if (code === 'wrong_credentials') {
+    el.password.value = '';
+  }
+
+  render();
+  if (FIELD_FOR_ERROR[code]) focusFirstError();
+  else el.password.focus();
+}
+
+/* ---------- Aktionen ---------- */
+
+function setMode(mode) {
+  if (state.mode === mode || state.busy || state.done) return;
+  state.mode = mode;
+  state.errors = { email: '', password: '', repeat: '' };
+  if (state.message && !state.message.lockedUntil) state.message = null;
+  el.repeat.value = '';
+  render();
+}
+
+async function leaveServer() {
+  el.leaveYes.disabled = true;
+  const result = await Bridge.send('login_disconnect', {});
+  if (!result || !result.ok) {
+    el.leaveYes.disabled = false;
+    state.confirmLeave = false;
+    state.message = { tone: 'error', text: errorText(result && result.error) };
+    render();
+  }
+}
+
+const ACTIONS = {
+  mode(target) {
+    setMode(target.dataset.mode);
+    (state.mode === 'register' ? el.tabRegister : el.tabLogin).focus();
+  },
+  'toggle-password'() {
+    state.showPassword = !state.showPassword;
+    renderPasswordToggle();
+  },
+  leave() {
+    state.confirmLeave = true;
+    renderLeave();
+    el.leaveNo.focus();
+  },
+  'leave-no'() {
+    state.confirmLeave = false;
+    renderLeave();
+    el.leave.focus();
+  },
+  'leave-yes'() {
+    leaveServer();
+  },
+};
+
+document.addEventListener('click', (e) => {
+  const target = e.target.closest('[data-action]');
+  if (!target || target.disabled) return;
+  const action = ACTIONS[target.dataset.action];
+  if (action) action(target);
+});
+
+el.form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  submit();
+});
+
+el.form.addEventListener('input', (e) => {
+  const key = { email: 'email', password: 'password', 'password-repeat': 'repeat' }[e.target.name];
+  if (key === 'email' && state.rememberedEmail && state.mode === 'login') renderIntro();
+  if (key && state.errors[key]) {
+    state.errors[key] = '';
+    renderFieldErrors();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (!state.open) return;
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (state.confirmLeave) ACTIONS['leave-no']();
+    else if (state.mode === 'register' && !state.done) { setMode('login'); el.email.focus(); }
+    return;
+  }
+
+  // Pfeiltasten im Modus-Umschalter
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target.closest('#switch')) {
+    e.preventDefault();
+    setMode(state.mode === 'login' ? 'register' : 'login');
+    (state.mode === 'register' ? el.tabRegister : el.tabLogin).focus();
+  }
+});
+
+/* ---------- Bridge-Events ---------- */
+
+Bridge.on('login_open', (data) => {
+  applyColors(data.colors);
+  state.open = true;
+  state.mode = data.mode === 'register' ? 'register' : 'login';
+  state.serverName = typeof data.serverName === 'string' ? data.serverName : '';
+  state.players = data.players && Number.isFinite(Number(data.players.online)) && Number.isFinite(Number(data.players.max))
+    ? { online: Number(data.players.online), max: Number(data.players.max) }
+    : null;
+  state.emailHint = typeof data.emailHint === 'string' ? data.emailHint : null;
+  state.rememberedEmail = typeof data.email === 'string' && data.email ? data.email : null;
+  if (state.rememberedEmail) el.email.value = state.rememberedEmail;
+  state.passwordMin = Number(data.passwordMinLength) || DEFAULT_PASSWORD_MIN;
+  state.passwordMax = Number(data.passwordMaxLength) || DEFAULT_PASSWORD_MAX;
+  state.busy = false;
+  state.done = false;
+  state.confirmLeave = false;
+  state.errors = { email: '', password: '', repeat: '' };
+  if (!isLocked()) state.message = null;
+  el.leaveYes.disabled = false;
+  render();
+  // E-Mail schon da: direkt ins Passwortfeld
+  if (state.rememberedEmail && state.mode === 'login') el.password.focus();
+  else el.email.focus();
+});
+
+Bridge.on('login_close', () => {
+  state.open = false;
+  stopLockTimer();
+  el.password.value = '';
+  el.repeat.value = '';
+  render();
+});
+
+/* ---------- Start ---------- */
+
+renderStatic();
+Bridge.send('ui_ready', { ui: 'login', version: CONTRACT_VERSION });
+
+if (Bridge.platform === 'mock') {
+  // Im Browser: test@beispiel.de / testpasswort loggt ein, vergeben@beispiel.de ist schon registriert
+  Mock.push('login_open', {
+    serverName: 'Testserver',
+    colors: { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72' },
+    mode: 'login',
+    email: 'test@beispiel.de',
+    players: { online: 3, max: 48 },
+    passwordMinLength: 8,
+    passwordMaxLength: 72,
+  });
+}
+</script>
+</body>
+</html>

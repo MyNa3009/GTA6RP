@@ -1,0 +1,27 @@
+{
+  "_hinweis": "Bild-Angabe = Ordner/Datei aus FiveM-ClothingData images/<modell>/, ohne .webp. 'base' ist die Grundsammlung. arms nur bei jacket und shirt. Danach: python tools/kleidung.py <Pfad zu FiveM-ClothingData-master>",
+  "items": [
+    { "item": "mask_balaclava", "slot": "mask", "label": "Sturmhaube", "weight": 100, "description": "Schwarze Sturmhaube.",
+      "male": { "bild": "Male_Heist/D_1_21_1" }, "female": { "bild": "Female_Heist/D_1_21_1" } },
+    { "item": "hat_beanie", "slot": "hat", "label": "Mütze", "weight": 120, "description": "Schwarze Strickmütze.",
+      "male": { "bild": "base/P_0_5_0" }, "female": { "bild": "base/P_0_5_0" } },
+    { "item": "glasses_sun", "slot": "glasses", "label": "Pilotenbrille", "weight": 50, "description": "Getönte Gläser.",
+      "male": { "bild": "base/P_1_5_0" }, "female": { "bild": "base/P_1_11_0" } },
+    { "item": "ears_studs", "slot": "ears", "label": "Ohrringe gold", "weight": 10, "description": "Goldener Ohrschmuck.",
+      "male": { "bild": "mp_m_luxe_01/P_2_0_0" }, "female": { "bild": "mp_f_luxe_01/P_2_9_1" } },
+    { "item": "jacket_bomber", "slot": "jacket", "label": "Bomberjacke schwarz", "weight": 900, "description": "Kurze Jacke mit Bündchen.",
+      "male": { "bild": "mp_m_luxe_01/D_11_4_1", "arms": 4 } },
+    { "item": "shirt_white", "slot": "shirt", "label": "Weißes T-Shirt", "weight": 200, "description": "Schlichtes T-Shirt.",
+      "male": { "bild": "base/D_11_1_0", "arms": 0, "under": "base/D_8_15_0" }, "female": { "bild": "base/D_11_2_0", "arms": 0, "under": "base/D_8_14_0" } },
+    { "item": "watch_gold", "slot": "watch", "label": "Goldene Armbanduhr", "weight": 80, "description": "Schwer und glänzend.",
+      "male": { "bild": "Male_freemode_business/P_6_0_0" }, "female": { "bild": "Female_freemode_business/P_6_0_0" } },
+    { "item": "gloves_leather", "slot": "gloves", "label": "Handschuhe schwarz", "weight": 150, "description": "Schwarze Handschuhe.",
+      "male": { "bild": "Male_freemode_mpLTS/D_3_0_0" }, "female": { "bild": "Female_freemode_valentines/D_3_0_1" } },
+    { "item": "pants_jeans", "slot": "pants", "label": "Jeans blau", "weight": 600, "description": "Blaue Jeans.",
+      "male": { "bild": "base/D_4_0_0" }, "female": { "bild": "base/D_4_0_0" } },
+    { "item": "pants_cargo", "slot": "pants", "label": "Cargohose oliv", "weight": 650, "description": "Mit vielen Taschen.",
+      "male": { "bild": "base/D_4_9_0" }, "female": { "bild": "base/D_4_11_0" } },
+    { "item": "shoes_sneaker", "slot": "shoes", "label": "Sneaker weiß", "weight": 700, "description": "Bequeme Turnschuhe.",
+      "male": { "bild": "base/D_6_7_0" }, "female": { "bild": "base/D_6_1_0" } }
+  ]
+}

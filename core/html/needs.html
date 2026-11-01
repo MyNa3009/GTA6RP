@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<!--
+  UI: Hunger und Durst (HUD)
+  CONTRACT_VERSION: 1
+  Reine Anzeige rechts neben der Minimap, ohne Maus- und Tastaturfokus.
+
+  EINGEHEND (Client -> UI)
+  needs_open    { colors: { base, ink, accent, signal }, lowAt: number, minimap, gap, hunger, thirst }
+  needs_layout  { minimap: { left, right, top, bottom }, gap: number }   // Anteile des Bildschirms 0 bis 1, gap in px
+  needs_update  { hunger: number, thirst: number }                       // 0 bis 100
+  needs_visible { visible: boolean }                                     // aus im Pausemenue oder ohne Minimap
+  needs_close   {}
+
+  AUSGEHEND
+  ui_ready      { ui: "needs", version: 1 }
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hunger und Durst</title>
+
+<style>
+/*
+  Oberflaechentyp: Monitor. Zwei schmale Leisten an der Minimap, keine Deko.
+  Dichte 8, Bewegung 1 (nur das Fuellen), Varianz 1.
+*/
+:root {
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+
+  --c-bg:     rgb(var(--rgb-base) / 0.6);
+  --c-track:  rgb(var(--rgb-ink) / 0.14);
+  --c-fill:   rgb(var(--rgb-ink) / 0.85);
+  --c-icon:   rgb(var(--rgb-ink) / 0.75);
+  --c-signal: rgb(var(--rgb-signal));
+
+  --radius: 6px;
+  --pad: 5px;
+  --bar: 6px;
+  --icon: 14px;
+  --col-gap: 6px;
+  --dur-fill: 400ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* Werden aus needs_layout gesetzt, Standard passt zu 1920 x 1080 ohne Safezone */
+  --map-right: 0.188;
+  --map-bottom: 0.95;
+  --map-height: 0.176;
+  --gap: 6px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.needs {
+  position: fixed;
+  left: calc(var(--map-right) * 100vw + var(--gap));
+  bottom: calc((1 - var(--map-bottom)) * 100vh);
+  height: calc(var(--map-height) * 100vh);
+  display: flex;
+  gap: var(--col-gap);
+  padding: var(--pad);
+  border-radius: var(--radius);
+  background: var(--c-bg);
+  pointer-events: none;
+}
+.needs[hidden] { display: none; }
+
+.need {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pad);
+  width: var(--icon);
+}
+
+.track {
+  position: relative;
+  flex: 1;
+  width: var(--bar);
+  border-radius: var(--bar);
+  background: var(--c-track);
+  overflow: hidden;
+}
+.fill {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--bar);
+  background: var(--c-fill);
+  transform-origin: bottom center;
+  transition: transform var(--dur-fill) var(--ease-out);
+}
+.need[data-low] .fill { background: var(--c-signal); }
+
+.icon {
+  width: var(--icon);
+  height: var(--icon);
+  color: var(--c-icon);
+}
+.need[data-low] .icon { color: var(--c-signal); }
+.icon svg { display: block; width: 100%; height: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fill { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="needs" id="needs" role="group" aria-label="Hunger und Durst" hidden>
+  <div class="need" id="hunger" role="meter" aria-label="Hunger" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+    <div class="track"><div class="fill"></div></div>
+    <span class="icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v7a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V3"/><path d="M9 12v9"/><path d="M17 21V3c-2 1.5-3 4-3 7 0 2 1 3 3 3"/></svg>
+    </span>
+  </div>
+  <div class="need" id="thirst" role="meter" aria-label="Durst" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+    <div class="track"><div class="fill"></div></div>
+    <span class="icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c3.5 4.5 6 8 6 11a6 6 0 0 1-12 0c0-3 2.5-6.5 6-11z"/></svg>
+    </span>
+  </div>
+</div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return { ok: true };
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();
+</script>
+
+<script id="app">
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const MAX = 100;
+
+const root = document.documentElement;
+const el = {
+  box: document.getElementById('needs'),
+  hunger: document.getElementById('hunger'),
+  thirst: document.getElementById('thirst'),
+};
+
+let lowAt = 20;
+let open = false;
+let mapVisible = true;
+
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  COLOR_KEYS.forEach((key) => {
+    const value = colors[key];
+    if (typeof value === 'string' && COLOR_PATTERN.test(value.trim())) root.style.setProperty(`--rgb-${key}`, value.trim());
+  });
+}
+
+function setNeed(node, value) {
+  const v = Math.max(0, Math.min(MAX, Math.round(Number(value) || 0)));
+  node.querySelector('.fill').style.transform = `scaleY(${v / MAX})`;
+  node.setAttribute('aria-valuenow', String(v));
+  node.toggleAttribute('data-low', v <= lowAt);
+}
+
+function show() {
+  el.box.hidden = !(open && mapVisible);
+}
+
+Bridge.on('needs_open', (data) => {
+  applyColors(data.colors);
+  if (Number.isFinite(Number(data.lowAt))) lowAt = Number(data.lowAt);
+  layout(data);
+  if (data.hunger !== undefined) setNeed(el.hunger, data.hunger);
+  if (data.thirst !== undefined) setNeed(el.thirst, data.thirst);
+  mapVisible = true;
+  open = true;
+  show();
+});
+
+function layout(data) {
+  const m = data.minimap;
+  if (!m) return;
+  root.style.setProperty('--map-right', String(m.right));
+  root.style.setProperty('--map-bottom', String(m.bottom));
+  root.style.setProperty('--map-height', String(m.bottom - m.top));
+  if (Number.isFinite(Number(data.gap))) root.style.setProperty('--gap', `${Number(data.gap)}px`);
+}
+
+Bridge.on('needs_layout', layout);
+
+Bridge.on('needs_update', (data) => {
+  setNeed(el.hunger, data.hunger);
+  setNeed(el.thirst, data.thirst);
+});
+
+Bridge.on('needs_visible', (data) => {
+  mapVisible = Boolean(data.visible);
+  show();
+});
+
+Bridge.on('needs_close', () => {
+  open = false;
+  show();
+});
+
+Bridge.send('ui_ready', { ui: 'needs', version: CONTRACT_VERSION });
+
+if (Bridge.platform === 'mock') {
+  Bridge.emit('needs_open', { colors: { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72' }, lowAt: 20 });
+  Bridge.emit('needs_update', { hunger: 64, thirst: 14 });
+}
+</script>
+</body>
+</html>
