@@ -808,6 +808,10 @@ DB.Ready(function()
             { usage = '/giveitem 17 water 3', text = 'Items geben. Geht auch offline. Namen stehen in data/items.lua.', permission = 'items.manage' },
             { usage = '/giveitem 17 weapon_pistol illegal', text = 'Illegale Waffe ohne Seriennummer geben. Legale Waffen kommen ins Waffenregister.', permission = 'items.manage' },
             { usage = '/removeitem 17 water 1', text = 'Items abnehmen, auch angezogene Kleidung.', permission = 'items.manage' },
+            { usage = '/invsee 17', text = 'Inventar ansehen und bearbeiten, auch offline. Jede Änderung wird geloggt.', permission = 'items.manage' },
+            { usage = '/givelicense 17 fuehrerschein B', text = 'Lizenz ausstellen: fuehrerschein (B oder C), waffenschein, flugschein, bootsschein, angelschein.', permission = 'items.manage' },
+            { usage = '/revokelicense 17 fuehrerschein C Grund', text = 'Lizenz entziehen. Im Register steht sie danach als entzogen.', permission = 'items.manage' },
+            { usage = '/licenses 17', text = 'Alle Lizenzen eines Charakters mit Ablaufdatum.', permission = 'items.manage' },
         },
     })
 end)

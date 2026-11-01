@@ -239,8 +239,25 @@ local function noclipTarget()
     return ped, false
 end
 
+-- Von hier aus wird beim Verlassen des Noclips der Boden gesucht: erst direkt unter einem,
+-- dann von weiter oben (falls man unter der Karte steckt)
+local NOCLIP_GROUND_PROBES = { 1.0, 50.0 }
+local NOCLIP_GROUND_TOP = 1000.0
+
+local function noclipGround(x, y, z)
+    for _, offset in ipairs(NOCLIP_GROUND_PROBES) do
+        local found, groundZ = GetGroundZFor_3dCoord(x, y, z + offset, false)
+        if found then
+            return groundZ
+        end
+    end
+    local found, groundZ = GetGroundZFor_3dCoord(x, y, NOCLIP_GROUND_TOP, false)
+    return found and groundZ or nil
+end
+
 -- invisible = true: fuer alle anderen unsichtbar (Ped und Fahrzeug)
-function Platform.SetNoclip(enabled, invisible)
+-- toGround = true: beim Ausschalten auf den Boden darunter setzen, auch aus der Luft
+function Platform.SetNoclip(enabled, invisible, toGround)
     local entity, isVehicle
     if enabled then
         entity, isVehicle = noclipTarget()
@@ -263,6 +280,16 @@ function Platform.SetNoclip(enabled, invisible)
         SetEntityVisible(entity, visible, false)
         if isVehicle then
             SetEntityVisible(PlayerPedId(), visible, false)
+        end
+    end
+    if not enabled and toGround then
+        local coords = GetEntityCoords(entity)
+        local groundZ = noclipGround(coords.x, coords.y, coords.z)
+        if groundZ then
+            SetEntityCoordsNoOffset(entity, coords.x, coords.y, groundZ, false, false, false)
+            if isVehicle then
+                SetVehicleOnGroundProperly(entity)
+            end
         end
     end
     if not enabled then
@@ -557,12 +584,68 @@ end
 -- ein neuer Name sorgt dafuer, dass eine geaenderte Standardtaste auch bei allen ankommt, die schon mal da waren.
 local KEY_COMMAND_PREFIX = 'core_key_'
 
+------------------------------------------------------------------------
+-- Chat-Vorschlaege (Resource chat): Befehle ohne Recht ausblenden. Nur Anzeige, der Server prueft jeden Aufruf.
+-- Der Chat fuegt nach jedem Resource-Start alle Befehle neu hinzu, darum wird danach erneut entfernt.
+------------------------------------------------------------------------
+
+local SUGGESTION_REAPPLY_MS = 500
+local hiddenCommands = {}   -- Liste ohne "/"
+local keyCommands = {}      -- Hilfsbefehle der Tasten (core_key_...), die braucht im Chat niemand
+local reapplyPending = false
+
+local function removeSuggestions()
+    for _, name in ipairs(hiddenCommands) do
+        TriggerEvent('chat:removeSuggestion', '/' .. name)
+    end
+    for _, name in ipairs(keyCommands) do
+        TriggerEvent('chat:removeSuggestion', '/' .. name)
+    end
+end
+
+local function scheduleRemove()
+    if reapplyPending then
+        return
+    end
+    reapplyPending = true
+    SetTimeout(SUGGESTION_REAPPLY_MS, function()
+        reapplyPending = false
+        removeSuggestions()
+    end)
+end
+
+AddEventHandler('chat:addSuggestions', scheduleRemove)
+AddEventHandler('chat:addSuggestion', scheduleRemove)
+
+function Platform.SetHiddenCommands(names)
+    -- Vorher ausgeblendete, jetzt erlaubte Befehle kommen beim naechsten Neuaufbau des Chats zurueck
+    local wasHidden = {}
+    for _, name in ipairs(hiddenCommands) do
+        wasHidden[name] = true
+    end
+    hiddenCommands = {}
+    local now = {}
+    for _, name in ipairs(type(names) == 'table' and names or {}) do
+        if type(name) == 'string' then
+            hiddenCommands[#hiddenCommands + 1] = name
+            now[name] = true
+        end
+    end
+    for name in pairs(wasHidden) do
+        if not now[name] then
+            TriggerEvent('chat:addSuggestion', '/' .. name, '')
+        end
+    end
+    removeSuggestions()
+end
+
 function Platform.RegisterKeyCommand(name, description, defaultKey, handler)
     RegisterCommand(name, function()
         CreateThread(handler)
     end, false)
     if defaultKey then
         local keyCommand = KEY_COMMAND_PREFIX .. name
+        keyCommands[#keyCommands + 1] = keyCommand
         RegisterCommand(keyCommand, function()
             CreateThread(handler)
         end, false)

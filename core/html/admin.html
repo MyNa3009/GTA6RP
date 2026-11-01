@@ -43,12 +43,18 @@
   admin_open_tickets {}                              // schliesst das Menue und oeffnet die Ticket-UI
   (admin_open und admin_refresh liefern zusaetzlich commands: CommandGroup[] und ticketsOpen?: number, nur mit tickets.manage)
 
-  CommandGroup { title, hint?, entries: { usage, text, rank?: string, level: number, allowed: boolean }[] }
+  admin_key_create { characterId }                  -> data: { key: string, info: AdminKey }   // key nur dieses eine Mal
+  admin_key_delete { characterId }                  -> data: { info: AdminKey }
+
+  CommandGroup { title, hint?, entries: { usage, text, rank?: string, level: number }[] }   // nur Befehle, die man darf
+  AdminKey     { characterId, exists: boolean, createdBy?: number, createdAt?, lastUsedAt?, canManage: boolean,
+                 reason?: "own_key"|"target_too_high"|"character_deleted", locked?: boolean }
   SearchResult { accountId, characterId?, characterName?, deleted: boolean, rank: string, serverId? }
   Profile      { account: { id, rank, email?, createdAt, lastLogin? }, online?: OnlinePlayer,
                  characters: Character[], identifiers: { type, value?, lastSeen }[], counts: { [category]: number },
                  links: Link[], punishments: Punishments, focusCharacterId?: number,
-                 devices: Devices, twinks: { total, recent: { action, amount?, time, data? }[] } }
+                 devices: Devices, twinks: { total, recent: { action, amount?, time, data? }[] },
+                 adminKeys?: AdminKey[] }   // nur mit Recht admin.keys, ein Eintrag pro Charakter mit Teamrang
   Devices      { known: boolean, deviceCount: number, alerts: DeviceAlert[], ips?: { ip, firstSeen, lastSeen }[], ipRetentionDays }
   DeviceAlert  { id, accountId, createdAt, ip?, ipKnown: boolean, active: boolean, dismissedBy?, dismissedAt?, name?, serverId? }
   Punishments  { bans: Ban[], jails: JailEntry[], activeBan?: Ban, activeJails: JailEntry[],
@@ -74,7 +80,8 @@
   no_permission, duty_required, target_offline, self, no_position, not_found, invalid_query,
   invalid_category, unknown_action, no_character, db_error, server_error, timeout, bridge_error, client_error,
   target_jailed, jailed, invalid_reason, invalid_duration, invalid_minutes, already_banned, not_banned,
-  already_jailed, not_jailed, account_not_found, character_not_found, target_too_high, not_ready
+  already_jailed, not_jailed, account_not_found, character_not_found, target_too_high, not_ready,
+  own_key, no_team_rank, character_deleted, no_key
 -->
 <html lang="de">
 <head>
@@ -443,6 +450,28 @@ button, input { font: inherit; color: inherit; }
 .links { margin-top: var(--space-6); }
 .links__title { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; }
 .links .warning { margin: 0 0 var(--space-2); }
+
+.key-reveal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--c-accent-line);
+  border-radius: var(--radius-md);
+  background: var(--c-accent-soft);
+}
+.key-reveal__value {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.key-reveal__hint { flex-basis: 100%; margin: 0; font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
 .warning--off { border-color: var(--c-border); background: var(--c-surface); }
 .warning--info { border-color: var(--c-info-line); background: var(--c-info-soft); }
 .warning--info .warning__title { color: var(--c-info); }
@@ -515,8 +544,6 @@ button, input { font: inherit; color: inherit; }
 .cmd-usage { width: var(--cmd-usage-width); font-weight: 600; font-variant-numeric: tabular-nums; }
 .cmd-text { color: var(--c-text-muted); }
 .cmd-rank { width: var(--cmd-rank-width); padding-right: 0; text-align: right; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-faint); }
-.cmd-table tr[data-locked] .cmd-usage,
-.cmd-table tr[data-locked] .cmd-text { opacity: 0.45; }
 
 .profile { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .profile[hidden] { display: none; }
@@ -948,7 +975,7 @@ const Mock = {
   },
   players: [
     { serverId: 1, accountId: 1, characterId: 3, characterName: 'Fabian Nandes', playerName: 'MyNa3009', rank: 'Chief Administrator', loggedIn: true, duty: false },
-    { serverId: 4, accountId: 12, characterId: 17, characterName: 'Lena Wójcik', playerName: 'lenawj', rank: 'Spieler', loggedIn: true, duty: false, warning: true },
+    { serverId: 4, accountId: 12, characterId: 17, characterName: 'Lena Wójcik', playerName: 'lenawj', rank: 'Junior Administrator', loggedIn: true, duty: false, warning: true },
     { serverId: 7, accountId: 9, characterId: 14, characterName: 'Kemal Arslan', playerName: 'kem.a', rank: 'Junior Administrator', loggedIn: true, duty: true, dimension: 5 },
     { serverId: 13, accountId: 31, characterId: 41, characterName: 'Dario Pfeffer', playerName: 'dpfeffer', rank: 'Spieler', loggedIn: true, duty: false, frozen: true },
     { serverId: 9, playerName: 'Neuling_2027', loggedIn: false, duty: false },
@@ -992,6 +1019,10 @@ const Mock = {
       { ip: '91.64.200.18', firstSeen: MOCK_NOW - 9 * 86400000, lastSeen: MOCK_NOW - 95 * MOCK_MINUTE_MS },
     ],
   },
+  adminKeys: [
+    { characterId: 17, exists: true, createdBy: 3, createdAt: MOCK_NOW - 3 * 86400000, lastUsedAt: MOCK_NOW - 95 * MOCK_MINUTE_MS, canManage: true },
+    { characterId: 22, exists: false, canManage: true },
+  ],
   links: [
     { otherAccountId: 23, otherName: 'Jonas Lehmkuhl', types: ['license'], timesSeen: 3, firstSeen: MOCK_NOW - 1500 * MOCK_MINUTE_MS, lastSeen: MOCK_NOW - 41 * MOCK_MINUTE_MS, active: true },
   ],
@@ -1068,9 +1099,9 @@ const Mock = {
         account: { id: accountId, rank: online ? online.rank : 'Spieler', email: 'lena.wojcik@web.de', createdAt: MOCK_NOW - 9 * 86400000, lastLogin: MOCK_NOW - 95 * MOCK_MINUTE_MS },
         online,
         characters: [
-          { id: 17, rank: 'Spieler', firstname: 'Lena', lastname: 'Wójcik', dateOfBirth: '1997-08-21', gender: 'female', job: 'taxi', jobGrade: 1, cash: 1240, bank: 18730, createdAt: MOCK_NOW - 9 * 86400000, lastPlayed: MOCK_NOW - 95 * MOCK_MINUTE_MS },
+          { id: 17, rank: 'Junior Administrator', firstname: 'Lena', lastname: 'Wójcik', dateOfBirth: '1997-08-21', gender: 'female', job: 'taxi', jobGrade: 1, cash: 1240, bank: 18730, createdAt: MOCK_NOW - 9 * 86400000, lastPlayed: MOCK_NOW - 95 * MOCK_MINUTE_MS },
           { id: 21, rank: 'Spieler', firstname: 'Lena', lastname: 'Brandt', dateOfBirth: '2001-02-03', gender: 'female', job: 'unemployed', jobGrade: 0, cash: 500, bank: 2500, createdAt: MOCK_NOW - 8 * 86400000, deletedAt: MOCK_NOW - 7 * 86400000 },
-          { id: 22, rank: 'Spieler', firstname: 'Mira', lastname: 'Brandt', dateOfBirth: '2000-06-11', gender: 'female', job: 'unemployed', jobGrade: 0, cash: 820, bank: 4100, createdAt: MOCK_NOW - 6 * 86400000, lastPlayed: MOCK_NOW - 400 * MOCK_MINUTE_MS },
+          { id: 22, rank: 'Administrator Assistant', firstname: 'Mira', lastname: 'Brandt', dateOfBirth: '2000-06-11', gender: 'female', job: 'unemployed', jobGrade: 0, cash: 820, bank: 4100, createdAt: MOCK_NOW - 6 * 86400000, lastPlayed: MOCK_NOW - 400 * MOCK_MINUTE_MS },
         ],
         identifiers: [
           { type: 'discord', value: '412883205517836289', lastSeen: MOCK_NOW - 95 * MOCK_MINUTE_MS },
@@ -1082,7 +1113,20 @@ const Mock = {
         devices: Mock.devices,
         twinks: { total: 3, recent: Mock.logs(12).filter((e) => e.category === 'twink').map((e) => ({ action: e.action, amount: e.amount, time: e.time, data: e.data })) },
         inventory: true,
+        adminKeys: Mock.adminKeys.filter((k) => [17, 21, 22].includes(k.characterId)),
       } };
+    },
+    admin_key_create(data) {
+      const info = Mock.adminKeys.find((k) => k.characterId === data.characterId);
+      if (!info) return { ok: false, error: 'no_team_rank' };
+      Object.assign(info, { exists: true, createdBy: 3, createdAt: Date.now(), lastUsedAt: undefined, locked: undefined });
+      return { ok: true, data: { key: 'K7QM-2XPA-9RTD-H4NW', info: { ...info } } };
+    },
+    admin_key_delete(data) {
+      const info = Mock.adminKeys.find((k) => k.characterId === data.characterId);
+      if (!info || !info.exists) return { ok: false, error: 'no_key' };
+      Object.assign(info, { exists: false, createdBy: undefined, createdAt: undefined, lastUsedAt: undefined });
+      return { ok: true, data: { info: { ...info } } };
     },
     admin_inventory(data) {
       const items = {
@@ -1180,7 +1224,7 @@ const TEXT = {
     slot: 'Platz', item: 'Item', count: 'Anzahl', weightCol: 'Gewicht',
   },
   commandsButton: 'Befehle',
-  commandsTitle: 'Alle Befehle',
+  commandsTitle: 'Deine Befehle',
   commandsFilter: 'Befehl oder Stichwort suchen',
   commandsEmpty: 'Kein Befehl passt zu deiner Suche.',
   commandsRank: (level) => `ab Stufe ${level}`,
@@ -1387,6 +1431,31 @@ const TEXT = {
   multiRestore: 'Wieder anzeigen',
   multiDismissed: (by, at) => `Ausgeblendet${by ? ` von ${by}` : ''} am ${at}`,
   linksTitle: 'Verknüpfte Logins',
+  adminKey: {
+    title: 'Admin-Key',
+    exists: 'Key vorhanden',
+    missing: 'Noch kein Key. Ohne Key hat dieser Charakter keine Admin-Rechte.',
+    meta: (created, by, used) => `Erstellt ${created}${by ? ` von ID ${by}` : ''}. Zuletzt benutzt: ${used}.`,
+    locked: 'Gerade gesperrt nach zu vielen falschen Versuchen. Ein neuer Key hebt die Sperre auf.',
+    create: 'Key erstellen',
+    recreate: 'Neuen Key erstellen',
+    remove: 'Key löschen',
+    confirmCreate: 'Wirklich neu? Der alte Key gilt sofort nicht mehr.',
+    confirmRemove: 'Wirklich löschen? Die Person verliert sofort ihre Admin-Rechte.',
+    confirm: 'Ja, weiter',
+    cancel: 'Abbrechen',
+    busy: 'Einen Moment…',
+    copy: 'Kopieren',
+    copied: 'Kopiert',
+    reveal: 'Nur jetzt sichtbar. Gib den Key der Person privat weiter, zum Beispiel per Discord-Direktnachricht.',
+    created: 'Neuer Admin-Key erstellt.',
+    removed: 'Admin-Key gelöscht.',
+    reasons: {
+      own_key: 'Keys für deine eigenen Charaktere erstellt ein höherer Rang.',
+      target_too_high: 'Diese Person hat denselben oder einen höheren Rang als du.',
+      character_deleted: 'Dieser Charakter ist gelöscht.',
+    },
+  },
   linkDismissedOk: 'Warnung ausgeblendet.',
   linkRestoredOk: 'Warnung wird wieder angezeigt.',
   warningBadge: 'Warnung',
@@ -1482,6 +1551,10 @@ const TEXT = {
     character_not_found: 'Dieser Charakter gehört nicht zu dieser Akte.',
     target_too_high: 'Diese Person hat denselben oder einen höheren Rang als du.',
     not_ready: 'Die Strafen-Tabellen fehlen. Siehe Serverkonsole.',
+    own_key: 'Für deine eigenen Charaktere kannst du keinen Key erstellen.',
+    no_team_rank: 'Dieser Charakter hat keinen Teamrang.',
+    character_deleted: 'Dieser Charakter ist gelöscht.',
+    no_key: 'Dieser Charakter hat keinen Key.',
     default: 'Etwas ist schiefgelaufen.',
   },
 };
@@ -1526,6 +1599,7 @@ const state = {
   message: null,        // { tone, text }
   punish: null,         // { type, banId?, scope: 'account' | characterId, duration, error }
   view: 'profile',      // 'profile' | 'commands'
+  keyAction: null,      // { characterId, confirm: 'create' | 'delete' | null, busy, key?, copied }
   commands: [],
   ticketsOpen: null,    // null = kein Recht auf Tickets
 };
@@ -2475,10 +2549,14 @@ function renderOverview() {
     ));
   });
 
+  const keySection = renderAdminKey();
   const links = state.profile.links || [];
-  if (links.length === 0) return dl;
+  if (links.length === 0 && !keySection) return dl;
 
   const wrap = make('div');
+  wrap.append(dl);
+  if (keySection) wrap.append(keySection);
+  if (links.length === 0) return wrap;
   const section = make('section', 'links');
   section.append(make('h3', 'links__title', TEXT.linksTitle));
   links.forEach((link) => {
@@ -2486,8 +2564,116 @@ function renderOverview() {
     box.append(linkRow(link, true));
     section.append(box);
   });
-  wrap.append(dl, section);
+  wrap.append(section);
   return wrap;
+}
+
+/* ---------- Akte: Admin-Key ---------- */
+
+function adminKeyInfo() {
+  const list = Array.isArray(state.profile && state.profile.adminKeys) ? state.profile.adminKeys : [];
+  return list.find((info) => info.characterId === state.selectedCharacterId) || null;
+}
+
+function keyButton(text, action, className) {
+  const button = make('button', className || 'btn', text);
+  button.type = 'button';
+  button.dataset.action = action;
+  return button;
+}
+
+function renderAdminKey() {
+  const info = adminKeyInfo();
+  if (!info) return null;
+  const t = TEXT.adminKey;
+  const action = state.keyAction && state.keyAction.characterId === info.characterId ? state.keyAction : null;
+
+  const section = make('section', 'links');
+  section.setAttribute('aria-label', t.title);
+  section.append(make('h3', 'links__title', t.title));
+
+  if (action && action.key) {
+    const reveal = make('div', 'key-reveal');
+    reveal.append(make('span', 'key-reveal__value', action.key), keyButton(action.copied ? t.copied : t.copy, 'key-copy'));
+    reveal.append(make('p', 'key-reveal__hint', t.reveal));
+    const box = make('div');
+    box.append(reveal);
+    section.append(box);
+    return section;
+  }
+
+  const box = make('div', info.exists ? 'warning warning--off' : 'warning');
+  const row = make('div', 'warning__row');
+  const text = make('div', 'warning__text');
+  text.append(make('div', null, info.exists ? t.exists : t.missing));
+  if (info.exists) text.append(make('div', 'warning__meta', t.meta(formatTime(info.createdAt), info.createdBy, formatTime(info.lastUsedAt))));
+  if (info.locked) text.append(make('div', 'warning__meta', t.locked));
+  if (!info.canManage && t.reasons[info.reason]) text.append(make('div', 'warning__meta', t.reasons[info.reason]));
+  row.append(text);
+
+  if (info.canManage) {
+    const buttons = make('div', 'actions');
+    if (action && action.confirm) {
+      text.append(make('div', 'warning__meta', action.confirm === 'create' ? t.confirmCreate : t.confirmRemove));
+      const confirm = keyButton(action.busy ? t.busy : t.confirm, 'key-confirm', action.confirm === 'delete' ? 'btn btn--danger' : 'btn btn--primary');
+      confirm.disabled = action.busy;
+      const cancel = keyButton(t.cancel, 'key-cancel');
+      cancel.disabled = action.busy;
+      buttons.append(cancel, confirm);
+    } else if (info.exists) {
+      buttons.append(keyButton(t.recreate, 'key-create'), keyButton(t.remove, 'key-delete', 'btn btn--danger'));
+    } else {
+      // Ohne Key gibt es nichts zu ersetzen, darum ohne Nachfrage
+      const create = keyButton(action && action.busy ? t.busy : t.create, 'key-create', 'btn btn--primary');
+      create.disabled = Boolean(action && action.busy);
+      buttons.append(create);
+    }
+    row.append(buttons);
+  }
+  box.append(row);
+  section.append(box);
+  return section;
+}
+
+function updateKeyInfo(info) {
+  if (!info || !state.profile) return;
+  const list = Array.isArray(state.profile.adminKeys) ? state.profile.adminKeys : [];
+  state.profile.adminKeys = list.map((entry) => (entry.characterId === info.characterId ? info : entry));
+}
+
+async function runKeyAction(kind) {
+  const info = adminKeyInfo();
+  if (!info || !info.canManage) return;
+  const characterId = info.characterId;
+  state.keyAction = { characterId, confirm: state.keyAction && state.keyAction.confirm, busy: true, copied: false };
+  renderContent();
+  const result = await Bridge.send(kind === 'create' ? 'admin_key_create' : 'admin_key_delete', { characterId });
+  if (!state.keyAction || state.keyAction.characterId !== characterId) return;
+  if (result && result.ok && result.data) {
+    updateKeyInfo(result.data.info);
+    state.keyAction = kind === 'create' ? { characterId, confirm: null, busy: false, key: result.data.key, copied: false } : null;
+    state.message = { tone: 'success', text: kind === 'create' ? TEXT.adminKey.created : TEXT.adminKey.removed };
+  } else {
+    state.keyAction = null;
+    state.message = { tone: 'error', text: errorText(result && result.error) };
+  }
+  renderProfileHead();
+  renderContent();
+}
+
+// In FiveM gibt es keine Zwischenablage-API, darum ueber ein unsichtbares Textfeld
+function copyText(text) {
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.append(area);
+  area.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+  area.remove();
+  return ok;
 }
 
 function table(headers, rows) {
@@ -2852,7 +3038,6 @@ function applyExtras(data) {
 
 function commandRow(entry) {
   const tr = make('tr');
-  if (!entry.allowed) tr.dataset.locked = '';
   tr.append(
     make('td', 'cmd-usage', entry.usage),
     make('td', 'cmd-text', entry.text),
@@ -2961,10 +3146,12 @@ async function openProfile(accountId, characterId) {
       && state.profile.characters.some((c) => c.id === characterId)) {
     state.selectedCharacterId = characterId;
     state.punish = null;
+    state.keyAction = null;
     render();
     return;
   }
   const request = ++profileRequest;
+  state.keyAction = null;
   state.selectedAccountId = accountId || null;
   state.selectedCharacterId = characterId || null;
   state.profile = null;
@@ -3129,6 +3316,34 @@ const ACTIONS = {
     el.search.focus();
   },
   'player-action'(target) { playerAction(target.dataset.playerAction); },
+  'key-create'() {
+    const info = adminKeyInfo();
+    if (!info) return;
+    if (!info.exists) {
+      runKeyAction('create');
+      return;
+    }
+    state.keyAction = { characterId: info.characterId, confirm: 'create', busy: false, copied: false };
+    renderContent();
+  },
+  'key-delete'() {
+    const info = adminKeyInfo();
+    if (!info) return;
+    state.keyAction = { characterId: info.characterId, confirm: 'delete', busy: false, copied: false };
+    renderContent();
+  },
+  'key-confirm'() {
+    if (state.keyAction && state.keyAction.confirm) runKeyAction(state.keyAction.confirm);
+  },
+  'key-cancel'() {
+    state.keyAction = null;
+    renderContent();
+  },
+  'key-copy'() {
+    if (!state.keyAction || !state.keyAction.key) return;
+    state.keyAction.copied = copyText(state.keyAction.key);
+    renderContent();
+  },
   link(target) { setLink(Number(target.dataset.other), target.dataset.dismiss === 'true'); },
   'device-alert'(target) { setDeviceAlert(Number(target.dataset.alertId), target.dataset.dismiss === 'true'); },
   mode(target) {
@@ -3270,7 +3485,7 @@ if (Bridge.platform === 'mock') {
     currency: 'USD', serverName: 'Testserver', self: Mock.self, players: Mock.players, warningCount: 3,
     ticketsOpen: 2,
     // Befehlsliste aus der Core, Ansicht eines Junior Administrators
-    commands: [{"title": "Allgemein", "entries": [{"level": 0, "text": "Zeigt deine permanente ID und deine Login-Nummer.", "usage": "/meineid", "allowed": true}, {"level": 0, "text": "Ticket an das Team schreiben. Für alle Spieler.", "usage": "/report", "allowed": true}, {"level": 0, "text": "Eigenen Rang und alle Ränge anzeigen.", "usage": "/rang, /raenge", "allowed": true}, {"level": 0, "text": "Kontostand, Überweisung, Bargeld geben. Für alle Spieler.", "usage": "/geld, /ueberweisen, /geben", "allowed": true}, {"level": 0, "text": "Zurück zum Login.", "usage": "/relog", "allowed": true}, {"level": 1, "text": "Admin-Menü öffnen.", "usage": "/admin oder F10", "allowed": true, "rank": "Administrator Assistant"}, {"level": 1, "text": "Admin-Dienst an oder aus. Die meisten Befehle gehen nur im Dienst.", "usage": "/aduty", "allowed": true, "rank": "Administrator Assistant"}, {"level": 1, "text": "Erkennungsmodus: Name, IDs, Gesundheit und Warnungen über jedem Spieler.", "usage": "Tab", "allowed": true, "rank": "Administrator Assistant"}]}, {"title": "Tickets", "entries": [{"level": 1, "text": "Alle offenen Tickets, eigene und geschlossene ansehen.", "usage": "/tickets", "allowed": true, "rank": "Administrator Assistant"}, {"level": 1, "text": "Ticket 12 übernehmen. Danach kannst du antworten und es schließen.", "usage": "/claim 12", "allowed": true, "rank": "Administrator Assistant"}]}, {"title": "Bewegen", "entries": [{"level": 2, "text": "Noclip. W A S D, Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam.", "usage": "Z oder /nc", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Zu einem zufälligen anderen Spieler.", "usage": "/tp", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Zu ID 17 teleportieren.", "usage": "/tp 17, /goto 17", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Zu Koordinaten. Ohne Höhe auf den Boden.", "usage": "/tp x y [z]", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "ID 17 zu dir holen. Nicht aus dem A-Jail.", "usage": "/bring 17", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Am Steuer mit Fahrzeug und Insassen teleportieren.", "usage": "/cartp 17, /cartp x y", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "ID 17 unsichtbar beobachten. Nochmal /spec beendet und bringt dich zurück.", "usage": "/spec 17", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Eigene Dimension anzeigen oder wechseln. 0 ist die normale Welt.", "usage": "/dim, /dim 5", "allowed": true, "rank": "Junior Administrator"}, {"level": 3, "text": "ID 17 in Dimension 5 setzen.", "usage": "/setdim 17 5", "allowed": false, "rank": "Administrator"}]}, {"entries": [{"level": 2, "text": "Wiederbeleben. Ohne ID dich selbst.", "usage": "/revive [17]", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Volle Gesundheit. Ohne Ziel dich selbst.", "usage": "/heal [ziel]", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Weste geben, ohne Wert 100.", "usage": "/armor [ziel] [wert]", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Einfrieren und wieder frei lassen.", "usage": "/freeze ziel, /unfreeze ziel", "allowed": true, "rank": "Junior Administrator"}, {"level": 3, "text": "Bewusstlos machen. Admins im Dienst werden übersprungen.", "usage": "/kill [ziel]", "allowed": false, "rank": "Administrator"}, {"level": 1, "text": "Teamnachricht in der Bildschirmmitte.", "usage": "/dm ziel Text", "allowed": true, "rank": "Administrator Assistant"}, {"level": 4, "text": "Waffe geben, ohne Angabe Pistole mit 250 Schuss.", "usage": "/gun [ziel] [waffe] [munition]", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Waffen wieder wegnehmen, die ein Admin gegeben hat.", "usage": "/regun [ziel] [waffe]", "allowed": false, "rank": "Server Administrator"}], "title": "Spieler", "hint": "Ziel: permanente ID, \"r 20\" für alle im Umkreis von 20 m oder \"all\" für alle (ab Server Administrator)."}, {"title": "Fahrzeuge", "entries": [{"level": 4, "text": "Fahrzeug spawnen, du sitzt am Steuer.", "usage": "/car adder", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Fahrzeug löschen, in dem du sitzt oder das nächste bis 6 m.", "usage": "/dv", "allowed": false, "rank": "Server Administrator"}, {"level": 2, "text": "Fahrzeug reparieren, auf das du schaust, oder alle im Umkreis.", "usage": "/fixcars, /fixcars r 30", "allowed": true, "rank": "Junior Administrator"}, {"level": 5, "text": "Fahrzeug bis zu 300 % schneller. /boost 0 schaltet ab.", "usage": "/boost 300", "allowed": false, "rank": "Senior Administrator"}]}, {"title": "Strafen", "entries": [{"level": 2, "text": "30 Minuten A-Jail für Charakter 17.", "usage": "/ajail 17 30 Grund", "allowed": true, "rank": "Junior Administrator"}, {"level": 2, "text": "Aus dem A-Jail entlassen.", "usage": "/unjail 17", "allowed": true, "rank": "Junior Administrator"}, {"level": 3, "text": "Vom Server werfen, mit Grund.", "usage": "/kick 17 Grund", "allowed": false, "rank": "Administrator"}, {"level": 4, "text": "Verwarnen, optional mit A-Jail. Die dritte gibt 7 Tage Charakter-Ban.", "usage": "/warn 17 [min] Grund", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Verwarnung 15 zurücknehmen.", "usage": "/unwarn 15", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Kick, der wie ein Verbindungsabbruch aussieht. Der Grund steht nur in der Akte.", "usage": "/silentk 17 [grund]", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Nur Charakter 17 bannen. Dauer 30m, 12h, 7d, 2w oder perm.", "usage": "/ban 17 3d Grund", "allowed": false, "rank": "Server Administrator"}, {"level": 4, "text": "Den ganzen Login mit allen Charakteren bannen.", "usage": "/loginban 17 7d Grund", "allowed": false, "rank": "Server Administrator"}, {"level": 5, "text": "Ban aufheben.", "usage": "/unban 17, /loginunban 17", "allowed": false, "rank": "Senior Administrator"}]}, {"title": "Geld und Team", "entries": [{"level": 5, "text": "Geld geben, cash oder bank. Geht auch offline.", "usage": "/givemoney cash 17 500", "allowed": false, "rank": "Senior Administrator"}, {"level": 5, "text": "Geld abziehen.", "usage": "/removemoney bank 17 500", "allowed": false, "rank": "Senior Administrator"}, {"level": 6, "text": "Teamrang eines Charakters setzen. Nicht für eigene Charaktere.", "usage": "/setrank 17 junior", "allowed": false, "rank": "Deputy Chief Administrator"}]}],
+    commands: [{"title": "Allgemein", "entries": [{"level": 0, "text": "Zeigt deine permanente ID und deine Login-Nummer.", "usage": "/meineid"}, {"level": 0, "text": "Ticket an das Team schreiben. Für alle Spieler.", "usage": "/report"}, {"level": 0, "text": "Eigenen Rang und alle Ränge anzeigen.", "usage": "/rang, /raenge"}, {"level": 0, "text": "Kontostand, Überweisung, Bargeld geben. Für alle Spieler.", "usage": "/geld, /ueberweisen, /geben"}, {"level": 0, "text": "Zurück zum Login.", "usage": "/relog"}, {"level": 1, "text": "Admin-Menü öffnen.", "usage": "/admin oder F10", "rank": "Administrator Assistant"}, {"level": 1, "text": "Admin-Dienst an oder aus. Die meisten Befehle gehen nur im Dienst.", "usage": "/aduty", "rank": "Administrator Assistant"}, {"level": 1, "text": "Erkennungsmodus: Name, IDs, Gesundheit und Warnungen über jedem Spieler.", "usage": "Tab", "rank": "Administrator Assistant"}]}, {"title": "Tickets", "entries": [{"level": 1, "text": "Alle offenen Tickets, eigene und geschlossene ansehen.", "usage": "/tickets", "rank": "Administrator Assistant"}, {"level": 1, "text": "Ticket 12 übernehmen. Danach kannst du antworten und es schließen.", "usage": "/claim 12", "rank": "Administrator Assistant"}]}, {"title": "Bewegen", "entries": [{"level": 2, "text": "Noclip. W A S D, Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam.", "usage": "Z oder /nc", "rank": "Junior Administrator"}, {"level": 2, "text": "Zu einem zufälligen anderen Spieler.", "usage": "/tp", "rank": "Junior Administrator"}, {"level": 2, "text": "Zu ID 17 teleportieren.", "usage": "/tp 17, /goto 17", "rank": "Junior Administrator"}, {"level": 2, "text": "Zu Koordinaten. Ohne Höhe auf den Boden.", "usage": "/tp x y [z]", "rank": "Junior Administrator"}, {"level": 2, "text": "ID 17 zu dir holen. Nicht aus dem A-Jail.", "usage": "/bring 17", "rank": "Junior Administrator"}, {"level": 2, "text": "Am Steuer mit Fahrzeug und Insassen teleportieren.", "usage": "/cartp 17, /cartp x y", "rank": "Junior Administrator"}, {"level": 2, "text": "ID 17 unsichtbar beobachten. Nochmal /spec beendet und bringt dich zurück.", "usage": "/spec 17", "rank": "Junior Administrator"}, {"level": 2, "text": "Eigene Dimension anzeigen oder wechseln. 0 ist die normale Welt.", "usage": "/dim, /dim 5", "rank": "Junior Administrator"}]}, {"entries": [{"level": 2, "text": "Wiederbeleben. Ohne ID dich selbst.", "usage": "/revive [17]", "rank": "Junior Administrator"}, {"level": 2, "text": "Volle Gesundheit. Ohne Ziel dich selbst.", "usage": "/heal [ziel]", "rank": "Junior Administrator"}, {"level": 2, "text": "Weste geben, ohne Wert 100.", "usage": "/armor [ziel] [wert]", "rank": "Junior Administrator"}, {"level": 2, "text": "Einfrieren und wieder frei lassen.", "usage": "/freeze ziel, /unfreeze ziel", "rank": "Junior Administrator"}, {"level": 1, "text": "Teamnachricht in der Bildschirmmitte.", "usage": "/dm ziel Text", "rank": "Administrator Assistant"}], "title": "Spieler", "hint": "Ziel: permanente ID, \"r 20\" für alle im Umkreis von 20 m oder \"all\" für alle (ab Server Administrator)."}, {"title": "Fahrzeuge", "entries": [{"level": 2, "text": "Fahrzeug reparieren, auf das du schaust, oder alle im Umkreis.", "usage": "/fixcars, /fixcars r 30", "rank": "Junior Administrator"}]}, {"title": "Strafen", "entries": [{"level": 2, "text": "30 Minuten A-Jail für Charakter 17.", "usage": "/ajail 17 30 Grund", "rank": "Junior Administrator"}, {"level": 2, "text": "Aus dem A-Jail entlassen.", "usage": "/unjail 17", "rank": "Junior Administrator"}]}],
   });
 }
 </script>

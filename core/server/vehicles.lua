@@ -1,8 +1,10 @@
 -- Admin-Fahrzeuge: spawnen, loeschen, boosten.
--- Der Client fuehrt aus, der Server erlaubt, prueft und loggt. Alles nur im Admin-Dienst.
+-- Der Client fuehrt aus, der Server erlaubt, prueft und loggt. Spawnen und Boosten nur im Admin-Dienst,
+-- Loeschen (/dv, Recht vehicle.delete) auch ausserhalb.
 
 local MODEL_PATTERN = '^[%w_]+$'
 local MODEL_MAX_LENGTH = 32
+local DELETE_DISTANCE_MARGIN = 4.0 -- Spielraum fuer Verzoegerung, das Fahrzeug kann sich gerade bewegen
 
 local function deny(source, permission)
     if Core.HasPermission(source, permission) then
@@ -19,7 +21,8 @@ local function deny(source, permission)
 end
 
 -- Gemeinsame Pruefung: Recht, Charakter, Dienst. Gibt den Spieler oder nil und eine Antwort zurueck.
-local function check(source, permission)
+-- noDuty = true: geht auch ausserhalb des Admin-Diensts
+local function check(source, permission, noDuty)
     local denied = deny(source, permission)
     if denied then
         return nil, denied
@@ -28,13 +31,18 @@ local function check(source, permission)
     if not player.character then
         return nil, { ok = false, error = 'no_character' }
     end
-    if Config.Admin.RequireDutyForActions and not player.adminDuty then
+    if not noDuty and Config.Admin.RequireDutyForActions and not player.adminDuty then
         return nil, { ok = false, error = 'duty_required' }
     end
     if player.jail then
         return nil, { ok = false, error = 'jailed' }
     end
     return player
+end
+
+local function distance(a, b)
+    local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
 end
 
 local function validModel(model)
@@ -64,17 +72,28 @@ Core.RegisterCallback('admin_vehicle_spawn', function(source, data)
     return { ok = true, data = { plate = Config.Vehicles.Plate } }
 end)
 
--- /dv: Fahrzeug loeschen (das eigene oder das naechste)
+-- /dv: Fahrzeug loeschen (das eigene oder das naechste). Auch ausserhalb des Admin-Diensts.
+-- Position und Kennzeichen kommen vom Server, damit niemand ein Fahrzeug am anderen Ende der Karte loescht.
 Core.RegisterCallback('admin_vehicle_delete', function(source, data)
-    local player, response = check(source, 'vehicle.spawn')
+    local player, response = check(source, 'vehicle.delete', true)
     if not player then return response end
     local netId = tonumber(data.netId)
-    if not netId or not Platform.DeleteNetworkedVehicle(netId) then
+    local vehicle = netId and Platform.GetVehicleInfo(netId) or nil
+    if not vehicle then
+        return { ok = false, error = 'no_vehicle' }
+    end
+    local position = Platform.GetPlayerPosition(source)
+    local maxDistance = Config.Vehicles.DeleteRadius + DELETE_DISTANCE_MARGIN
+    if not position or distance(position, vehicle.position) > maxDistance then
+        return { ok = false, error = 'too_far' }
+    end
+    if not Platform.DeleteNetworkedVehicle(netId) then
         return { ok = false, error = 'no_vehicle' }
     end
     log(player, 'vehicle_delete', {
         model = validModel(data.model) and data.model or nil,
-        plate = type(data.plate) == 'string' and data.plate:sub(1, 8) or nil,
+        plate = vehicle.plate,
+        duty = player.adminDuty ~= nil,
     })
     return { ok = true }
 end)

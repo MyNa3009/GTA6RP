@@ -16,6 +16,10 @@ local function open()
     local result = Network.Call('admin_overview', {})
     if not result or not result.ok then
         local code = result and result.error or 'timeout'
+        -- Der Server hat schon nach dem Admin-Key gefragt oder gemeldet, warum es nicht geht
+        if code == 'key_required' then
+            return
+        end
         Notify.Show(ERROR_TEXT[code] or ('Admin-Menü nicht verfügbar: ' .. tostring(code)), 'error')
         return
     end
@@ -61,7 +65,7 @@ Platform.UiOn('admin_refresh', function()
 end)
 
 -- Diese Anfragen gehen unveraendert an den Server
-for _, name in ipairs({ 'admin_search', 'admin_profile', 'admin_logs', 'admin_action', 'admin_duty', 'admin_link', 'admin_warnings', 'admin_accounts', 'admin_punish', 'admin_device_alert', 'admin_inventory' }) do
+for _, name in ipairs({ 'admin_search', 'admin_profile', 'admin_logs', 'admin_action', 'admin_duty', 'admin_link', 'admin_warnings', 'admin_accounts', 'admin_punish', 'admin_device_alert', 'admin_inventory', 'admin_key_create', 'admin_key_delete' }) do
     Platform.UiOn(name, function(data)
         return Network.Call(name, data)
     end)
@@ -79,6 +83,7 @@ end)
 
 -- Beim Ausloggen das Menue schliessen
 AdminMenu = {
+    Open = open,
     Close = function()
         if isOpen then
             close()

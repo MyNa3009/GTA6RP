@@ -57,7 +57,7 @@ local GROUPS = {
         title = 'Fahrzeuge',
         entries = {
             { usage = '/car adder', text = 'Fahrzeug spawnen, du sitzt am Steuer.', permission = 'vehicle.spawn' },
-            { usage = '/dv', text = 'Fahrzeug löschen, in dem du sitzt oder das nächste bis 6 m.', permission = 'vehicle.spawn' },
+            { usage = '/dv', text = 'Fahrzeug löschen, in dem du sitzt oder das nächste bis 6 m. Auch ohne Admin-Dienst.', permission = 'vehicle.delete' },
             { usage = '/fixcars, /fixcars r 30', text = 'Fahrzeug reparieren, auf das du schaust, oder alle im Umkreis.', permission = 'vehicle.fix' },
             { usage = '/boost 300', text = 'Fahrzeug bis zu 300 % schneller. /boost 0 schaltet ab.', permission = 'vehicle.boost' },
         },
@@ -83,6 +83,7 @@ local GROUPS = {
             { usage = '/removemoney bank 17 500', text = 'Geld abziehen.', permission = 'money.manage', command = 'removemoney' },
             { usage = '/namechange 17 Lena Brandt', text = 'Vor- und Nachnamen eines Charakters ändern. Geht auch offline.', permission = 'player.rename', command = 'namechange' },
             { usage = '/setrank 17 junior', text = 'Teamrang eines Charakters setzen. Nicht für eigene Charaktere.', permission = 'ranks.manage', command = 'setrank' },
+            { usage = 'Akte: Admin-Key', text = 'Admin-Key erstellen oder löschen, nur für Ränge unter dir. Den ersten Key gibt die Server-Konsole: adminkey 17', permission = 'admin.keys' },
         },
     },
 }
@@ -113,24 +114,103 @@ local function allGroups()
     return list
 end
 
+-- Nur Befehle, die source wirklich benutzen darf. Leere Gruppen fallen weg.
 function AdminHelp.ListFor(source)
     local groups = {}
     for _, group in ipairs(allGroups()) do
         local entries = {}
         for _, entry in ipairs(group.entries) do
-            local rank = entry.permission and Permissions.MinRankFor(entry.permission) or nil
-            entries[#entries + 1] = {
-                usage = entry.usage,
-                text = entry.text,
-                rank = rank and rank.label or nil,
-                level = rank and rank.level or 0,
-                allowed = entry.permission == nil or Core.HasPermission(source, entry.permission),
-            }
+            if entry.permission == nil or Core.HasPermission(source, entry.permission) then
+                local rank = entry.permission and Permissions.MinRankFor(entry.permission) or nil
+                entries[#entries + 1] = {
+                    usage = entry.usage,
+                    text = entry.text,
+                    rank = rank and rank.label or nil,
+                    level = rank and rank.level or 0,
+                }
+            end
         end
-        groups[#groups + 1] = { title = group.title, hint = group.hint, entries = entries }
+        if #entries > 0 then
+            groups[#groups + 1] = { title = group.title, hint = group.hint, entries = entries }
+        end
     end
     return groups
 end
+
+------------------------------------------------------------------------
+-- Chat-Vorschlaege: Befehle ohne Recht werden beim Client ausgeblendet.
+-- Nur Anzeige. Ob ein Befehl ausgefuehrt wird, prueft der Server bei jedem Aufruf.
+------------------------------------------------------------------------
+
+local HIDDEN_EVENT = 'core:admin:commands'
+
+-- Befehle, die nur der Client registriert und die in keiner Schreibweise der Liste stehen
+local CLIENT_ONLY = {
+    adminmenu = 'admin.menu',
+    aesp = 'admin.esp',
+    adminkey = 'admin.keys',
+}
+
+-- [befehl] = { recht = true, ... } aus allen Gruppen, den Admin-Befehlen der Core und CLIENT_ONLY
+local function commandPermissions()
+    local map = {}
+    local function add(name, permission)
+        map[name] = map[name] or {}
+        map[name][permission] = true
+    end
+    for _, group in ipairs(allGroups()) do
+        for _, entry in ipairs(group.entries) do
+            if entry.permission then
+                for name in entry.usage:gmatch('/([%w_]+)') do
+                    add(name:lower(), entry.permission)
+                end
+                if entry.command then
+                    add(entry.command, entry.permission)
+                end
+            end
+        end
+    end
+    for name, permission in pairs(Core.AdminCommandNames) do
+        add(name, permission)
+    end
+    for name, permission in pairs(CLIENT_ONLY) do
+        add(name, permission)
+    end
+    return map
+end
+
+function AdminHelp.HiddenFor(source)
+    local hidden = {}
+    for name, permissions in pairs(commandPermissions()) do
+        local allowed = false
+        for permission in pairs(permissions) do
+            if Core.HasPermission(source, permission) then
+                allowed = true
+                break
+            end
+        end
+        -- /aduty bleibt sichtbar, solange nur der Admin-Key fehlt: damit schaltet man frei
+        if not allowed and not (name == 'aduty' and AdminKeys.NeedsUnlock(source, 'admin.duty')) then
+            hidden[#hidden + 1] = name
+        end
+    end
+    table.sort(hidden)
+    return hidden
+end
+
+function AdminHelp.SendHidden(source)
+    if source and source ~= 0 then
+        Network.SendToClient(source, HIDDEN_EVENT, { hidden = AdminHelp.HiddenFor(source) })
+    end
+end
+
+-- Nach der Charakterwahl und zurueck in der Auswahl (dort hat niemand Rechte)
+Platform.OnEvent('core:characterLoaded', function(source)
+    AdminHelp.SendHidden(source)
+end)
+Platform.OnEvent('core:characterUnloaded', function(source)
+    AdminHelp.SendHidden(source)
+end)
 
 -- Fuer den Test: welche Admin-Befehle stehen in der Liste
 function AdminHelp.CoveredCommands()

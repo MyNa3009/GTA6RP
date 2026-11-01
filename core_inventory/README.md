@@ -1,4 +1,4 @@
-# core_inventory 1.0.0
+# core_inventory 1.0.1
 
 Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in der Hand, Rucksack mit eigenem Inhalt, Schnellzugriff, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`. Eigene Resource, damit man sie neu starten kann, ohne dass alle aus dem Spiel fliegen.
 
@@ -21,6 +21,8 @@ Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in 
 Die Core muss mindestens 1.6.0 sein. Ist sie älter, meldet sich das Inventar beim Start mit "Core ist zu alt" und macht nichts.
 
 **Update von älteren Versionen:** Beide Ordner (`core` und `core_inventory`) ersetzen, Server neu starten. Die neuen Tabellen entstehen beim Start von selbst.
+
+Ab 1.0.1: `/invsee`, `/givelicense`, `/revokelicense` und `/licenses` stehen in der Befehlsliste des Admin-Menüs. Mit Core 1.7.0 verschwinden sie auch aus den Chat-Vorschlägen aller, die sie nicht benutzen dürfen.
 
 Ab 1.0.0 beim ersten Einloggen jedes Charakters:
 - Jeder bekommt seinen Personalausweis in die Reihe "Dokumente".

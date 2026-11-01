@@ -38,7 +38,7 @@ local function run()
     while active do
         Platform.Wait(0)
         Platform.DisableNoclipControlsThisFrame()
-        if Config.Noclip.Invisible then
+        if Config.Noclip.Invisible and Config.Noclip.VisibleForSelf then
             Platform.ShowNoclipLocallyThisFrame()
         end
         local forward = axis('noclipForward', 'noclipBack')
@@ -48,7 +48,7 @@ local function run()
             Platform.NoclipMove(forward, right, up, speed() * Platform.GetFrameTime(), Config.Noclip.FollowCameraPitch)
         end
     end
-    Platform.SetNoclip(false, Config.Noclip.Invisible)
+    Platform.SetNoclip(false, Config.Noclip.Invisible, Config.Noclip.GroundOnExit)
 end
 
 function Noclip.IsActive()

@@ -39,6 +39,8 @@ for t in tests/test_*.py; do echo "$t: $(python3 $t | tail -1)"; done
 
 Jeder Test endet mit einer Zeile wie `43 ok, 0 Fehler`.
 
+Admin-Keys sind in den Tests aus, damit die Rechte-Tests ohne Key-Eingabe laufen. Nur `test_admin_keys.py` schaltet sie mit `Env(admin_keys=True)` ein.
+
 Syntax aller Lua-Dateien prüfen:
 
 ```bash

@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core'
 description 'Eigene Core: Login, Charaktere, permanente IDs, Geld, Tod, Teamraenge, Admin-Menue, Tickets, Logging'
-version '1.6.0'
+version '1.7.0'
 
 dependencies {
     'oxmysql',
@@ -48,6 +48,7 @@ server_scripts {
     'server/spectate.lua',
     'server/tickets.lua',
     'server/admin_help.lua',
+    'server/admin_keys.lua',
     'server/auth.lua',
 }
 
@@ -64,6 +65,7 @@ client_scripts {
     'client/noclip.lua',
     'client/vehicles.lua',
     'client/admin.lua',
+    'client/admin_key.lua',
     'client/admin_esp.lua',
     'client/admin_tools.lua',
     'client/spectate.lua',
@@ -81,6 +83,7 @@ files {
     'html/needs.html',
     'html/jail.html',
     'html/admin.html',
+    'html/adminkey.html',
     'html/tickets.html',
     'html/notify.html',
 }

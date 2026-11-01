@@ -83,6 +83,32 @@ function Platform.VerifyPassword(password, hash)
     return VerifyPasswordHash(password, hash)
 end
 
+-- Zufaelliger Text aus TOKEN_ALPHABET (z. B. fuer Admin-Keys). Ohne 0, O, 1 und I, damit man nichts verwechselt.
+-- Zufall aus zwei Quellen: dem zufaelligen Salt von bcrypt (GetPasswordHash) und math.random.
+local TOKEN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' -- genau 32 Zeichen
+local BCRYPT_CHARS = './ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+local BCRYPT_PREFIX_LENGTH = 7 -- "$2a$10$"
+local INT_MAX = 2147483647
+
+function Platform.RandomToken(length)
+    local size = #TOKEN_ALPHABET
+    local out = {}
+    while #out < length do
+        local hash = GetPasswordHash(('%d:%.6f:%d'):format(os.time(), os.clock(), math.random(1, INT_MAX)))
+        for i = BCRYPT_PREFIX_LENGTH + 1, #hash do
+            if #out >= length then
+                break
+            end
+            local index = BCRYPT_CHARS:find(hash:sub(i, i), 1, true)
+            if index then
+                local value = ((index - 1) + math.random(0, size - 1)) % size
+                out[#out + 1] = TOKEN_ALPHABET:sub(value + 1, value + 1)
+            end
+        end
+    end
+    return table.concat(out)
+end
+
 function Platform.JsonEncode(value)
     return json.encode(value)
 end

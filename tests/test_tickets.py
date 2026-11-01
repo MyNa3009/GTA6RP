@@ -159,7 +159,7 @@ groups = r['data']['commands']
 entries = [e for g in groups for e in g['entries']]
 check('Befehlsliste im Admin-Menü', len(entries) > 40 and r['data']['ticketsOpen'] == 1, r['data'].get('ticketsOpen'))
 spec = next(e for e in entries if e['usage'].startswith('/spec'))
-check('Rang wird aus der Config berechnet', spec['rank'] == 'Junior Administrator' and spec['allowed'] is True, spec)
+check('Rang wird aus der Config berechnet', spec['rank'] == 'Junior Administrator', spec)
 covered = env.to_py(env.lua.eval('AdminHelp.CoveredCommands()'))
 names = env.to_py(env.lua.eval('Core.AdminCommandNames'))
 missing = [n for n in names if n not in covered]

@@ -83,6 +83,7 @@ Permissions.Known = {
     'player.kick', 'player.warn', 'player.ban', 'player.unban', 'accounts.links', 'money.manage', 'ranks.manage', 'data.private',
     'admin.message', 'player.freeze', 'player.heal', 'vehicle.fix', 'admin.dimension', 'player.dimension', 'player.silentkick',
     'weapon.give', 'admin.mass', 'admin.esp', 'player.kill', 'tickets.manage', 'player.spectate', 'items.manage',
+    'vehicle.delete', 'admin.keys',
 }
 
 -- Liste der Rechte, die ein Spieler hat
@@ -165,7 +166,13 @@ function Core.GetRank(source)
     return { id = rank.id, label = rank.label, level = rank.level }
 end
 
--- Die Server-Konsole darf alles
+-- Gibt der Rang dieses Recht? Ohne Pruefung des Admin-Keys, nur fuer Anzeigen und die Key-Abfrage.
+function Permissions.RankAllows(rankId, permission)
+    local rank = ranksById[rankId] or defaultRank
+    return rank.permissions[ALL] == true or rank.permissions[permission] == true
+end
+
+-- Die Server-Konsole darf alles. Teammitglieder erst, wenn sie ihren Admin-Key eingegeben haben.
 function Core.HasPermission(source, permission)
     if source == CONSOLE then
         return true
@@ -174,8 +181,10 @@ function Core.HasPermission(source, permission)
     if not player or not player.loggedIn then
         return false
     end
-    local rank = ranksById[player.rank] or defaultRank
-    return rank.permissions[ALL] == true or rank.permissions[permission] == true
+    if not AdminKeys.IsUnlocked(player) then
+        return false
+    end
+    return Permissions.RankAllows(player.rank, permission)
 end
 
 Platform.Export('GetRank', Core.GetRank)
@@ -197,9 +206,13 @@ function Core.AuthorizeCommand(source, name, permission, args, requireDuty)
             actor_account_id = actorAccountId,
             category = 'security',
             action = 'command_denied',
-            data = { command = name, permission = permission, args = args },
+            data = { command = name, permission = permission, args = args, keyMissing = AdminKeys.NeedsUnlock(source, permission) or nil },
         })
-        Platform.Notify(source, 'Dafür hast du keine Rechte.', 'error')
+        if AdminKeys.NeedsUnlock(source, permission) then
+            Platform.Notify(source, 'Gib zuerst deinen Admin-Key ein: /aduty', 'error')
+        else
+            Platform.Notify(source, 'Dafür hast du keine Rechte.', 'error')
+        end
         return false
     end
 
@@ -276,6 +289,8 @@ function Permissions.SetRank(actorSource, targetCharacterId, rankId)
         return nil, 'db_error'
     end
 
+    AdminKeys.OnRankChanged(targetCharacterId, rank)
+
     local player = Core.GetPlayerByCharacter(targetCharacterId)
     if player then
         player.rank = rank.id
@@ -284,6 +299,7 @@ function Permissions.SetRank(actorSource, targetCharacterId, rankId)
         if player.adminDuty and not Core.HasPermission(player.source, 'admin.duty') then
             AdminDuty.Set(player.source, false)
         end
+        AdminHelp.SendHidden(player.source)
     end
 
     Core.Log({

@@ -1,10 +1,19 @@
-# Core 1.6.0 (Testserver)
+# Core 1.7.0 (Testserver)
 
-Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
+Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.6.0
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration, die Tabelle `admin_keys` legt die Core selbst an.
+2. **Admin-Keys.** Jedes Teammitglied braucht jetzt einen eigenen Key. Bis es ihn eingegeben hat, hat es keine Rechte, wie ein Spieler. Darum nach dem Update als Erstes in der txAdmin-Konsole `adminkey <deine ID>` eingeben. Die Konsole zeigt den Key einmal an. Danach im Spiel `/aduty`, Key eingeben, und im Admin-Menü in der Akte jedes Teammitglieds einen Key erstellen. Ausschalten geht mit `Config.AdminKeys.Enabled = false`.
+3. Neue Rechte in `Config.Ranks`: `vehicle.delete` (ab Junior) und `admin.keys` (ab Senior). Wer die Config angepasst hat, trägt sie nach.
+4. `/dv` braucht jetzt `vehicle.delete` statt `vehicle.spawn` und geht auch außerhalb des Admin-Diensts. Der Server prüft, dass das Fahrzeug wirklich in der Nähe ist.
+5. Noclip: Man ist jetzt auch für sich selbst unsichtbar (`Config.Noclip.VisibleForSelf`) und landet beim Ausschalten auf dem Boden darunter, auch aus der Luft (`Config.Noclip.GroundOnExit`).
+6. Befehlsliste im Admin-Menü und Chat-Vorschläge zeigen nur noch Befehle, die man wirklich benutzen darf.
 
 ## Update von 1.5.2
 
@@ -185,6 +194,12 @@ ensure core
 | `/raenge` | Chat: alle Rang-IDs für `/setrank` |
 | `/setrank 7 junior` | Nur mit `ranks.manage`, nur unterhalb des eigenen Rangs |
 | Befehl ohne Recht | "Dafür hast du keine Rechte.", Eintrag `security / command_denied` |
+| txAdmin-Konsole: `adminkey 1` | Konsole zeigt den Admin-Key für ID 1, nur dieses eine Mal |
+| Teammitglied ohne Key: `/ban 17 1d Test` | "Gib zuerst deinen Admin-Key ein: /aduty", keine Rechte bis zur Eingabe |
+| Erstes `/aduty` oder F10 | Fenster "Admin-Key". Richtiger Key: Rechte frei bis Relog oder Disconnect, bei `/aduty` startet der Dienst gleich mit |
+| Fünfmal falscher Key | 15 Minuten gesperrt, Meldung an alle mit `admin.keys`, Einträge `admin_key_failed` und `admin_key_locked` |
+| Akte eines Teammitglieds, Übersicht | Bereich "Admin-Key": erstellen, neu erstellen oder löschen (Recht `admin.keys`, nur Ränge unter dir, nie eigene Charaktere). Der neue Key steht nur einmal da, der alte gilt sofort nicht mehr |
+| Chat: `/` tippen als Spieler | Keine Admin-Befehle in den Vorschlägen |
 | `/aduty` | Admin-Dienst an oder aus: durchsichtig, unverwundbar, Rang + Name + ID rot über dem Kopf |
 | `/revive`, `/givemoney` ohne Dienst | "Das geht nur im Admin-Dienst." |
 | F10 oder `/admin` | Admin-Menü (Recht `admin.menu`) |
@@ -245,9 +260,9 @@ ensure core
 | Login gebannt, neuer Rockstar-Account am selben PC | Verbindung abgelehnt (`Config.Bans.BlockHardware`) |
 | Akte, Übersicht | Bekannte PCs, IP-Adressen nur mit Recht `data.private`, IPs werden nach 30 Tagen gelöscht |
 | Überweisung zwischen eigenen Charakteren | Geht durch, landet blau unter "Twink-Interaktionen" in der Akte und im Reiter Twinks (`Config.Twinks`, auf `block` stellen zum Sperren) |
-| `Z` (deutsche Tastatur) oder `/nc` im Admin-Dienst | Noclip: W A S D (immer waagerecht, sinkt nicht ab), Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam. Für andere unsichtbar, man selbst sieht sich. Recht `admin.noclip` (ab Junior) |
+| `Z` (deutsche Tastatur) oder `/nc` im Admin-Dienst | Noclip: W A S D (immer waagerecht, sinkt nicht ab), Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam. Unsichtbar für alle, auch für einen selbst. Beim Ausschalten auf dem Boden darunter. Recht `admin.noclip` (ab Junior) |
 | `/car adder` | Fahrzeug spawnt, man sitzt am Steuer, Kennzeichen `ADMIN`. Recht `vehicle.spawn` (ab Server Administrator), nur im Dienst |
-| `/dv` | Löscht das Fahrzeug, in dem man sitzt, sonst das nächste in 6 m |
+| `/dv` | Löscht das Fahrzeug, in dem man sitzt, sonst das nächste in 6 m. Recht `vehicle.delete` (ab Junior), auch ohne Dienst |
 | `/boost 300` am Steuer | Fahrzeug bis zu 300 % schneller, bis 500 km/h. `/boost 0` schaltet ab. Recht `vehicle.boost` (ab Senior Administrator) |
 | `/nc` ohne Dienst | "Noclip geht nur im Admin-Dienst." Dienstende schaltet Noclip automatisch aus |
 | `/ajail 17 30 Trollen` | Charakter 17 sitzt 30 Minuten im A-Jail, oben in der Mitte läuft die Restzeit. Andere Charaktere derselben Person spielen normal. Recht `player.ajail` |
@@ -334,6 +349,7 @@ Passt alles: Server in txAdmin stoppen, dann dieselbe Datei in `fivem` einspiele
   - `Config.UI`: Farben, Servername, Währung
   - `Config.Characters`: Anzahl Plätze, Namenslänge, Mindest- und Höchstalter, Startgeld, Speicherintervall
   - `Config.Ranks`: Teamränge und ihre Rechte, jeder Rang erbt die Rechte darunter
+  - `Config.AdminKeys`: Admin-Keys an oder aus, Fehlversuche bis zur Sperre, Dauer der Sperre
   - `Config.Admin`: Taste fürs Menü, Dienstpflicht für Aktionen, Einträge pro Seite
   - `Config.AdminDuty`: Durchsichtigkeit, Unverwundbarkeit, Farbe und Leuchten des Namens, Reichweite
   - `Config.Money`: Höchstbetrag pro Buchung, Geldanzeige an oder aus
@@ -343,7 +359,7 @@ Passt alles: Server in txAdmin stoppen, dann dieselbe Datei in `fivem` einspiele
   - `Config.Notify`: wie viele Meldungen gleichzeitig, wie lange je Art
   - `Config.Warns`: wie lange Verwarnungen zählen, ab wie vielen Admins gewarnt werden
   - `Config.Network.MaxRequestsPerSecond`: Spam-Schutz
-  - `Config.Noclip`: Geschwindigkeiten, Unsichtbarkeit, optionale Standardtaste
+  - `Config.Noclip`: Geschwindigkeiten, Unsichtbarkeit (auch für sich selbst), Landen auf dem Boden, Standardtaste
   - `Config.Devices`: Erkennung neuer PCs, Multi-Account über den PC, IP speichern und wie lange
   - `Config.Twinks`: welche Interaktionen zwischen eigenen Charakteren erlaubt (`warn`) oder gesperrt (`block`) sind
   - `Config.Vehicles`: Kennzeichen, Löschradius, höchster Boost, Höchstgeschwindigkeit
@@ -401,7 +417,8 @@ Im Client: `exports.core:GetMoney()` gibt `{ cash, bank }` oder nil zurück. Das
 - Datenbank-Parameter, die `nil` sein können, immer mit `DB.Args(a, b, c)` übergeben, sonst kommen Lücken bei oxmysql falsch an.
 - Meldungen an Spieler immer über `Platform.Notify(source, text, 'success' | 'error' | 'info' | 'warning')` auf dem Server oder `Notify.Show(text, typ)` im Client, nie über den Chat.
 - Neue Server-Callbacks immer über `Core.RegisterCallback`. Die verlangen automatisch einen eingeloggten Spieler.
-- Admin-Befehle immer über `Core.RegisterAdminCommand(name, recht, fn)`. Scripts fragen nach Rechten (`Core.HasPermission(source, 'player.ban')`), nie nach Rängen.
+- Admin-Befehle immer über `Core.RegisterAdminCommand(name, recht, fn)`. Scripts fragen nach Rechten (`Core.HasPermission(source, 'player.ban')`), nie nach Rängen. `HasPermission` ist für Teammitglieder ohne eingegebenen Admin-Key immer `false`.
+- Neue Befehle mit Recht gehören in die Befehlsliste (`server/admin_help.lua` oder `AddCommandHelp`). Daraus berechnet die Core auch, welche Chat-Vorschläge ein Spieler sieht.
 - Jede Änderung an Accounts, Charakteren, Geld, Items usw. ruft `Core.Log` auf.
 - Interaktionen zwischen zwei Charakteren (Items geben, Fahrzeug verkaufen) in Scripts mit `exports.core:ReportTwinkInteraction(charA, charB, 'item_give', { item = 'phone' })` melden. Gibt `false` zurück, wenn die Config die Interaktion sperrt.
 - Geld nur über `Core.AddMoney`, `Core.RemoveMoney`, `Core.TransferMoney`, niemals direkt per SQL. Aufrufe immer aus einem Thread (Callback, Befehl, `CreateThread`), weil die Buchung auf die Datenbank wartet.

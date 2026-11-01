@@ -27,7 +27,7 @@ SERVER_FILES = [
     'bridge/platform/fivem_server.lua', 'bridge/database/oxmysql.lua', 'bridge/identity/fivem.lua', 'bridge/network/fivem_server.lua',
     'server/log.lua', 'server/log_archive.lua', 'server/accounts.lua', 'server/main.lua', 'server/permissions.lua', 'server/multiaccount.lua', 'server/devices.lua', 'server/twinks.lua',
     'server/characters.lua', 'server/death.lua', 'server/money.lua', 'server/needs.lua', 'server/admin.lua', 'server/punishments.lua',
-    'server/bans.lua', 'server/jail.lua', 'server/moderation.lua', 'server/vehicles.lua', 'server/admin_tools.lua', 'server/spectate.lua', 'server/tickets.lua', 'server/admin_help.lua', 'server/auth.lua',
+    'server/bans.lua', 'server/jail.lua', 'server/moderation.lua', 'server/vehicles.lua', 'server/admin_tools.lua', 'server/spectate.lua', 'server/tickets.lua', 'server/admin_help.lua', 'server/admin_keys.lua', 'server/auth.lua',
 ]
 
 INVENTORY_FILES = [
@@ -46,7 +46,7 @@ def reset_db():
     db = connect()
     with db.cursor() as cur:
         cur.execute('SET FOREIGN_KEY_CHECKS=0')
-        for table in ['audit_log', 'account_links', 'account_identifiers', 'characters', 'accounts', 'bans', 'admin_jails', 'account_devices', 'account_ips', 'device_alerts', 'warns', 'tickets', 'ticket_messages', 'audit_log_archive', 'inventories', 'weapon_registry', 'licenses']:
+        for table in ['audit_log', 'account_links', 'account_identifiers', 'characters', 'accounts', 'bans', 'admin_jails', 'account_devices', 'account_ips', 'device_alerts', 'warns', 'tickets', 'ticket_messages', 'audit_log_archive', 'inventories', 'weapon_registry', 'licenses', 'admin_keys']:
             cur.execute(f'DROP TABLE IF EXISTS {table}')
         cur.execute('SET FOREIGN_KEY_CHECKS=1')
         for statement in open(f'{CORE}/database/schema.sql').read().split(';'):
@@ -56,7 +56,7 @@ def reset_db():
 
 
 class Env:
-    def __init__(self, debug=False, inventory=False):
+    def __init__(self, debug=False, inventory=False, admin_keys=False):
         reset_db()
         self.db = connect()
         self.lua = lupa.LuaRuntime(unpack_returned_tuples=True)
@@ -74,6 +74,8 @@ class Env:
         self.sql_log = []
         self.runtimes = {'core': self.lua}
         self.with_inventory = inventory
+        # Admin-Keys nur in test_admin_keys.py an, die anderen Tests pruefen Rechte ohne Key
+        self.admin_keys = admin_keys
         if inventory:
             self.inv = lupa.LuaRuntime(unpack_returned_tuples=True)
             self.runtimes['core_inventory'] = self.inv
@@ -336,9 +338,13 @@ class Env:
         local baseCoords = GetEntityCoords
         function GetEntityCoords(e) local v = VEHICLES[e]; if v then return { x = v.x, y = v.y, z = v.z } end return baseCoords(e) end
         function DoesEntityExist(e) return e == 500 or VEHICLES[e] ~= nil end
+        function GetVehicleNumberPlateText(e) return VEHICLES[e] and VEHICLES[e].plate or 'ADMIN' end
+        function GetVehicleDoorLockStatus(e) return VEHICLES[e] and VEHICLES[e].lock or 1 end
         ''')
         for base, f in files:
             lua.execute(open(f'{base}/{f}', encoding='utf-8').read())
+            if f == 'shared/config.lua' and not self.admin_keys:
+                lua.execute('Config.AdminKeys.Enabled = false')
         lua.execute('for _, fn in ipairs(READY or {}) do CreateThread(fn) end')
         self.tick(0)
 

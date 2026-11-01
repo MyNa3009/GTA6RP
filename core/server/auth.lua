@@ -66,7 +66,10 @@ local function buildStatus(player)
 end
 
 Core.RegisterCallback('auth_status', function(source)
-    return { ok = true, data = buildStatus(Core.EnsurePlayer(source)) }
+    local status = buildStatus(Core.EnsurePlayer(source))
+    -- Vor dem Login hat niemand Rechte: Admin-Befehle gleich aus den Chat-Vorschlaegen nehmen
+    AdminHelp.SendHidden(source)
+    return { ok = true, data = status }
 end, { public = true })
 
 -- Ausloggen aus der Charakterauswahl, zurueck zum Login

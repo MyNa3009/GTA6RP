@@ -175,6 +175,7 @@ local function leaveCharacter()
     MoneyHud.Hide()
     NeedsHud.Hide()
     AdminMenu.Close()
+    AdminKeyPrompt.Close()
     state.character = nil
     Platform.SetPlayerLocked(true)
 end

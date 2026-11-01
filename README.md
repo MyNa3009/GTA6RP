@@ -4,11 +4,11 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 
 | Ordner | Version | Inhalt |
 |---|---|---|
-| [`core/`](core/README.md) | 1.6.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
-| [`core_inventory/`](core_inventory/README.md) | 1.0.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
+| [`core/`](core/README.md) | 1.7.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
+| [`core_inventory/`](core_inventory/README.md) | 1.0.1 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
 | [`tests/`](tests/README.md) | | Tests für die Serverlogik beider Resources |
 
-Das Inventar 1.0.0 braucht mindestens die Core 1.6.0. Beide Ordner werden darum immer zusammen aktualisiert.
+Das Inventar 1.0.1 braucht mindestens die Core 1.6.0, empfohlen ist die neueste. Beide Ordner werden darum immer zusammen aktualisiert.
 
 ## Installation
 
@@ -26,6 +26,7 @@ ensure core_inventory
 ```
 
 4. Server neu starten.
+5. In der txAdmin-Konsole `setrank <deine ID> chief` und `adminkey <deine ID>` eingeben. Mit dem Key schaltest du im Spiel per `/aduty` deine Admin-Rechte frei.
 
 Für ein Update steht in der README jeder Resource ein Abschnitt `Update von x.y.z` mit allen Schritten.
 

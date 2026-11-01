@@ -135,10 +135,18 @@ local DUTY_ERRORS = {
     not_logged_in = 'Du bist nicht eingeloggt.',
 }
 
--- /aduty
-Core.RegisterAdminCommand('aduty', 'admin.duty', function(source)
+-- /aduty. Ohne eingegebenen Admin-Key fragt er zuerst nach dem Key und startet danach den Dienst.
+Core.AdminCommandNames.aduty = 'admin.duty'
+Platform.RegisterCommand('aduty', function(source, args)
     if source == 0 then
         Platform.Print('warn', 'Der Admin-Dienst geht nur ingame.')
+        return
+    end
+    if AdminKeys.NeedsUnlock(source, 'admin.duty') then
+        AdminKeys.Prompt(source, { duty = true })
+        return
+    end
+    if not Core.AuthorizeCommand(source, 'aduty', 'admin.duty', args, false) then
         return
     end
     local on, err = AdminDuty.Set(source, not Core.IsOnDuty(source))
@@ -395,6 +403,10 @@ end
 ------------------------------------------------------------------------
 
 Core.RegisterCallback('admin_overview', function(source)
+    if AdminKeys.NeedsUnlock(source, 'admin.menu') then
+        AdminKeys.Prompt(source, { menu = true })
+        return { ok = false, error = 'key_required' }
+    end
     local denied = deny(source, 'admin.menu')
     if denied then return denied end
 
@@ -486,6 +498,21 @@ Core.RegisterCallback('admin_search', function(source, data)
     end
     return { ok = true, data = { results = results } }
 end)
+
+-- Admin-Keys aller Charaktere mit Teamrang, nur wenn der Betrachter Keys verwalten darf
+local function adminKeyList(source, characters)
+    if not Core.HasPermission(source, 'admin.keys') then
+        return nil
+    end
+    local list = {}
+    for _, row in ipairs(characters) do
+        local info = AdminKeys.InfoFor(source, row.id)
+        if info then
+            list[#list + 1] = info
+        end
+    end
+    return list
+end
 
 Core.RegisterCallback('admin_profile', function(source, data)
     local denied = deny(source, 'player.view')
@@ -631,6 +658,7 @@ Core.RegisterCallback('admin_profile', function(source, data)
             twinks = twinkSummary(accountId),
             focusCharacterId = focusCharacterId,
             inventory = Platform.IsResourceStarted(INVENTORY_RESOURCE),
+            adminKeys = adminKeyList(source, characters),
         },
     }
 end)

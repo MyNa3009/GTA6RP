@@ -54,7 +54,8 @@ Config.Characters = {
 --   player.revive    wiederbeleben
 --   player.teleport  zu Spielern teleportieren, Spieler holen
 --   admin.noclip     Noclip (/nc), nur im Admin-Dienst
---   vehicle.spawn    Fahrzeuge spawnen (/car) und loeschen (/dv)
+--   vehicle.spawn    Fahrzeuge spawnen (/car)
+--   vehicle.delete   Fahrzeuge loeschen (/dv), auch ausserhalb des Admin-Diensts
 --   vehicle.boost    Fahrzeug, in dem man am Steuer sitzt, schneller machen (/boost)
 --   player.ajail     Admin-Jail geben und entlassen
 --   player.kick      kicken
@@ -65,19 +66,30 @@ Config.Characters = {
 --   accounts.links   Multi-Account-Warnungen ausblenden und wieder anzeigen
 --   money.manage     Geld geben und nehmen
 --   ranks.manage     Raenge vergeben (nur unterhalb des eigenen Rangs)
+--   admin.keys       Admin-Keys erstellen und loeschen (nur fuer Raenge unterhalb des eigenen)
 --   data.private     echte Personendaten sehen (E-Mail, IP)
 ------------------------------------------------------------------------
 Config.Ranks = {
     { id = 'player',      level = 0, label = 'Spieler',                    permissions = {} },
     { id = 'assistant',   level = 1, label = 'Administrator Assistant',    permissions = { 'admin.menu', 'admin.duty', 'player.view', 'admin.message', 'admin.esp', 'tickets.manage' } },
-    { id = 'junior',      level = 2, label = 'Junior Administrator',       permissions = { 'player.revive', 'player.teleport', 'player.ajail', 'admin.noclip', 'player.freeze', 'player.heal', 'vehicle.fix', 'admin.dimension', 'player.spectate' } },
+    { id = 'junior',      level = 2, label = 'Junior Administrator',       permissions = { 'player.revive', 'player.teleport', 'player.ajail', 'admin.noclip', 'player.freeze', 'player.heal', 'vehicle.fix', 'vehicle.delete', 'admin.dimension', 'player.spectate' } },
     { id = 'admin',       level = 3, label = 'Administrator',              permissions = { 'player.kick', 'accounts.links', 'player.dimension', 'player.kill', 'player.rename' } },
     { id = 'serveradmin', level = 4, label = 'Server Administrator',       permissions = { 'player.warn', 'player.ban', 'vehicle.spawn', 'player.silentkick', 'weapon.give', 'admin.mass' } },
-    { id = 'senior',      level = 5, label = 'Senior Administrator',       permissions = { 'player.unban', 'money.manage', 'vehicle.boost', 'items.manage' } },
+    { id = 'senior',      level = 5, label = 'Senior Administrator',       permissions = { 'player.unban', 'money.manage', 'vehicle.boost', 'items.manage', 'admin.keys' } },
     { id = 'deputy',      level = 6, label = 'Deputy Chief Administrator', permissions = { 'ranks.manage', 'data.private' } },
     { id = 'chief',       level = 7, label = 'Chief Administrator',        permissions = { '*' } },
 }
 Config.DefaultRank = 'player'
+
+-- Admin-Keys: Jedes Teammitglied braucht einen eigenen Key. Bis er eingegeben ist, hat es keine Rechte, wie ein Spieler.
+-- Eingabe einmal pro Sitzung beim ersten /aduty oder F10, gilt bis Relog oder Disconnect.
+-- Erstellen im Admin-Menue in der Akte (Recht admin.keys), nur fuer Raenge unter dem eigenen.
+-- Den ersten Key gibt die Server-Konsole: adminkey <permanente ID>
+Config.AdminKeys = {
+    Enabled = true,
+    MaxAttempts = 5,   -- so viele falsche Versuche, dann gesperrt
+    LockMinutes = 15,  -- so lange gesperrt, das Team bekommt eine Meldung
+}
 
 ------------------------------------------------------------------------
 -- Admin-Menue und Admin-Dienst
@@ -156,7 +168,9 @@ Config.Noclip = {
     -- false: W und S fliegen immer waagerecht, hoch und runter nur mit Leertaste und Strg.
     -- true: W fliegt dahin, wohin die Kamera schaut (auch schraeg nach unten).
     FollowCameraPitch = false,
-    Invisible = true,   -- fuer alle anderen unsichtbar, man selbst sieht sich weiter
+    Invisible = true,        -- fuer alle anderen unsichtbar
+    VisibleForSelf = false,  -- true: man sieht sich selbst trotzdem
+    GroundOnExit = true,     -- beim Ausschalten auf den Boden darunter, auch aus der Luft
 }
 
 -- Admin-Fahrzeuge

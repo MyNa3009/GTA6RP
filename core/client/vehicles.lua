@@ -12,6 +12,7 @@ local ERROR_TEXT = {
     model_timeout = 'Das Modell lädt nicht. Versuch es noch einmal.',
     spawn_failed = 'Das Fahrzeug konnte nicht gespawnt werden.',
     no_vehicle = 'Kein Fahrzeug in der Nähe.',
+    too_far = 'Das Fahrzeug ist zu weit weg. Geh näher ran.',
     invalid_percent = ('Gib einen Boost von 0 bis %d Prozent an, z. B. /boost 200.'):format(Config.Vehicles.MaxBoostPercent),
     not_driver = 'Setz dich ans Steuer eines Fahrzeugs.',
     timeout = 'Der Server antwortet nicht.',
