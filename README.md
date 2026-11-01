@@ -7,7 +7,6 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 | [`core/`](core/README.md) | 1.6.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
 | [`core_inventory/`](core_inventory/README.md) | 1.0.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
 | [`tests/`](tests/README.md) | | Tests für die Serverlogik beider Resources |
-| `config/` | | Ausschnitt für die `server.cfg` |
 
 Das Inventar 1.0.0 braucht mindestens die Core 1.6.0. Beide Ordner werden darum immer zusammen aktualisiert.
 
@@ -15,7 +14,17 @@ Das Inventar 1.0.0 braucht mindestens die Core 1.6.0. Beide Ordner werden darum 
 
 1. `core/database/schema.sql` in der Datenbank ausführen. Die Tabellen des Inventars legt das Inventar beim Start selbst an.
 2. Die Ordner `core` und `core_inventory` nach `resources/[core]/` kopieren.
-3. Die Zeilen aus [`config/server.example.cfg`](config/server.example.cfg) in die eigene `server.cfg` übernehmen.
+3. In der eigenen `server.cfg` nach der Datenbank-Verbindung ergänzen:
+
+```cfg
+# Testbefehle der Core. Auf einem Live-Server immer "false".
+set core_debug "true"
+
+ensure oxmysql
+ensure core
+ensure core_inventory
+```
+
 4. Server neu starten.
 
 Für ein Update steht in der README jeder Resource ein Abschnitt `Update von x.y.z` mit allen Schritten.
