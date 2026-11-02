@@ -219,8 +219,9 @@ Config.Jail = {
 Config.Money = {
     -- Hoechster Betrag pro Buchung, faengt Tippfehler und Script-Fehler ab
     MaxAmount = 100000000,
-    -- Geldanzeige oben rechts
-    Hud = true,
+    -- Eingebaute Geldanzeige oben rechts. Standard aus: Ein eigenes HUD liest die Werte ueber
+    -- exports.core:GetMoney() oder das Ereignis core:moneyChanged. true zeigt sie wieder an.
+    Hud = false,
     -- Bargeld liegt als Item "cash" im Inventar dieser Resource (die Bank bleibt in der Core).
     -- nil = Bargeld wie frueher in der Spalte characters.cash.
     CashInventory = 'core_inventory',

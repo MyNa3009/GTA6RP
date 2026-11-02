@@ -1,10 +1,15 @@
-# Core 1.7.1 (Testserver)
+# Core 1.7.2 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.7.1
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. Die eingebaute Geldanzeige oben rechts ist jetzt standardmäßig aus (`Config.Money.Hud = false`). Geld wird weiter gebucht, `/geld` zeigt den Kontostand, und ein eigenes HUD bekommt die Werte über `exports.core:GetMoney()` oder `core:moneyChanged`. Mit `true` ist sie wieder da.
 
 ## Update von 1.7.0
 
@@ -187,7 +192,7 @@ ensure core
 | `/revive` oder `/revive 17` | Wiederbeleben an Ort und Stelle, 17 = permanente ID (Recht `player.revive`) |
 | Zweiter Spieler in der Nähe | Über seinem Kopf steht `ID: <permanente ID>` seines Charakters, über dem eigenen nicht |
 | Zweiten Charakter erstellen und spielen | Neue permanente ID über dem Kopf |
-| Nach dem Spawn | Oben rechts Bargeld und Bank |
+| Nach dem Spawn | Keine Geldanzeige (Standard). Mit `Config.Money.Hud = true` oben rechts Bargeld und Bank |
 | `/geld` | Chat: eigener Kontostand |
 | `/givemoney cash 17 500` oder `/givemoney bank 17 2500` | Geld für ID 17, auch wenn sie offline ist. Online: `+500 $` in der Anzeige (Recht `money.manage`) |
 | `/removemoney cash 17 200` | Geld weg, bei zu wenig: "Nicht genug Geld." |
