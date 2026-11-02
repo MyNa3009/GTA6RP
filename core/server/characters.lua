@@ -402,7 +402,8 @@ end
 
 -- Nur speichern, wenn sich der Charakter bewegt hat. Wer AFK steht, kostet keine Datenbank-Abfrage.
 local SAVE_MIN_DISTANCE = 2.0 -- Meter
-local SAVE_SPREAD_MS = 50     -- Pause zwischen zwei Spielern, damit nicht alle im selben Moment schreiben
+local SAVE_SPREAD_MS = 50     -- hoechstens so viel Pause zwischen zwei Spielern, damit nicht alle im selben Moment schreiben
+local SAVE_ROUND_SHARE = 0.5  -- eine Runde darf hoechstens die Haelfte des Intervalls dauern, auch bei sehr vielen Spielern
 
 local function movedSinceSave(player)
     local saved = player.character and player.character.platformData.position
@@ -424,12 +425,14 @@ Platform.SetInterval(Config.Characters.SavePositionIntervalMs, function()
             due[#due + 1] = player
         end
     end
+    -- Viele Spieler: kuerzere Pause, damit die Runde fertig ist, bevor die naechste ansteht
+    local pause = #due > 0 and math.min(SAVE_SPREAD_MS, math.floor(Config.Characters.SavePositionIntervalMs * SAVE_ROUND_SHARE / #due)) or 0
     for _, player in ipairs(due) do
         -- Kann inzwischen ausgeloggt sein
         if player.characterId then
             Characters.SavePosition(player)
         end
-        Platform.Wait(SAVE_SPREAD_MS)
+        Platform.Wait(pause)
     end
 end)
 

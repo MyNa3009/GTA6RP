@@ -211,8 +211,32 @@ Network.On('core_inventory:effect', function(data)
     end
 end)
 
+-- Komplette Liste: beim Einloggen und nach einem Dimensionswechsel
 Network.On('core_inventory:drops', function(list)
     drops = type(list) == 'table' and list or {}
+end)
+
+-- Danach nur noch Aenderungen: { add = { { id, x, y, z } }, remove = { id } }
+Network.On('core_inventory:drops_changed', function(change)
+    if type(change) ~= 'table' then
+        return
+    end
+    local gone = {}
+    for _, id in ipairs(type(change.remove) == 'table' and change.remove or {}) do
+        gone[id] = true
+    end
+    local list = {}
+    for _, drop in ipairs(drops) do
+        if not gone[drop.id] then
+            list[#list + 1] = drop
+        end
+    end
+    for _, drop in ipairs(type(change.add) == 'table' and change.add or {}) do
+        if type(drop) == 'table' and tonumber(drop.id) and tonumber(drop.x) then
+            list[#list + 1] = drop
+        end
+    end
+    drops = list
 end)
 
 ------------------------------------------------------------------------

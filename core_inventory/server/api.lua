@@ -24,6 +24,8 @@ local lastCash = {}     -- [source] = Bargeld, zuletzt an die Core gemeldet
 local afterChange       -- weiter unten: Waffe, Bargeld und Kleidung nach jeder Aenderung abgleichen
 local lastOutfit = {}   -- [source] = Kleidung, zuletzt an den Client gemeldet
 local giveStartOutfit   -- weiter unten: Startoutfit einmal anziehen
+local sendDropList      -- weiter unten: alle Haufen der Dimension an den Client
+local knownDimension = {} -- [source] = Dimension, deren Haufen-Liste der Client hat
 local migrateCash       -- weiter unten: Bargeld aus der alten Spalte ins Inventar
 local active = {}       -- [source] = permanente ID
 local bySource = {}     -- [permanente ID] = source
@@ -69,13 +71,14 @@ local function onCharacterLoaded(source, characterId)
     lastWeapon[source], lastCash[source], lastOutfit[source] = nil, nil, nil
     afterChange(source)
     -- Haufen am Boden in seiner Dimension zeigen
-    Network.SendToClient(source, 'core_inventory:drops', Drops.List(Platform.GetPlayerDimension(source)))
+    sendDropList(source)
 end
 
 local function onCharacterUnloaded(source, characterId)
     source, characterId = tonumber(source), tonumber(characterId)
     if source then
         active[source] = nil
+        knownDimension[source] = nil
         lastWeapon[source], lastCash[source], lastOutfit[source] = nil, nil, nil
     end
     if not characterId then
@@ -178,15 +181,34 @@ local function dropView(drop)
     return drop and { id = drop.id, items = Inventory.ListOf(drop.inv) } or nil
 end
 
--- Alle in derselben Dimension bekommen die neue Liste der Haufen
-local function broadcastDrops(dim)
-    local list = Drops.List(dim)
+-- Haufen am Boden: Beim Einloggen und nach einem Dimensionswechsel bekommt der Client die ganze Liste,
+-- danach nur noch Aenderungen (neuer Haufen, Haufen weg). Items in einem Haufen umlegen schickt gar nichts,
+-- weil sich am Beutel in der Welt nichts aendert.
+local DIMENSION_CHECK_MS = 2000
+
+sendDropList = function(source)
+    local dim = dimension(source)
+    knownDimension[source] = dim
+    Network.SendToClient(source, 'core_inventory:drops', Drops.List(dim))
+end
+
+-- change: { add = { Drops.Public }, remove = { id } }
+local function broadcastDrops(dim, change)
     for source in pairs(active) do
-        if dimension(source) == dim then
-            Network.SendToClient(source, 'core_inventory:drops', list)
+        if knownDimension[source] == dim then
+            Network.SendToClient(source, 'core_inventory:drops_changed', change)
         end
     end
 end
+
+-- Dimension gewechselt (z. B. /dim oder ein anderes Script): neue Liste schicken
+Platform.SetInterval(DIMENSION_CHECK_MS, function()
+    for source in pairs(active) do
+        if knownDimension[source] ~= dimension(source) then
+            sendDropList(source)
+        end
+    end
+end)
 
 local function itemLog(source, characterId, action, data, extra)
     local entry = {
@@ -232,7 +254,7 @@ handleStray = function(source, characterId, inv)
         end
         itemLog(source, characterId, 'relocate_drop', { items = items, dropId = drop.id })
         Platform.Notify(source, 'Dein Inventar ist kleiner geworden. Was nicht mehr passte, liegt als Beutel neben dir.', 'info')
-        broadcastDrops(dim)
+        broadcastDrops(dim, { add = { Drops.Public(drop) } })
     end)
 end
 
@@ -438,7 +460,12 @@ register('inv_move', function(source, inv, data)
             Drops.Touch(drop)
         end
         if ok then
-            Drops.Touch(drop)
+            local removed = Drops.Touch(drop)
+            if created and not removed then
+                broadcastDrops(drop.dimension, { add = { Drops.Public(drop) } })
+            elseif removed and not created then
+                broadcastDrops(drop.dimension, { remove = { drop.id } })
+            end
             if moved then
                 local characterId = active[source]
                 if to.inv == 'drop' then
@@ -447,7 +474,6 @@ register('inv_move', function(source, inv, data)
                     itemLog(source, characterId, 'pickup', moved, { amount = moved.count })
                 end
             end
-            broadcastDrops(drop.dimension)
         end
     end
     return reply(ok, err, source, inv, drop and Drops.Get(drop.id) or nil)
@@ -634,17 +660,22 @@ end)
 -- Abgelaufene Haufen entfernen und ins Log schreiben
 Platform.SetInterval(Drops.CleanupIntervalMs, function()
     local removed = Drops.Expire()
-    local dims = {}
-    for _, drop in ipairs(removed) do
-        Platform.CallExport(CORE, 'Log', {
-            category = 'item',
-            action = 'drop_expired',
-            data = { items = Inventory.ListOf(drop.inv), position = drop.position },
-        })
-        dims[drop.dimension] = true
+    local byDimension = {}
+    for _, entry in ipairs(removed) do
+        local drop = entry.drop
+        if entry.expired then
+            Platform.CallExport(CORE, 'Log', {
+                category = 'item',
+                action = 'drop_expired',
+                data = { items = Inventory.ListOf(drop.inv), position = drop.position },
+            })
+        end
+        local ids = byDimension[drop.dimension] or {}
+        ids[#ids + 1] = drop.id
+        byDimension[drop.dimension] = ids
     end
-    for dim in pairs(dims) do
-        broadcastDrops(dim)
+    for dim, ids in pairs(byDimension) do
+        broadcastDrops(dim, { remove = ids })
     end
 end)
 

@@ -54,34 +54,39 @@ function Drops.IsEmpty(drop)
     return next(drop.inv.slots) == nil
 end
 
--- Leere Haufen weg, neue Ablaufzeit fuer veraenderte
+-- Leere Haufen weg, neue Ablaufzeit fuer veraenderte. Gibt true zurueck, wenn der Haufen entfernt wurde.
 function Drops.Touch(drop)
     if Drops.IsEmpty(drop) then
         drops[drop.id] = nil
-    else
-        drop.expiresAt = os.time() + CFG.LifetimeMinutes * SECONDS_PER_MINUTE
+        return true
     end
+    drop.expiresAt = os.time() + CFG.LifetimeMinutes * SECONDS_PER_MINUTE
+    return false
+end
+
+-- Was der Client von einem Haufen braucht
+function Drops.Public(drop)
+    return { id = drop.id, x = drop.position.x, y = drop.position.y, z = drop.position.z }
 end
 
 function Drops.List(dimension)
     local list = {}
     for _, drop in pairs(drops) do
         if drop.dimension == (dimension or 0) then
-            list[#list + 1] = { id = drop.id, x = drop.position.x, y = drop.position.y, z = drop.position.z }
+            list[#list + 1] = Drops.Public(drop)
         end
     end
     return list
 end
 
--- Abgelaufene Haufen: gibt die entfernten zurueck (fuers Log)
+-- Abgelaufene und leere Haufen entfernen. Gibt alle entfernten zurueck, volle mit expired = true (fuers Log).
 function Drops.Expire()
     local now, removed = os.time(), {}
     for id, drop in pairs(drops) do
-        if drop.expiresAt <= now or Drops.IsEmpty(drop) then
+        local empty = Drops.IsEmpty(drop)
+        if empty or drop.expiresAt <= now then
             drops[id] = nil
-            if not Drops.IsEmpty(drop) then
-                removed[#removed + 1] = drop
-            end
+            removed[#removed + 1] = { drop = drop, expired = not empty }
         end
     end
     return removed

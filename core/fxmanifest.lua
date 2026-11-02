@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core'
 description 'Eigene Core: Login, Charaktere, permanente IDs, Geld, Tod, Teamraenge, Admin-Menue, Tickets, Logging'
-version '1.7.3'
+version '1.7.4'
 
 dependencies {
     'oxmysql',

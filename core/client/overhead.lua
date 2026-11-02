@@ -10,6 +10,21 @@ local normalStyle = Config.Overhead
 local dutyStyle = Config.AdminDuty
 local searchDistance = math.max(Config.Overhead.Distance, Config.AdminDuty.TagDistance)
 
+-- Sichtlinie (Raycast) pro Spieler nur so oft neu pruefen. Bei vielen Spielern auf einem Fleck spart das
+-- den Grossteil der Raycasts, die Anzeige reagiert trotzdem innerhalb einer Sekunde.
+local LOS_CACHE_MS = 1000
+local losCache = {} -- [serverId] = { ped, visible, checkedAt }
+
+local function hasLineOfSight(serverId, ped, now)
+    local cached = losCache[serverId]
+    if cached and cached.ped == ped and now - cached.checkedAt < LOS_CACHE_MS then
+        return cached.visible
+    end
+    local visible = Platform.HasLineOfSight(ped)
+    losCache[serverId] = { ped = ped, visible = visible, checkedAt = now }
+    return visible
+end
+
 -- "{name} | ID: {id}" mit Werten fuellen
 local function fill(template, values)
     return (template:gsub('{(%w+)}', values))
@@ -52,6 +67,8 @@ local function refresh()
 
     local list = {}
     local seenDuty = {}
+    local now = Platform.GetTime()
+    local nearby = {}
 
     -- Eigener Ped: im Dienst durchsichtig und auf Wunsch unverwundbar
     local ownDuty = Network.GetPlayerPublic(ownId, 'adminDuty')
@@ -69,6 +86,7 @@ local function refresh()
     end
 
     for _, entry in ipairs(Platform.GetNearbyPlayers(searchDistance, Config.Overhead.ShowOwn)) do
+        nearby[entry.serverId] = true
         local id = Network.GetPlayerPublic(entry.serverId, 'coreId')
         local duty = Network.GetPlayerPublic(entry.serverId, 'adminDuty')
 
@@ -88,7 +106,7 @@ local function refresh()
                     style = dutyStyle,
                 }
             elseif Config.Overhead.Enabled and entry.distance <= normalStyle.Distance
-                and (not normalStyle.RequireLineOfSight or Platform.HasLineOfSight(entry.ped)) then
+                and (not normalStyle.RequireLineOfSight or hasLineOfSight(entry.serverId, entry.ped, now)) then
                 list[#list + 1] = {
                     ped = entry.ped,
                     label = Platform.PrepareWorldText(fill(normalStyle.Label, { id = tostring(id) })),
@@ -100,6 +118,12 @@ local function refresh()
 
     updateTransparency(seenDuty)
     labels = list
+    -- Wer weg ist, fliegt aus dem Zwischenspeicher
+    for serverId in pairs(losCache) do
+        if not nearby[serverId] then
+            losCache[serverId] = nil
+        end
+    end
 end
 
 -- Dienst beendet: eigene Durchsichtigkeit und Unverwundbarkeit sofort zuruecksetzen

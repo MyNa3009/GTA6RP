@@ -69,9 +69,12 @@ print('Boden')
 r = call(env, 1, 'inv_move', {'from': {'inv': 'self', 'slot': '2'}, 'to': {'inv': 'drop'}})
 d = r['data'].get('drop')
 check('Brot auf den Boden: neuer Haufen', r['ok'] and d and slots({'items': d['items']}) == {'1': ('bread', 1)} and '2' not in slots(r['data']['state']), r)
-check('Alle in der Nähe sehen den Haufen', any(n == 'core_inventory:drops' and len(dd) == 1 for s, n, dd in env.events if s == 3))
+adds = [dd for s, n, dd in env.events if s == 3 and n == 'core_inventory:drops_changed']
+check('Alle in der Dimension bekommen nur den neuen Haufen', len(adds) == 1 and [x['id'] for x in adds[0]['add']] == [d['id']], adds)
+before = len([1 for s, n, dd in env.events if n.startswith('core_inventory:drops')])
 r = call(env, 1, 'inv_move', {'from': {'inv': 'self', 'slot': '1'}, 'to': {'inv': 'drop'}})
 check('Zweites Ablegen kommt auf denselben Haufen', r['ok'] and len(r['data']['drop']['items']) == 2)
+check('Dazulegen schickt nichts an andere', len([1 for s, n, dd in env.events if n.startswith('core_inventory:drops')]) == before)
 r = call(env, 3, 'inv_open', {})
 check('Jonas (40 m weg) sieht den Haufen im Inventar nicht', r['ok'] and not r['data'].get('drop'))
 r = call(env, 3, 'inv_move', {'from': {'inv': 'drop', 'id': d['id'], 'slot': '1'}, 'to': {'inv': 'self', 'slot': '9'}})
@@ -84,13 +87,23 @@ r = call(env, 2, 'inv_move', {'from': {'inv': 'drop', 'id': d['id'], 'slot': '2'
 check('Wasser passt Mira nicht mehr (zu schwer)', r['error'] == 'too_heavy')
 r = call(env, 1, 'inv_move', {'from': {'inv': 'drop', 'id': d['id'], 'slot': '2'}, 'to': {'inv': 'self', 'slot': '1'}})
 check('Fabian hebt sein Wasser auf, Haufen ist weg', r['ok'] and not r['data'].get('drop'))
-check('Leerer Haufen verschwindet für alle', [dd for s, n, dd in env.events if s == 3 and n == 'core_inventory:drops'][-1] in ([], {}))
+last_change = [dd for s, n, dd in env.events if s == 3 and n == 'core_inventory:drops_changed'][-1]
+check('Leerer Haufen verschwindet für alle', last_change.get('remove') == [d['id']], last_change)
 
 print('Ablauf nach 30 Minuten')
 r = call(env, 1, 'inv_move', {'from': {'inv': 'self', 'slot': '1'}, 'to': {'inv': 'drop'}})
+expired_id = r['data']['drop']['id']
 env.tick(31 * 60 * 1000)
 r = call(env, 1, 'inv_open', {})
 check('Nach 30 Minuten ist der Haufen weg', not r['data'].get('drop'))
+last_change = [dd for s, n, dd in env.events if s == 3 and n == 'core_inventory:drops_changed'][-1]
+check('Abgelaufener Haufen verschwindet für alle', last_change.get('remove') == [expired_id], last_change)
+lists_before = len(env.events_for(3, 'core_inventory:drops'))
+env.buckets[3] = 7
+env.tick(2100)
+check('Dimensionswechsel: neue Liste', len(env.events_for(3, 'core_inventory:drops')) == lists_before + 1)
+env.buckets[3] = 0
+env.tick(2100)
 
 print('Twinks')
 env.command(1, 'aduty')
