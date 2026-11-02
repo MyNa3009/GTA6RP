@@ -28,7 +28,7 @@ local GROUPS = {
     {
         title = 'Bewegen',
         entries = {
-            { usage = 'Z oder /nc', text = 'Noclip. W A S D, Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam.', permission = 'admin.noclip' },
+            { usage = 'Z oder /nc', text = 'Noclip. W fliegt dahin, wohin du schaust, auch nach oben und unten. A S D, Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam.', permission = 'admin.noclip' },
             { usage = '/tp', text = 'Zu einem zufälligen anderen Spieler.', permission = 'player.teleport', command = 'tp' },
             { usage = '/tp 17, /goto 17', text = 'Zu ID 17 teleportieren.', permission = 'player.teleport', command = 'goto' },
             { usage = '/tp x y [z]', text = 'Zu Koordinaten. Ohne Höhe auf den Boden.', permission = 'player.teleport' },

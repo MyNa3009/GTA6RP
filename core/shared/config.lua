@@ -165,9 +165,9 @@ Config.Noclip = {
     Speed = 30.0,
     FastSpeed = 350.0,          -- mit Shift
     SlowSpeed = 6.0,            -- mit Alt
+    -- true: W fliegt dahin, wohin die Kamera schaut. Maus nach unten = nach unten fliegen, nach oben = nach oben.
     -- false: W und S fliegen immer waagerecht, hoch und runter nur mit Leertaste und Strg.
-    -- true: W fliegt dahin, wohin die Kamera schaut (auch schraeg nach unten).
-    FollowCameraPitch = false,
+    FollowCameraPitch = true,
     Invisible = true,        -- fuer alle anderen unsichtbar
     VisibleForSelf = false,  -- true: man sieht sich selbst trotzdem
     GroundOnExit = true,     -- beim Ausschalten auf den Boden darunter, auch aus der Luft

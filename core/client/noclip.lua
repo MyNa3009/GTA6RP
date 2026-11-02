@@ -61,9 +61,9 @@ function Noclip.Start()
     end
     active = true
     Platform.Async(run)
-    Notify.Show(Config.Noclip.Invisible
-        and 'Noclip an, du bist unsichtbar. W A S D, Leertaste hoch, Strg runter, Shift schnell, Alt langsam.'
-        or 'Noclip an. W A S D, Leertaste hoch, Strg runter, Shift schnell, Alt langsam.', 'success')
+    local start = Config.Noclip.Invisible and 'Noclip an, du bist unsichtbar.' or 'Noclip an.'
+    local move = Config.Noclip.FollowCameraPitch and 'W fliegt, wohin du schaust.' or 'W A S D fliegen waagerecht.'
+    Notify.Show(('%s %s Leertaste hoch, Strg runter, Shift schnell, Alt langsam.'):format(start, move), 'success')
 end
 
 -- Lokal beenden, z. B. beim Ausloggen oder wenn der Server es beendet hat

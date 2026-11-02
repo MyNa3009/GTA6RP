@@ -1,10 +1,15 @@
-# Core 1.7.0 (Testserver)
+# Core 1.7.1 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.7.0
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. Noclip folgt jetzt der Maus: Schaust du nach unten und drückst W, fliegst du nach unten, schaust du nach oben, nach oben (`Config.Noclip.FollowCameraPitch = true`). Mit `false` fliegt W wie vorher immer waagerecht.
 
 ## Update von 1.6.0
 
@@ -260,7 +265,7 @@ ensure core
 | Login gebannt, neuer Rockstar-Account am selben PC | Verbindung abgelehnt (`Config.Bans.BlockHardware`) |
 | Akte, Übersicht | Bekannte PCs, IP-Adressen nur mit Recht `data.private`, IPs werden nach 30 Tagen gelöscht |
 | Überweisung zwischen eigenen Charakteren | Geht durch, landet blau unter "Twink-Interaktionen" in der Akte und im Reiter Twinks (`Config.Twinks`, auf `block` stellen zum Sperren) |
-| `Z` (deutsche Tastatur) oder `/nc` im Admin-Dienst | Noclip: W A S D (immer waagerecht, sinkt nicht ab), Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam. Unsichtbar für alle, auch für einen selbst. Beim Ausschalten auf dem Boden darunter. Recht `admin.noclip` (ab Junior) |
+| `Z` (deutsche Tastatur) oder `/nc` im Admin-Dienst | Noclip: W fliegt dahin, wohin man schaut, auch nach oben und unten. A S D, Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam. Unsichtbar für alle, auch für einen selbst. Beim Ausschalten auf dem Boden darunter. Recht `admin.noclip` (ab Junior) |
 | `/car adder` | Fahrzeug spawnt, man sitzt am Steuer, Kennzeichen `ADMIN`. Recht `vehicle.spawn` (ab Server Administrator), nur im Dienst |
 | `/dv` | Löscht das Fahrzeug, in dem man sitzt, sonst das nächste in 6 m. Recht `vehicle.delete` (ab Junior), auch ohne Dienst |
 | `/boost 300` am Steuer | Fahrzeug bis zu 300 % schneller, bis 500 km/h. `/boost 0` schaltet ab. Recht `vehicle.boost` (ab Senior Administrator) |
