@@ -33,6 +33,19 @@ local function updateTransparency(seen)
     end
 end
 
+local invinciblePed = nil -- Ped, den dieses Script unverwundbar gemacht hat, sonst nil
+
+-- Nur zuruecksetzen, was der Admin-Dienst gesetzt hat, damit andere Scripts (z. B. Safezones) nicht ueberschrieben werden.
+-- Neuer Ped im Dienst (z. B. nach dem Wiederbeleben): wird erneut gesetzt.
+local function setOwnInvincible(on)
+    local ped = on and Platform.GetOwnPed() or nil
+    if invinciblePed == ped then
+        return
+    end
+    invinciblePed = ped
+    Platform.SetInvincible(on)
+end
+
 local function refresh()
     local ownId = Platform.GetOwnServerId()
     local playing = Network.GetPlayerPublic(ownId, 'coreId') ~= nil
@@ -48,8 +61,11 @@ local function refresh()
         transparent[ownId] = ped
         seenDuty[ownId] = true
         if dutyStyle.Invincible then
-            Platform.SetInvincible(true)
+            setOwnInvincible(true)
         end
+    elseif invinciblePed then
+        -- Dienst ist vorbei, auch wenn das Ereignis dazu nicht ankam (Relog, Verbindungsproblem)
+        setOwnInvincible(false)
     end
 
     for _, entry in ipairs(Platform.GetNearbyPlayers(searchDistance, Config.Overhead.ShowOwn)) do
@@ -94,9 +110,7 @@ Network.On('core:admin:duty', function(data)
     local ownId = Platform.GetOwnServerId()
     Platform.ResetPedAlpha(Platform.GetOwnPed())
     transparent[ownId] = nil
-    if dutyStyle.Invincible then
-        Platform.SetInvincible(false)
-    end
+    setOwnInvincible(false)
 end)
 
 -- Suchen: ein paar Mal pro Sekunde

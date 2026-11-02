@@ -1,10 +1,17 @@
-# Core 1.7.2 (Testserver)
+# Core 1.7.3 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.7.2
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. `spawnmanager` steht jetzt unter `dependencies`. Er muss laufen (bei txAdmin standardmäßig an).
+3. Das Recht `player.rename` kommt jetzt auch im Admin-Menü an.
+4. Die Unverwundbarkeit aus dem Admin-Dienst endet jetzt auch dann, wenn die Meldung über das Dienstende nicht ankommt. Andere Scripts, die jemanden unverwundbar machen, werden dabei nicht überschrieben.
 
 ## Update von 1.7.1
 

@@ -83,7 +83,7 @@ Permissions.Known = {
     'player.kick', 'player.warn', 'player.ban', 'player.unban', 'accounts.links', 'money.manage', 'ranks.manage', 'data.private',
     'admin.message', 'player.freeze', 'player.heal', 'vehicle.fix', 'admin.dimension', 'player.dimension', 'player.silentkick',
     'weapon.give', 'admin.mass', 'admin.esp', 'player.kill', 'tickets.manage', 'player.spectate', 'items.manage',
-    'vehicle.delete', 'admin.keys',
+    'vehicle.delete', 'admin.keys', 'player.rename',
 }
 
 -- Liste der Rechte, die ein Spieler hat

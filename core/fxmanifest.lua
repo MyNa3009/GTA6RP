@@ -4,10 +4,11 @@ lua54 'yes'
 
 name 'core'
 description 'Eigene Core: Login, Charaktere, permanente IDs, Geld, Tod, Teamraenge, Admin-Menue, Tickets, Logging'
-version '1.7.2'
+version '1.7.3'
 
 dependencies {
     'oxmysql',
+    'spawnmanager', -- Spawn in der Client-Bridge (bridge/platform/fivem_client.lua)
 }
 
 -- Config und GTA-5-Daten (nur Tabellen, keine Natives) auf beiden Seiten
