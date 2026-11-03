@@ -114,7 +114,39 @@ local function playerServerIdFromPed(ped)
     return GetPlayerServerId(index)
 end
 
--- Ruft handler({ killerServerId?, weapon }) einmal pro Tod auf
+-- Knochen, an dem der eigene Ped zuletzt getroffen wurde (Nummer aus GTA), oder nil
+local function lastDamageBone(ped)
+    local found, bone = GetPedLastDamageBone(ped)
+    return found and bone or nil
+end
+
+-- Ruft handler(bone) bei jedem Treffer am eigenen Ped auf. bone: Knochen-Nummer aus GTA (data/body_gta5.lua) oder nil
+function Platform.OnOwnDamage(handler)
+    AddEventHandler('gameEventTriggered', function(name, args)
+        if name ~= 'CEventNetworkEntityDamage' then
+            return
+        end
+        local ped = PlayerPedId()
+        if args[1] ~= ped then
+            return
+        end
+        handler(lastDamageBone(ped))
+    end)
+end
+
+-- Bildeffekt im Spiel an oder aus (Name aus data/effects_gta5.lua)
+function Platform.SetScreenEffect(name, on)
+    if not name then
+        return
+    end
+    if on then
+        AnimpostfxPlay(name, 0, true)
+    else
+        AnimpostfxStop(name)
+    end
+end
+
+-- Ruft handler({ killerServerId?, weapon, bone? }) einmal pro Tod auf
 function Platform.OnDeath(handler)
     CreateThread(function()
         local wasDead = false
@@ -128,7 +160,7 @@ function Platform.OnDeath(handler)
                 if killer == GetPlayerServerId(PlayerId()) then
                     killer = nil
                 end
-                local info = { killerServerId = killer, weapon = GetPedCauseOfDeath(ped) }
+                local info = { killerServerId = killer, weapon = GetPedCauseOfDeath(ped), bone = lastDamageBone(ped) }
                 CreateThread(function()
                     handler(info)
                 end)

@@ -1,21 +1,24 @@
 <!DOCTYPE html>
 <!--
   UI: Bewusstlos-Anzeige
-  CONTRACT_VERSION: 1
+  CONTRACT_VERSION: 2
   Reine Anzeige ohne Maus- und Tastaturfokus. Die Taste liest Lua direkt aus dem Spiel.
 
   EINGEHEND (Server -> UI)
   death_open   {
     colors: { base: string, ink: string, accent: string, signal: string },  // RGB-Kanaele
-    secondsLeft: number,   // bis das Krankenhaus erlaubt ist
-    holdMs: number,        // so lange muss die Taste gehalten werden
-    keyLabel: string       // z. B. "E"
+    secondsLeft: number,    // bis das Krankenhaus erlaubt ist
+    totalSeconds?: number,  // ganze Wartezeit, fuer die Leiste unten
+    holdMs: number,         // so lange muss die Taste gehalten werden
+    keyLabel: string,       // z. B. "E"
+    cause?: string,         // Todesursache aus data/weapons_gta5.lua, z. B. "Pistole" oder "Sturz"
+    hits?: { head, torso, leftArm, rightArm, leftLeg, rightLeg: number }  // Treffer kurz vor dem Tod
   }
   death_update { secondsLeft?: number, holding?: boolean, error?: string }
   death_close  {}
 
   AUSGEHEND (UI -> Server)
-  ui_ready     { ui: "death", version: 1 }
+  ui_ready     { ui: "death", version: 2 }
 
   FEHLERCODES (in death_update.error)
   not_dead, too_early, no_character, server_error, timeout
@@ -28,7 +31,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;0,800;1,600&display=swap" rel="stylesheet">
 
 <style>
 :root {
@@ -38,37 +41,58 @@
   --rgb-accent: 214 164 72;
   --rgb-signal: 220 82 72;
 
-  --c-bg:          rgb(var(--rgb-base) / 0.92);
-  --c-vignette:    rgb(var(--rgb-base) / 0.55);
+  --c-shade-top:   rgb(var(--rgb-base) / 0.35);
+  --c-shade-edge:  rgb(var(--rgb-base) / 0.82);
+  --c-shade-floor: rgb(var(--rgb-base) / 0.92);
+  --c-glow:        rgb(var(--rgb-signal) / 0.26);
+  --c-surface:     rgb(var(--rgb-ink) / 0.06);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.10);
   --c-border:      rgb(var(--rgb-ink) / 0.12);
-  --c-track:       rgb(var(--rgb-ink) / 0.10);
-  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-track:       rgb(var(--rgb-ink) / 0.08);
+  --c-text:        rgb(var(--rgb-ink) / 0.96);
   --c-text-muted:  rgb(var(--rgb-ink) / 0.62);
-  --c-accent:      rgb(var(--rgb-accent));
+  --c-text-faint:  rgb(var(--rgb-ink) / 0.40);
+  --c-title-low:   rgb(var(--rgb-ink) / 0.68);
+  --c-body:        rgb(var(--rgb-ink) / 0.22);
+  --c-line:        rgb(var(--rgb-ink) / 0.32);
   --c-signal:      rgb(var(--rgb-signal));
-  --c-key-bg:      rgb(var(--rgb-ink) / 0.10);
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.55);
+  --c-signal-line: rgb(var(--rgb-signal) / 0.7);
+  --c-on-signal:   rgb(var(--rgb-ink));
 
-  --shadow-panel: 0 12px 36px rgb(var(--rgb-base) / 0.5);
+  --shadow-text: 0 2px 10px rgb(var(--rgb-base) / 0.55);
+  --shadow-btn:  0 8px 24px rgb(var(--rgb-signal) / 0.28);
 
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
-  --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
 
-  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+  --radius-sm: 6px; --radius-md: 8px;
 
-  --fs-xs: clamp(11px, 0.55vw, 13px);
-  --fs-sm: clamp(12px, 0.65vw, 14px);
-  --fs-md: clamp(14px, 0.75vw, 16px);
-  --fs-xl: clamp(21px, 1.25vw, 26px);
+  --fs-xs: clamp(11px, 0.6vw, 13px);
+  --fs-sm: clamp(12px, 0.7vw, 14px);
+  --fs-md: clamp(14px, 0.85vw, 17px);
+  --fs-lg: clamp(16px, 1.05vw, 21px);
+  --fs-title: clamp(52px, 5.6vw, 112px);
+  --fs-lead: clamp(24px, 2.3vw, 44px);
 
-  --dur-fast: 120ms; --dur-panel: 240ms;
+  --dur-fast: 120ms; --dur-panel: 320ms; --dur-pulse: 1600ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 
   --z-overlay: 10;
 
-  --panel-width: clamp(320px, 24vw, 460px);
-  --panel-bottom: clamp(48px, 9vh, 120px);
-  --bar-height: 6px;
-  --key-size: clamp(26px, 1.5vw, 32px);
+  --edge: clamp(24px, 3vw, 64px);
+  --bottom-gap: clamp(32px, 6vh, 72px);
+  --text-width: min(560px, 40vw);
+  --ecg-width: clamp(60px, 7vw, 170px);
+  --ecg-height: clamp(28px, 3vw, 52px);
+  --body-height: clamp(220px, 32vh, 360px);
+  --icon-box: clamp(28px, 1.8vw, 36px);
+  --btn-height: clamp(42px, 2.6vw, 50px);
+  --btn-width: clamp(220px, 15vw, 300px);
+  --key-size: clamp(24px, 1.5vw, 30px);
+  --bar-height: 3px;
+  --skull-size: clamp(40px, 3vw, 58px);
+  --beam-height: clamp(28px, 5vh, 64px);
   --hold-ms: 1500ms;
 }
 
@@ -84,65 +108,174 @@ html, body {
   overflow: hidden;
 }
 
+.icon { display: block; flex: none; }
+.icon--line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
 .screen {
   position: fixed;
   inset: 0;
   z-index: var(--z-overlay);
-  /* Ränder abdunkeln, Mitte bleibt sichtbar */
-  background: radial-gradient(ellipse at center, transparent 45%, var(--c-vignette) 100%);
   pointer-events: none;
+  /* Spielbild abdunkeln: Raender und Boden stark, Mitte oben leicht */
+  background:
+    linear-gradient(to top, var(--c-glow) 0%, transparent 24%),
+    linear-gradient(to top, var(--c-shade-floor) 0%, transparent 58%),
+    radial-gradient(ellipse 80% 70% at 50% 32%, var(--c-shade-top) 0%, var(--c-shade-edge) 100%);
+  animation: fade-in var(--dur-panel) var(--ease-out);
 }
 .screen[hidden] { display: none; }
 
-.panel {
-  position: absolute;
-  left: 50%;
-  bottom: var(--panel-bottom);
-  width: var(--panel-width);
-  transform: translateX(-50%);
-  padding: var(--space-5);
-  background: var(--c-bg);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-panel);
-  animation: panel-in var(--dur-panel) var(--ease-out);
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-@keyframes panel-in {
-  from { opacity: 0; transform: translate(-50%, 8px); }
-  to   { opacity: 1; transform: translate(-50%, 0); }
+/* ---------- Oben: Symbol ---------- */
+
+.mark {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  transform: translateX(-50%);
+}
+.mark__beam {
+  width: 2px;
+  height: var(--beam-height);
+  background: linear-gradient(to bottom, transparent, var(--c-line));
+}
+.mark__skull {
+  width: var(--skull-size);
+  height: var(--skull-size);
+  margin-top: var(--space-1);
+  color: var(--c-text);
+  filter: drop-shadow(0 4px 18px rgb(var(--rgb-base) / 0.7));
+}
+.mark__skull .hole { fill: rgb(var(--rgb-base)); }
+
+/* ---------- Unten: drei Spalten ---------- */
+
+.stage {
+  position: absolute;
+  left: var(--edge);
+  right: var(--edge);
+  bottom: var(--bottom-gap);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: var(--space-6);
+}
+
+/* Mitte */
+
+.center {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+  text-align: center;
+}
+
+.headline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ecg {
+  width: var(--ecg-width);
+  height: var(--ecg-height);
+  flex: none;
+  overflow: visible;
+  animation: pulse var(--dur-pulse) var(--ease-out) infinite;
+}
+.ecg path { fill: none; stroke: var(--c-signal-line); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+
+/* Der Puls ist ein echter Zustand: Man lebt noch */
+@keyframes pulse {
+  0%, 100% { opacity: 0.55; }
+  18%      { opacity: 1; }
+}
+
+.title-wrap { position: relative; }
+
+.lead {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  font-size: var(--fs-lead);
+  font-weight: 600;
+  font-style: italic;
+  color: var(--c-signal);
+  transform: translate(-12%, -62%) rotate(-6deg);
+  transform-origin: left bottom;
+  white-space: nowrap;
+  text-shadow: var(--shadow-text);
 }
 
 .title {
-  margin: 0 0 var(--space-1);
-  font-size: var(--fs-xl);
-  font-weight: 700;
-  line-height: 1.2;
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 800;
+  line-height: 0.92;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  background: linear-gradient(to bottom, var(--c-text) 35%, var(--c-title-low) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .text {
-  margin: 0 0 var(--space-4);
-  font-size: var(--fs-sm);
-  color: var(--c-text-muted);
-  line-height: 1.5;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-height: var(--key-size);
+  max-width: var(--text-width);
+  margin: 0;
   font-size: var(--fs-sm);
   font-weight: 500;
+  line-height: 1.55;
+  color: var(--c-text-muted);
+  text-wrap: balance;
 }
 
-.row[hidden] { display: none; }
+.action {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: var(--btn-width);
+  height: var(--btn-height);
+  margin-top: var(--space-2);
+  padding: 0 var(--space-5);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  overflow: hidden;
+  isolation: isolate;
+}
+.action[data-ready="true"] {
+  border-color: transparent;
+  background: var(--c-signal);
+  color: var(--c-on-signal);
+  box-shadow: var(--shadow-btn);
+}
+.action__timer { color: var(--c-text); font-weight: 700; font-variant-numeric: tabular-nums; }
 
-.timer {
-  font-size: var(--fs-md);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+/* Fuellt sich, solange die Taste gehalten wird */
+.action__fill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: rgb(var(--rgb-ink) / 0.22);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+.action[data-holding="true"] .action__fill {
+  transform: scaleX(1);
+  transition: transform var(--hold-ms) linear;
 }
 
 .key {
@@ -151,72 +284,197 @@ html, body {
   min-width: var(--key-size);
   height: var(--key-size);
   padding: 0 var(--space-2);
-  margin: 0 var(--space-1);
-  border: 1px solid var(--c-border);
+  border: 1px solid rgb(var(--rgb-ink) / 0.5);
   border-bottom-width: 2px;
   border-radius: var(--radius-sm);
-  background: var(--c-key-bg);
   font-family: inherit;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   font-weight: 700;
-  color: var(--c-text);
-}
-
-.bar {
-  height: var(--bar-height);
-  margin-top: var(--space-3);
-  border-radius: var(--bar-height);
-  background: var(--c-track);
-  overflow: hidden;
-}
-.bar[hidden] { display: none; }
-.bar__fill {
-  height: 100%;
-  background: var(--c-accent);
-  transform: scaleX(0);
-  transform-origin: left center;
-}
-.bar[data-holding="true"] .bar__fill {
-  transform: scaleX(1);
-  transition: transform var(--hold-ms) linear;
 }
 
 .error {
-  margin: var(--space-3) 0 0;
+  min-height: 1.3em;
+  margin: 0;
   font-size: var(--fs-xs);
-  font-weight: 500;
+  font-weight: 600;
   color: var(--c-signal);
 }
-.error:empty { display: none; }
+
+/* Links: Figur mit Verletzungen */
+
+.injuries {
+  justify-self: start;
+  display: grid;
+  gap: var(--space-2);
+}
+.injuries__title {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-muted);
+}
+
+.figure {
+  position: relative;
+  height: var(--body-height);
+  aspect-ratio: 260 / 300;
+}
+.figure svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+
+.zone { fill: var(--c-body); stroke: var(--c-body); }
+.zone--limb { fill: none; stroke-linecap: round; }
+.zone[data-hit] { fill: var(--c-signal-soft); stroke: var(--c-signal-soft); }
+.zone--limb[data-hit] { fill: none; }
+.zone[data-hit="many"] { fill: var(--c-signal); stroke: var(--c-signal); }
+.zone--limb[data-hit="many"] { fill: none; }
+
+.pointer { stroke: var(--c-line); stroke-width: 1; fill: none; }
+.pointer-dot { fill: var(--c-text); }
+
+.tag {
+  position: absolute;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  transform: translateY(-115%);
+  white-space: nowrap;
+}
+.tag__name { font-size: var(--fs-sm); font-weight: 600; text-shadow: var(--shadow-text); }
+.tag__count { font-size: var(--fs-xs); font-weight: 600; color: var(--c-signal); font-variant-numeric: tabular-nums; }
+
+/* Rechts: Ursache und Zeit */
+
+.facts {
+  justify-self: end;
+  display: grid;
+  gap: var(--space-5);
+  margin: 0;
+  text-align: right;
+}
+.fact { display: grid; gap: var(--space-2); justify-items: end; }
+.fact dt { font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
+.fact dd {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-shadow: var(--shadow-text);
+}
+.fact__value { max-width: clamp(140px, 14vw, 260px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fact__icon {
+  display: grid;
+  place-items: center;
+  width: var(--icon-box);
+  height: var(--icon-box);
+  flex: none;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-hi);
+  color: var(--c-text);
+}
+.fact__icon svg { width: 58%; height: 58%; }
+
+/* Ganz unten: Wartezeit bis zum Krankenhaus */
+
+.progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--bar-height);
+  background: var(--c-track);
+}
+.progress__fill {
+  height: 100%;
+  background: var(--c-signal);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 250ms linear;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .panel { animation: none; }
+  .screen, .ecg { animation: none; }
+  .progress__fill { transition: none; }
 }
 </style>
 </head>
 <body>
 
 <div class="screen" id="screen" hidden>
-  <section class="panel" role="status" aria-live="polite" aria-labelledby="title">
-    <h1 class="title" id="title"></h1>
-    <p class="text" id="text"></p>
+  <div class="mark" aria-hidden="true">
+    <span class="mark__beam"></span>
+    <svg class="icon mark__skull" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M12 2.5c-4.7 0-8 3.3-8 7.9 0 2.5 1.1 4.5 2.9 5.7v2.6c0 .9.7 1.6 1.6 1.6h7c.9 0 1.6-.7 1.6-1.6v-2.6c1.8-1.2 2.9-3.2 2.9-5.7 0-4.6-3.3-7.9-8-7.9Z"/>
+      <circle class="hole" cx="8.8" cy="11.2" r="2.1"/>
+      <circle class="hole" cx="15.2" cy="11.2" r="2.1"/>
+      <path class="hole" d="M12 13.9l-1.1 2.1h2.2Z"/>
+      <path d="M10.3 18.4v2M12 18.4v2M13.7 18.4v2" stroke="rgb(var(--rgb-base))" stroke-width="0.9"/>
+    </svg>
+  </div>
 
-    <div class="row" id="row-wait">
-      <span id="wait-label"></span>
-      <span class="timer" id="timer"></span>
-    </div>
+  <div class="stage">
+    <section class="injuries" aria-labelledby="injuries-title">
+      <p class="injuries__title" id="injuries-title"></p>
+      <div class="figure" id="figure">
+        <svg viewBox="0 0 260 300" aria-hidden="true">
+          <!-- Figur von hinten: links ist auch links -->
+          <path class="zone zone--limb" data-zone="leftArm"  d="M40 60 L28 104 L22 148" stroke-width="12"/>
+          <path class="zone zone--limb" data-zone="rightArm" d="M80 60 L92 104 L98 148" stroke-width="12"/>
+          <path class="zone zone--limb" data-zone="leftLeg"  d="M50 164 L46 224 L44 284" stroke-width="15"/>
+          <path class="zone zone--limb" data-zone="rightLeg" d="M70 164 L74 224 L76 284" stroke-width="15"/>
+          <path class="zone" data-zone="torso" d="M44 50 Q60 45 76 50 Q84 54 83 70 L80 122 Q79 152 70 160 L50 160 Q41 152 40 122 L37 70 Q36 54 44 50 Z" stroke-width="2"/>
+          <circle class="zone" data-zone="head" cx="60" cy="26" r="16" stroke-width="2"/>
+          <g id="pointers"></g>
+        </svg>
+        <div id="tags"></div>
+      </div>
+    </section>
 
-    <div class="row" id="row-ready" hidden>
-      <span id="ready-label"></span>
-    </div>
+    <section class="center" role="status" aria-live="polite" aria-labelledby="title">
+      <div class="headline">
+        <svg class="ecg" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 20 H70 L76 12 L82 28 L88 4 L94 36 L100 20 H128 L132 16 L136 24 L140 20 H200"/>
+        </svg>
+        <div class="title-wrap">
+          <p class="lead" id="lead" aria-hidden="true"></p>
+          <h1 class="title" id="title"></h1>
+        </div>
+        <svg class="ecg" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 20 H60 L64 16 L68 24 L72 20 H100 L106 12 L112 28 L118 4 L124 36 L130 20 H200"/>
+        </svg>
+      </div>
+      <p class="text" id="text"></p>
+      <div class="action" id="action">
+        <span class="action__fill"></span>
+        <span id="action-label"></span>
+      </div>
+      <p class="error" id="error"></p>
+    </section>
 
-    <div class="bar" id="bar" hidden><div class="bar__fill"></div></div>
-    <p class="error" id="error"></p>
-  </section>
+    <dl class="facts">
+      <div class="fact">
+        <dt id="cause-label"></dt>
+        <dd><span class="fact__value" id="cause"></span><span class="fact__icon" aria-hidden="true"><svg class="icon icon--line" viewBox="0 0 24 24"><path d="M12 3.5 21.5 20h-19Z"/><path d="M12 10v4.5M12 17.2v.1"/></svg></span></dd>
+      </div>
+      <div class="fact">
+        <dt id="time-label"></dt>
+        <dd><span class="fact__value" id="time"></span><span class="fact__icon" aria-hidden="true"><svg class="icon icon--line" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span></dd>
+      </div>
+      <div class="fact">
+        <dt id="since-label"></dt>
+        <dd><span class="fact__value" id="since"></span><span class="fact__icon" aria-hidden="true"><svg class="icon icon--line" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V10M10 2.5h4M18.5 6.5l1.5-1.5"/></svg></span></dd>
+      </div>
+    </dl>
+  </div>
+
+  <div class="progress" aria-hidden="true"><div class="progress__fill" id="progress"></div></div>
 </div>
 
 <script id="bridge">
-const CONTRACT_VERSION = 1;
+const CONTRACT_VERSION = 2;
 
 const Bridge = (() => {
   const handlers = {};
@@ -279,11 +537,21 @@ const Mock = {
 
 <script id="app">
 const TEXT = {
-  title: 'Du bist bewusstlos',
-  text: 'Warte auf den Rettungsdienst oder lass dich ins Krankenhaus bringen.',
+  lead: 'Du bist',
+  title: 'Bewusstlos',
+  text: 'Bleib liegen und warte auf den Rettungsdienst. Kommt niemand, kannst du dich nach Ablauf der Zeit ins Krankenhaus bringen lassen.',
   waitLabel: 'Krankenhaus möglich in',
-  readyBefore: 'Halte',
-  readyAfter: 'gedrückt, um im Krankenhaus aufzuwachen.',
+  readyAfter: 'halten: ins Krankenhaus',
+  holding: 'Halten…',
+  injuries: 'Verletzungen',
+  hitCount: (n) => (n === 1 ? '1 Treffer' : `${n} Treffer`),
+  zones: {
+    head: 'Kopf', torso: 'Oberkörper', leftArm: 'Linker Arm', rightArm: 'Rechter Arm', leftLeg: 'Linkes Bein', rightLeg: 'Rechtes Bein',
+  },
+  causeLabel: 'Ursache',
+  causeUnknown: 'Unbekannt',
+  timeLabel: 'Zeitpunkt',
+  sinceLabel: 'Bewusstlos seit',
   errors: {
     too_early: 'Noch zu früh. Die Zeit wurde neu gesetzt.',
     not_dead: 'Du bist nicht mehr bewusstlos.',
@@ -295,32 +563,50 @@ const TEXT = {
 
 const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
 const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const ZONES = ['head', 'torso', 'leftArm', 'rightArm', 'leftLeg', 'rightLeg'];
+// Ankerpunkte der Zonen in der Figur (viewBox 260 x 300), Beschriftung rechts daneben
+const ANCHORS = {
+  head: [60, 26], torso: [60, 86], leftArm: [25, 132], rightArm: [95, 112], leftLeg: [45, 232], rightLeg: [75, 262],
+};
+const VIEW = { width: 260, height: 300, tagX: 150 };
+const MANY_HITS = 2;
 const TICK_MS = 250;
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 const DEFAULT_HOLD_MS = 1500;
 const DEFAULT_KEY = 'E';
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const state = {
   open: false,
   readyAt: 0,       // Date.now() in ms
+  startedAt: 0,
+  totalSeconds: 0,
   holding: false,
   keyLabel: DEFAULT_KEY,
   error: '',
+  rendered: { ready: null, holding: null },
 };
 
 const el = {
   screen: document.getElementById('screen'),
+  lead: document.getElementById('lead'),
   title: document.getElementById('title'),
   text: document.getElementById('text'),
-  rowWait: document.getElementById('row-wait'),
-  waitLabel: document.getElementById('wait-label'),
-  timer: document.getElementById('timer'),
-  rowReady: document.getElementById('row-ready'),
-  readyLabel: document.getElementById('ready-label'),
-  bar: document.getElementById('bar'),
+  action: document.getElementById('action'),
+  actionLabel: document.getElementById('action-label'),
   error: document.getElementById('error'),
+  injuriesTitle: document.getElementById('injuries-title'),
+  pointers: document.getElementById('pointers'),
+  tags: document.getElementById('tags'),
+  cause: document.getElementById('cause'),
+  time: document.getElementById('time'),
+  since: document.getElementById('since'),
+  progress: document.getElementById('progress'),
+  zones: Object.fromEntries(ZONES.map((zone) => [zone, document.querySelector(`[data-zone="${zone}"]`)])),
 };
+
+const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 let tickTimer = null;
 
@@ -342,17 +628,78 @@ function secondsLeft() {
   return Math.max(0, Math.ceil((state.readyAt - Date.now()) / MS_PER_SECOND));
 }
 
-function formatTime(total) {
+function formatDuration(total) {
   const minutes = Math.floor(total / SECONDS_PER_MINUTE);
   const seconds = total % SECONDS_PER_MINUTE;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-function renderReadyLabel() {
-  const key = document.createElement('kbd');
-  key.className = 'key';
-  key.textContent = state.keyLabel;
-  el.readyLabel.replaceChildren(TEXT.readyBefore, key, TEXT.readyAfter);
+/* ---------- Figur ---------- */
+
+function renderInjuries(hits) {
+  const counts = hits && typeof hits === 'object' ? hits : {};
+  const pointers = [];
+  const tags = [];
+  ZONES.forEach((zone) => {
+    const count = Math.max(0, Math.floor(Number(counts[zone]) || 0));
+    const node = el.zones[zone];
+    if (count === 0) {
+      node.removeAttribute('data-hit');
+      return;
+    }
+    node.dataset.hit = count >= MANY_HITS ? 'many' : 'one';
+    const [x, y] = ANCHORS[zone];
+    const line = document.createElementNS(SVG_NS, 'path');
+    line.setAttribute('class', 'pointer');
+    line.setAttribute('d', `M${x} ${y} H${VIEW.tagX}`);
+    const dot = document.createElementNS(SVG_NS, 'circle');
+    dot.setAttribute('class', 'pointer-dot');
+    dot.setAttribute('cx', String(x));
+    dot.setAttribute('cy', String(y));
+    dot.setAttribute('r', '2.5');
+    pointers.push(line, dot);
+
+    const tag = document.createElement('div');
+    tag.className = 'tag';
+    tag.style.left = `${(VIEW.tagX / VIEW.width) * 100}%`;
+    tag.style.top = `${(y / VIEW.height) * 100}%`;
+    const name = document.createElement('span');
+    name.className = 'tag__name';
+    name.textContent = TEXT.zones[zone];
+    const amount = document.createElement('span');
+    amount.className = 'tag__count';
+    amount.textContent = TEXT.hitCount(count);
+    tag.append(name, amount);
+    tags.push(tag);
+  });
+  el.pointers.replaceChildren(...pointers);
+  el.tags.replaceChildren(...tags);
+}
+
+/* ---------- Anzeige ---------- */
+
+function renderAction(ready) {
+  const holding = ready && state.holding;
+  if (state.rendered.ready === ready && state.rendered.holding === holding) {
+    if (!ready) setText(el.actionLabel.querySelector('.action__timer'), formatDuration(secondsLeft()));
+    return;
+  }
+  state.rendered = { ready, holding };
+  el.action.dataset.ready = String(ready);
+  el.action.dataset.holding = String(holding);
+  if (!ready) {
+    const timer = document.createElement('span');
+    timer.className = 'action__timer';
+    timer.textContent = formatDuration(secondsLeft());
+    el.actionLabel.replaceChildren(`${TEXT.waitLabel} `, timer);
+  } else if (holding) {
+    el.actionLabel.replaceChildren(TEXT.holding);
+  } else {
+    const key = document.createElement('kbd');
+    key.className = 'key';
+    key.textContent = state.keyLabel;
+    el.actionLabel.replaceChildren(key, ` ${TEXT.readyAfter}`);
+  }
 }
 
 function render() {
@@ -360,16 +707,13 @@ function render() {
   if (!state.open) return;
 
   const left = secondsLeft();
-  const ready = left === 0;
-
-  el.rowWait.hidden = ready;
-  el.rowReady.hidden = !ready;
-  el.bar.hidden = !ready;
-  setText(el.timer, formatTime(left));
-
-  const holding = String(ready && state.holding);
-  if (el.bar.dataset.holding !== holding) el.bar.dataset.holding = holding;
+  renderAction(left === 0);
+  setText(el.since, formatDuration(Math.max(0, Math.floor((Date.now() - state.startedAt) / MS_PER_SECOND))));
   setText(el.error, state.error);
+
+  const progress = state.totalSeconds > 0 ? Math.min(1, Math.max(0, 1 - left / state.totalSeconds)) : (left === 0 ? 1 : 0);
+  const transform = `scaleX(${progress.toFixed(4)})`;
+  if (el.progress.style.transform !== transform) el.progress.style.transform = transform;
 }
 
 function stopTick() {
@@ -386,14 +730,21 @@ function startTick() {
 
 Bridge.on('death_open', (data) => {
   applyColors(data.colors);
+  const now = Date.now();
+  const seconds = Math.max(0, Number(data.secondsLeft) || 0);
   state.open = true;
-  state.readyAt = Date.now() + (Number(data.secondsLeft) || 0) * MS_PER_SECOND;
+  state.startedAt = now;
+  state.readyAt = now + seconds * MS_PER_SECOND;
+  state.totalSeconds = Math.max(seconds, Number(data.totalSeconds) || 0);
   state.holding = false;
   state.error = '';
+  state.rendered = { ready: null, holding: null };
   state.keyLabel = typeof data.keyLabel === 'string' && data.keyLabel ? data.keyLabel : DEFAULT_KEY;
-  const holdMs = Number(data.holdMs) || DEFAULT_HOLD_MS;
-  document.documentElement.style.setProperty('--hold-ms', `${holdMs}ms`);
-  renderReadyLabel();
+  document.documentElement.style.setProperty('--hold-ms', `${Number(data.holdMs) || DEFAULT_HOLD_MS}ms`);
+  setText(el.cause, typeof data.cause === 'string' && data.cause ? data.cause : TEXT.causeUnknown);
+  el.cause.title = el.cause.textContent;
+  setText(el.time, clockFormat.format(new Date(now)));
+  renderInjuries(data.hits);
   render();
   startTick();
 });
@@ -420,19 +771,29 @@ Bridge.on('death_close', () => {
   render();
 });
 
+// Feste Texte einmal setzen
+setText(el.lead, TEXT.lead);
 setText(el.title, TEXT.title);
 setText(el.text, TEXT.text);
-setText(el.waitLabel, TEXT.waitLabel);
+setText(el.injuriesTitle, TEXT.injuries);
+setText(document.getElementById('cause-label'), TEXT.causeLabel);
+setText(document.getElementById('time-label'), TEXT.timeLabel);
+setText(document.getElementById('since-label'), TEXT.sinceLabel);
 Bridge.send('ui_ready', { ui: 'death', version: CONTRACT_VERSION });
 
 if (Bridge.platform === 'mock') {
-  // Im Browser: 5 Sekunden warten, danach zeigt die Anzeige die Taste
+  // Im Browser: #bereit zeigt gleich die Taste, #halten den Haltevorgang, sonst 45 Sekunden Wartezeit
+  const ready = location.hash === '#bereit' || location.hash === '#halten';
   Mock.push('death_open', {
     colors: { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72' },
-    secondsLeft: 5,
+    secondsLeft: ready ? 0 : 45,
+    totalSeconds: 60,
     holdMs: 1500,
     keyLabel: 'E',
+    cause: 'Pistole',
+    hits: { head: 0, torso: 1, leftArm: 2, rightArm: 0, leftLeg: 1, rightLeg: 0 },
   });
+  if (location.hash === '#halten') Mock.push('death_update', { holding: true });
 }
 </script>
 </body>
