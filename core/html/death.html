@@ -88,6 +88,9 @@
   --btn-width: clamp(220px, 15vw, 300px);
   --key-size: clamp(24px, 1.5vw, 30px);
   --bar-height: 3px;
+  --grid-size: clamp(40px, 3.4vw, 72px);
+  --grid-height: 52vh;
+  --c-grid: rgb(var(--rgb-ink) / 0.07);
   --skull-size: clamp(40px, 3vw, 58px);
   --beam-height: clamp(28px, 5vh, 64px);
   --hold-ms: 1500ms;
@@ -333,6 +336,23 @@ html, body {
 }
 .fact__icon svg { width: 58%; height: 58%; }
 
+/* Karo-Raster im roten Schein unten, laeuft nach oben und zu den Seiten aus */
+
+.grid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--grid-height);
+  background-image:
+    linear-gradient(var(--c-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--c-grid) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
+  background-position: center bottom;
+  -webkit-mask-image: radial-gradient(ellipse 55% 100% at 50% 100%, #000 0%, #000 35%, transparent 100%);
+  mask-image: radial-gradient(ellipse 55% 100% at 50% 100%, #000 0%, #000 35%, transparent 100%);
+}
+
 /* Ganz unten: Wartezeit bis zum Krankenhaus */
 
 .progress {
@@ -360,6 +380,8 @@ html, body {
 <body>
 
 <div class="screen" id="screen" hidden>
+  <div class="grid" aria-hidden="true"></div>
+
   <div class="mark" aria-hidden="true">
     <span class="mark__beam"></span>
     <svg class="icon mark__skull" viewBox="0 0 24 24">
