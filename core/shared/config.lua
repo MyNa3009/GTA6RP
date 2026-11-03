@@ -237,8 +237,6 @@ Config.Death = {
     HospitalAfterSeconds = 60,
     -- So lange muss die Taste gehalten werden
     HoldToRespawnMs = 1500,
-    -- Treffer der letzten so vielen Sekunden vor dem Tod erscheinen auf der Figur im Bewusstlos-Bildschirm
-    HitWindowSeconds = 180,
     -- Bild im Spiel grau und dunkler, solange man bewusstlos ist (Effekt steht in data/effects_gta5.lua)
     ScreenEffect = true,
 }

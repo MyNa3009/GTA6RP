@@ -16,7 +16,7 @@ Core.RegisterCallback('death_report', function(source, data)
 
     -- Schon gemeldet: nur die Restzeit zurueckgeben
     if character.diedAt then
-        return { ok = true, data = { respawnInSeconds = remainingSeconds(character) } }
+        return { ok = true, data = { respawnInSeconds = remainingSeconds(character), killerId = character.deathKillerId } }
     end
 
     character.diedAt = os.time()
@@ -47,7 +47,9 @@ Core.RegisterCallback('death_report', function(source, data)
         },
     })
 
-    return { ok = true, data = { respawnInSeconds = Config.Death.HospitalAfterSeconds } }
+    -- Permanente ID des Taeters fuer den Bewusstlos-Bildschirm (nicht der Name)
+    character.deathKillerId = killer and killer.characterId or nil
+    return { ok = true, data = { respawnInSeconds = Config.Death.HospitalAfterSeconds, killerId = character.deathKillerId } }
 end)
 
 Core.RegisterCallback('death_respawn', function(source)
@@ -63,6 +65,7 @@ Core.RegisterCallback('death_respawn', function(source)
     end
 
     character.diedAt = nil
+    character.deathKillerId = nil
     Needs.AfterRespawn(source)
     local position = Jail.RespawnPosition(player) or SpawnData.respawn
     Core.Log({
@@ -87,6 +90,7 @@ function Core.Revive(source, actorAccountId, reason)
 
     local wasDead = character.diedAt ~= nil
     character.diedAt = nil
+    character.deathKillerId = nil
     Needs.AfterRespawn(source)
     Network.SendToClient(source, REVIVE_EVENT, {})
 

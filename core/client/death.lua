@@ -11,43 +11,6 @@ local dying = {
 }
 
 local MS_PER_SECOND = 1000
-local MAX_HITS = 50 -- so viele Treffer werden hoechstens gemerkt
-
-local ZONES = { 'head', 'torso', 'leftArm', 'rightArm', 'leftLeg', 'rightLeg' }
-local hits = {} -- { zone, at } der letzten Treffer, fuer die Figur im Bewusstlos-Bildschirm
-
--- Jeder Treffer am eigenen Ped, solange man spielt und nicht schon bewusstlos ist
-Platform.OnOwnDamage(function(bone)
-    if not Client.state.character or dying.active then
-        return
-    end
-    hits[#hits + 1] = { zone = BodyZone(bone), at = Platform.GetTime() }
-    if #hits > MAX_HITS then
-        table.remove(hits, 1)
-    end
-end)
-
--- Treffer pro Zone im Zeitfenster vor dem Tod. Der letzte Treffer zaehlt immer, auch ohne Ereignis (z. B. Sturz).
-local function recentHits(lastBone)
-    local counts = {}
-    for _, zone in ipairs(ZONES) do
-        counts[zone] = 0
-    end
-    local since = Platform.GetTime() - Config.Death.HitWindowSeconds * MS_PER_SECOND
-    for _, hit in ipairs(hits) do
-        if hit.at >= since then
-            counts[hit.zone] = counts[hit.zone] + 1
-        end
-    end
-    if lastBone then
-        local zone = BodyZone(lastBone)
-        if counts[zone] == 0 then
-            counts[zone] = 1
-        end
-    end
-    return counts
-end
-
 local function screenEffect(on)
     if Config.Death.ScreenEffect then
         Platform.SetScreenEffect(ScreenEffects.Unconscious, on)
@@ -62,7 +25,6 @@ function Death.Reset()
     if dying.active then
         screenEffect(false)
     end
-    hits = {}
     dying.active = false
     dying.holdStart = nil
     dying.requesting = false
@@ -124,8 +86,8 @@ Platform.OnDeath(function(info)
         killer = info.killerServerId,
         weapon = info.weapon,
     })
-    local seconds = (result and result.ok and result.data and result.data.respawnInSeconds)
-        or Config.Death.HospitalAfterSeconds
+    local data = result and result.ok and result.data or {}
+    local seconds = data.respawnInSeconds or Config.Death.HospitalAfterSeconds
     setReadyIn(seconds)
 
     screenEffect(true)
@@ -136,7 +98,7 @@ Platform.OnDeath(function(info)
         holdMs = Config.Death.HoldToRespawnMs,
         keyLabel = Platform.GetActionLabel('respawn'),
         cause = WeaponLabel(info.weapon),
-        hits = recentHits(info.bone),
+        killerId = tonumber(data.killerId),
     }, false)
 
     holdLoop()

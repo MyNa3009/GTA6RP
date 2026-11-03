@@ -136,6 +136,7 @@ local function putIn(player)
     local character = player.character
     local wasDead = character.diedAt ~= nil
     character.diedAt = nil
+    character.deathKillerId = nil
     if wasDead then
         Needs.AfterRespawn(player.source)
     end

@@ -1,10 +1,15 @@
-# Core 1.7.5 (Testserver)
+# Core 1.7.6 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.7.5
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. Bewusstlos-Bildschirm: Die Figur mit den Verletzungen ist weg. Rechts steht dafür "Getötet von ID 17", wenn ein Spieler getötet hat. Bei Sturz, Ertrinken oder eigener Schuld fehlt die Zeile. `data/body_gta5.lua` und `Config.Death.HitWindowSeconds` gibt es nicht mehr.
 
 ## Update von 1.7.4
 

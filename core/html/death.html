@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   UI: Bewusstlos-Anzeige
-  CONTRACT_VERSION: 2
+  CONTRACT_VERSION: 3
   Reine Anzeige ohne Maus- und Tastaturfokus. Die Taste liest Lua direkt aus dem Spiel.
 
   EINGEHEND (Server -> UI)
@@ -12,13 +12,13 @@
     holdMs: number,         // so lange muss die Taste gehalten werden
     keyLabel: string,       // z. B. "E"
     cause?: string,         // Todesursache aus data/weapons_gta5.lua, z. B. "Pistole" oder "Sturz"
-    hits?: { head, torso, leftArm, rightArm, leftLeg, rightLeg: number }  // Treffer kurz vor dem Tod
+    killerId?: number       // permanente ID des Spielers, der getoetet hat. Fehlt ohne Spieler (Sturz, eigene Schuld)
   }
   death_update { secondsLeft?: number, holding?: boolean, error?: string }
   death_close  {}
 
   AUSGEHEND (UI -> Server)
-  ui_ready     { ui: "death", version: 2 }
+  ui_ready     { ui: "death", version: 3 }
 
   FEHLERCODES (in death_update.error)
   not_dead, too_early, no_character, server_error, timeout
@@ -53,10 +53,8 @@
   --c-text-muted:  rgb(var(--rgb-ink) / 0.62);
   --c-text-faint:  rgb(var(--rgb-ink) / 0.40);
   --c-title-low:   rgb(var(--rgb-ink) / 0.68);
-  --c-body:        rgb(var(--rgb-ink) / 0.22);
   --c-line:        rgb(var(--rgb-ink) / 0.32);
   --c-signal:      rgb(var(--rgb-signal));
-  --c-signal-soft: rgb(var(--rgb-signal) / 0.55);
   --c-signal-line: rgb(var(--rgb-signal) / 0.7);
   --c-on-signal:   rgb(var(--rgb-ink));
 
@@ -85,7 +83,6 @@
   --text-width: min(560px, 40vw);
   --ecg-width: clamp(60px, 7vw, 170px);
   --ecg-height: clamp(28px, 3vw, 52px);
-  --body-height: clamp(220px, 32vh, 360px);
   --icon-box: clamp(28px, 1.8vw, 36px);
   --btn-height: clamp(42px, 2.6vw, 50px);
   --btn-width: clamp(220px, 15vw, 300px);
@@ -300,48 +297,6 @@ html, body {
   color: var(--c-signal);
 }
 
-/* Links: Figur mit Verletzungen */
-
-.injuries {
-  justify-self: start;
-  display: grid;
-  gap: var(--space-2);
-}
-.injuries__title {
-  margin: 0;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--c-text-muted);
-}
-
-.figure {
-  position: relative;
-  height: var(--body-height);
-  aspect-ratio: 260 / 300;
-}
-.figure svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-
-.zone { fill: var(--c-body); stroke: var(--c-body); }
-.zone--limb { fill: none; stroke-linecap: round; }
-.zone[data-hit] { fill: var(--c-signal-soft); stroke: var(--c-signal-soft); }
-.zone--limb[data-hit] { fill: none; }
-.zone[data-hit="many"] { fill: var(--c-signal); stroke: var(--c-signal); }
-.zone--limb[data-hit="many"] { fill: none; }
-
-.pointer { stroke: var(--c-line); stroke-width: 1; fill: none; }
-.pointer-dot { fill: var(--c-text); }
-
-.tag {
-  position: absolute;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  transform: translateY(-115%);
-  white-space: nowrap;
-}
-.tag__name { font-size: var(--fs-sm); font-weight: 600; text-shadow: var(--shadow-text); }
-.tag__count { font-size: var(--fs-xs); font-weight: 600; color: var(--c-signal); font-variant-numeric: tabular-nums; }
-
 /* Rechts: Ursache und Zeit */
 
 .facts {
@@ -352,6 +307,7 @@ html, body {
   text-align: right;
 }
 .fact { display: grid; gap: var(--space-2); justify-items: end; }
+.fact[hidden] { display: none; }
 .fact dt { font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
 .fact dd {
   display: flex;
@@ -416,22 +372,7 @@ html, body {
   </div>
 
   <div class="stage">
-    <section class="injuries" aria-labelledby="injuries-title">
-      <p class="injuries__title" id="injuries-title"></p>
-      <div class="figure" id="figure">
-        <svg viewBox="0 0 260 300" aria-hidden="true">
-          <!-- Figur von hinten: links ist auch links -->
-          <path class="zone zone--limb" data-zone="leftArm"  d="M40 60 L28 104 L22 148" stroke-width="12"/>
-          <path class="zone zone--limb" data-zone="rightArm" d="M80 60 L92 104 L98 148" stroke-width="12"/>
-          <path class="zone zone--limb" data-zone="leftLeg"  d="M50 164 L46 224 L44 284" stroke-width="15"/>
-          <path class="zone zone--limb" data-zone="rightLeg" d="M70 164 L74 224 L76 284" stroke-width="15"/>
-          <path class="zone" data-zone="torso" d="M44 50 Q60 45 76 50 Q84 54 83 70 L80 122 Q79 152 70 160 L50 160 Q41 152 40 122 L37 70 Q36 54 44 50 Z" stroke-width="2"/>
-          <circle class="zone" data-zone="head" cx="60" cy="26" r="16" stroke-width="2"/>
-          <g id="pointers"></g>
-        </svg>
-        <div id="tags"></div>
-      </div>
-    </section>
+    <div aria-hidden="true"></div>
 
     <section class="center" role="status" aria-live="polite" aria-labelledby="title">
       <div class="headline">
@@ -459,6 +400,10 @@ html, body {
         <dt id="cause-label"></dt>
         <dd><span class="fact__value" id="cause"></span><span class="fact__icon" aria-hidden="true"><svg class="icon icon--line" viewBox="0 0 24 24"><path d="M12 3.5 21.5 20h-19Z"/><path d="M12 10v4.5M12 17.2v.1"/></svg></span></dd>
       </div>
+      <div class="fact" id="killer-row" hidden>
+        <dt id="killer-label"></dt>
+        <dd><span class="fact__value" id="killer"></span><span class="fact__icon" aria-hidden="true"><svg class="icon icon--line" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c1.2-3.6 4.1-5.5 7.5-5.5s6.3 1.9 7.5 5.5"/></svg></span></dd>
+      </div>
       <div class="fact">
         <dt id="time-label"></dt>
         <dd><span class="fact__value" id="time"></span><span class="fact__icon" aria-hidden="true"><svg class="icon icon--line" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span></dd>
@@ -474,7 +419,7 @@ html, body {
 </div>
 
 <script id="bridge">
-const CONTRACT_VERSION = 2;
+const CONTRACT_VERSION = 3;
 
 const Bridge = (() => {
   const handlers = {};
@@ -543,13 +488,10 @@ const TEXT = {
   waitLabel: 'Krankenhaus möglich in',
   readyAfter: 'halten: ins Krankenhaus',
   holding: 'Halten…',
-  injuries: 'Verletzungen',
-  hitCount: (n) => (n === 1 ? '1 Treffer' : `${n} Treffer`),
-  zones: {
-    head: 'Kopf', torso: 'Oberkörper', leftArm: 'Linker Arm', rightArm: 'Rechter Arm', leftLeg: 'Linkes Bein', rightLeg: 'Rechtes Bein',
-  },
   causeLabel: 'Ursache',
   causeUnknown: 'Unbekannt',
+  killerLabel: 'Getötet von',
+  killerValue: (id) => `ID ${id}`,
   timeLabel: 'Zeitpunkt',
   sinceLabel: 'Bewusstlos seit',
   errors: {
@@ -563,19 +505,11 @@ const TEXT = {
 
 const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
 const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
-const ZONES = ['head', 'torso', 'leftArm', 'rightArm', 'leftLeg', 'rightLeg'];
-// Ankerpunkte der Zonen in der Figur (viewBox 260 x 300), Beschriftung rechts daneben
-const ANCHORS = {
-  head: [60, 26], torso: [60, 86], leftArm: [25, 132], rightArm: [95, 112], leftLeg: [45, 232], rightLeg: [75, 262],
-};
-const VIEW = { width: 260, height: 300, tagX: 150 };
-const MANY_HITS = 2;
 const TICK_MS = 250;
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 const DEFAULT_HOLD_MS = 1500;
 const DEFAULT_KEY = 'E';
-const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const state = {
   open: false,
@@ -596,14 +530,12 @@ const el = {
   action: document.getElementById('action'),
   actionLabel: document.getElementById('action-label'),
   error: document.getElementById('error'),
-  injuriesTitle: document.getElementById('injuries-title'),
-  pointers: document.getElementById('pointers'),
-  tags: document.getElementById('tags'),
   cause: document.getElementById('cause'),
+  killerRow: document.getElementById('killer-row'),
+  killer: document.getElementById('killer'),
   time: document.getElementById('time'),
   since: document.getElementById('since'),
   progress: document.getElementById('progress'),
-  zones: Object.fromEntries(ZONES.map((zone) => [zone, document.querySelector(`[data-zone="${zone}"]`)])),
 };
 
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
@@ -632,48 +564,6 @@ function formatDuration(total) {
   const minutes = Math.floor(total / SECONDS_PER_MINUTE);
   const seconds = total % SECONDS_PER_MINUTE;
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
-}
-
-/* ---------- Figur ---------- */
-
-function renderInjuries(hits) {
-  const counts = hits && typeof hits === 'object' ? hits : {};
-  const pointers = [];
-  const tags = [];
-  ZONES.forEach((zone) => {
-    const count = Math.max(0, Math.floor(Number(counts[zone]) || 0));
-    const node = el.zones[zone];
-    if (count === 0) {
-      node.removeAttribute('data-hit');
-      return;
-    }
-    node.dataset.hit = count >= MANY_HITS ? 'many' : 'one';
-    const [x, y] = ANCHORS[zone];
-    const line = document.createElementNS(SVG_NS, 'path');
-    line.setAttribute('class', 'pointer');
-    line.setAttribute('d', `M${x} ${y} H${VIEW.tagX}`);
-    const dot = document.createElementNS(SVG_NS, 'circle');
-    dot.setAttribute('class', 'pointer-dot');
-    dot.setAttribute('cx', String(x));
-    dot.setAttribute('cy', String(y));
-    dot.setAttribute('r', '2.5');
-    pointers.push(line, dot);
-
-    const tag = document.createElement('div');
-    tag.className = 'tag';
-    tag.style.left = `${(VIEW.tagX / VIEW.width) * 100}%`;
-    tag.style.top = `${(y / VIEW.height) * 100}%`;
-    const name = document.createElement('span');
-    name.className = 'tag__name';
-    name.textContent = TEXT.zones[zone];
-    const amount = document.createElement('span');
-    amount.className = 'tag__count';
-    amount.textContent = TEXT.hitCount(count);
-    tag.append(name, amount);
-    tags.push(tag);
-  });
-  el.pointers.replaceChildren(...pointers);
-  el.tags.replaceChildren(...tags);
 }
 
 /* ---------- Anzeige ---------- */
@@ -744,7 +634,9 @@ Bridge.on('death_open', (data) => {
   setText(el.cause, typeof data.cause === 'string' && data.cause ? data.cause : TEXT.causeUnknown);
   el.cause.title = el.cause.textContent;
   setText(el.time, clockFormat.format(new Date(now)));
-  renderInjuries(data.hits);
+  const killerId = Number(data.killerId);
+  el.killerRow.hidden = !(Number.isInteger(killerId) && killerId > 0);
+  setText(el.killer, el.killerRow.hidden ? '' : TEXT.killerValue(killerId));
   render();
   startTick();
 });
@@ -775,7 +667,7 @@ Bridge.on('death_close', () => {
 setText(el.lead, TEXT.lead);
 setText(el.title, TEXT.title);
 setText(el.text, TEXT.text);
-setText(el.injuriesTitle, TEXT.injuries);
+setText(document.getElementById('killer-label'), TEXT.killerLabel);
 setText(document.getElementById('cause-label'), TEXT.causeLabel);
 setText(document.getElementById('time-label'), TEXT.timeLabel);
 setText(document.getElementById('since-label'), TEXT.sinceLabel);
@@ -791,7 +683,7 @@ if (Bridge.platform === 'mock') {
     holdMs: 1500,
     keyLabel: 'E',
     cause: 'Pistole',
-    hits: { head: 0, torso: 1, leftArm: 2, rightArm: 0, leftLeg: 1, rightLeg: 0 },
+    killerId: 17,
   });
   if (location.hash === '#halten') Mock.push('death_update', { holding: true });
 }
