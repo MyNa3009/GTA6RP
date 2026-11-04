@@ -479,7 +479,7 @@ end)
 
 local DOC_CFG = CFG.Documents
 local DOC_COMMAND_TYPES = { ausweis = 'id', personalausweis = 'id', fuehrerschein = 'driver', waffenschein = 'weapon',
-    flugschein = 'pilot', bootsschein = 'boat', angelschein = 'fishing' }
+    flugschein = 'pilot', bootsschein = 'boat', angelschein = 'fishing', dienstausweis = 'service' }
 
 -- Zeigt einer bestimmten Person (Server-ID) das Dokument. Fuer das G-Menue: die Person, auf die man zeigt.
 local function showDocument(docType, target)
@@ -496,7 +496,7 @@ Platform.Export('ShowDocument', showDocument)
 Platform.RegisterClientCommand('zeigen', function(args)
     local docType = DOC_COMMAND_TYPES[(args[1] or ''):lower()]
     if not docType then
-        notify('Benutzung: /zeigen ausweis | fuehrerschein | waffenschein | flugschein | bootsschein | angelschein', 'info')
+        notify('Benutzung: /zeigen ausweis | fuehrerschein | waffenschein | flugschein | bootsschein | angelschein | dienstausweis', 'info')
         return
     end
     local nearest = nil
@@ -527,7 +527,8 @@ Network.On('core_inventory:document', function(data)
             Platform.ReleaseHeadshot(headshot.handle)
             headshot = nil
         end
-        local shot = data.card.type == 'id' and Platform.GetPlayerHeadshot(tonumber(data.from)) or nil
+        -- Jedes Dokument hat ein Foto, wie echte Karten
+        local shot = Platform.GetPlayerHeadshot(tonumber(data.from))
         if token ~= showToken then
             if shot then Platform.ReleaseHeadshot(shot.handle) end
             return

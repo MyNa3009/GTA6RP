@@ -21,6 +21,7 @@ Items = {
     license_pilot   = { label = 'Flugschein',      weight = 0, stack = 1, document = 'pilot',   description = 'Erlaubt das Fliegen.' },
     license_boat    = { label = 'Bootsschein',     weight = 0, stack = 1, document = 'boat',    description = 'Erlaubt das Führen von Booten.' },
     license_fishing = { label = 'Angelschein',     weight = 0, stack = 1, document = 'fishing', description = 'Erlaubt das Angeln.' },
+    service_card    = { label = 'Dienstausweis',   weight = 0, stack = 1, document = 'service', description = 'Weist dich als Mitglied deiner Orga aus.' },
 
     -- Bargeld: wiegt nichts, ein Platz fasst beliebig viel. Die Core bucht ueber exports (AddMoney, RemoveMoney).
     cash     = { label = 'Bargeld', weight = 0, stack = 1000000000000, money = true, description = 'Scheine und Münzen.' },

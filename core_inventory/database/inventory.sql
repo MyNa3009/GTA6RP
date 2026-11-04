@@ -20,8 +20,9 @@ CREATE TABLE IF NOT EXISTS weapon_registry (
 CREATE TABLE IF NOT EXISTS licenses (
     id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     character_id  INT UNSIGNED NOT NULL,
-    type          VARCHAR(16) NOT NULL,                -- driver, weapon, pilot, boat, fishing
+    type          VARCHAR(16) NOT NULL,                -- driver, weapon, pilot, boat, fishing, service
     classes       VARCHAR(32) NULL,                    -- Fuehrerschein: B,C
+    details       VARCHAR(255) NULL,                   -- Dienstausweis: JSON mit Orga, Dienstgrad, Dienstnummer
     issued_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at    TIMESTAMP NULL DEFAULT NULL,
     revoked_at    TIMESTAMP NULL DEFAULT NULL,

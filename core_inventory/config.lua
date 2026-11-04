@@ -46,7 +46,8 @@ Config.Inventory = {
     },
 
     -- Dokumente: eigene Reihe im Inventar, an den Charakter gebunden (nicht ablegen, geben oder wegnehmen).
-    -- Lizenzen laufen nach LicenseDays ab (echte Tage), der Personalausweis nie.
+    -- Lizenzen laufen nach LicenseDays ab (echte Tage), der Personalausweis und der Dienstausweis nie.
+    -- Den Dienstausweis stellt das Orga-Script beim Beitritt aus (exports.core_inventory:IssueServiceCard) und entzieht ihn beim Austritt.
     Documents = {
         Slots = {
             { id = 'doc_id',      item = 'id_card',         label = 'Ausweis' },
@@ -55,6 +56,16 @@ Config.Inventory = {
             { id = 'doc_pilot',   item = 'license_pilot',   label = 'Flugschein' },
             { id = 'doc_boat',    item = 'license_boat',    label = 'Bootsschein' },
             { id = 'doc_fishing', item = 'license_fishing', label = 'Angelschein' },
+            { id = 'doc_service', item = 'service_card',    label = 'Dienstausweis' },
+        },
+        Issuer = 'State of San Andreas',  -- steht oben auf Ausweis und Lizenzen
+        -- Volle Namen bekannter Orgas fuer den Dienstausweis (Kuerzel -> Name). Das Orga-Script kann auch selbst einen Namen schicken.
+        ServiceOrgs = {
+            LSPD = 'Los Santos Police Department',
+            LSSD = 'Los Santos County Sheriff',
+            SAHP = 'San Andreas Highway Patrol',
+            LSMD = 'Los Santos Medical Department',
+            DOJ  = 'Department of Justice',
         },
         LicenseDays = 30,
         DriverClasses = {           -- Klassen des Fuehrerscheins; requires = braucht vorher diese Klasse

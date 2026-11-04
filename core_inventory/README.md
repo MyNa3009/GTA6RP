@@ -1,4 +1,4 @@
-# core_inventory 1.0.2
+# core_inventory 1.1.0
 
 Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in der Hand, Rucksack mit eigenem Inhalt, Schnellzugriff, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`. Eigene Resource, damit man sie neu starten kann, ohne dass alle aus dem Spiel fliegen.
 
@@ -21,6 +21,8 @@ Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in 
 Die Core muss mindestens 1.6.0 sein. Ist sie älter, meldet sich das Inventar beim Start mit "Core ist zu alt" und macht nichts.
 
 **Update von älteren Versionen:** Beide Ordner (`core` und `core_inventory`) ersetzen, Server neu starten. Die neuen Tabellen entstehen beim Start von selbst.
+
+Ab 1.1.0: Neuer **Dienstausweis** (Reihe "Dokumente", siebter Platz). Alle Dokumente sehen aus wie echte Karten im Scheckkartenformat (fiktiver State of San Andreas), mit Foto, Siegel, Unterschrift und Stempel bei abgelaufen oder entzogen. Neue Item-Bilder für alle Dokumente. Die Spalte `licenses.details` legt das Inventar beim Start selbst an.
 
 Ab 1.0.2: Haufen am Boden schicken nur noch Änderungen (neuer Haufen, Haufen weg) statt jedes Mal die ganze Liste. Items in einem Haufen umlegen schickt gar nichts mehr. Wer die Dimension wechselt, bekommt innerhalb von 2 Sekunden die Haufen der neuen Dimension.
 
@@ -96,13 +98,16 @@ Ab 0.5.0 gibt es nur noch 10 Taschenplätze. Beim ersten Einloggen räumt das In
 - Dokumente liegen in einer eigenen Reihe **"Dokumente"** im Fenster. Man kann sie nicht verschieben, ablegen, geben oder stehlen. Weg sind sie nur, wenn eine Behörde sie entzieht.
 - **Personalausweis:** bekommt jeder Charakter beim Start. Er zeigt Foto, Name, Geburtsdatum, Geschlecht und die Ausweisnummer (= permanente ID). Er läuft nie ab.
 - **Lizenzen:** Führerschein (Klasse B für PKW, Klasse C für LKW und Transporter, C braucht B), Waffenschein, Flugschein, Bootsschein, Angelschein. Gültig 30 Tage (`Config.Inventory.Documents.LicenseDays`). Abgelaufene bleiben im Inventar mit "Abgelaufen".
+- **Dienstausweis:** kommt vom Orga-Script beim Beitritt (`IssueServiceCard`, unten). Er zeigt Orga, Dienstgrad, Dienstnummer, Foto und Name und läuft nicht ab. Nochmal ausstellen ändert Dienstgrad oder Orga. Beim Austritt entzieht ihn das Orga-Script: Item weg, im Register "entzogen" mit Grund. Volle Orga-Namen stehen in `Config.Inventory.Documents.ServiceOrgs`.
+- **Aussehen:** Jedes Dokument ist eine Karte im Scheckkartenformat mit Aussteller (`Config.Inventory.Documents.Issuer`, Standard "State of San Andreas"), Foto, kleinem Zweitfoto, Siegel als Wasserzeichen und Unterschrift. Abgelaufene und entzogene Dokumente tragen einen roten Stempel. Der Dienstausweis hat oben ein dunkles Band mit der Orga.
 - **Register:** Tabelle `licenses` ist die Wahrheit. Das Item wird beim Einloggen danach abgeglichen. Entzogen heißt: Item weg, im Register steht "entzogen" mit Grund und wer es war.
-- **Zeigen:** Rechtsklick auf das Dokument, "Zeigen", dann die Person. Nur diese Person sieht die Karte, 10 Sekunden lang rechts am Rand. Vorläufig auch `/zeigen ausweis` (oder `fuehrerschein`, `waffenschein`, `flugschein`, `bootsschein`, `angelschein`) an die nächste Person. Später übernimmt das G-Menü.
+- **Zeigen:** Rechtsklick auf das Dokument, "Zeigen", dann die Person. Nur diese Person sieht die Karte, 10 Sekunden lang rechts am Rand. Vorläufig auch `/zeigen ausweis` (oder `fuehrerschein`, `waffenschein`, `flugschein`, `bootsschein`, `angelschein`, `dienstausweis`) an die nächste Person. Später übernimmt das G-Menü.
 
 | Befehl | Wer | Was |
 |---|---|---|
 | `/givelicense 17 fuehrerschein B` | Admin im Dienst | Lizenz ausstellen oder verlängern. Klasse nur beim Führerschein. |
-| `/revokelicense 17 fuehrerschein C Grund` | Admin im Dienst | Entziehen. Klasse optional: nur C, oder B (nimmt C mit). |
+| `/givelicense 17 dienstausweis LSPD Officer II` | Admin im Dienst | Dienstausweis zum Testen ausstellen. Orga-Kürzel, dann Dienstgrad. |
+| `/revokelicense 17 fuehrerschein C Grund` | Admin im Dienst | Entziehen. Klasse optional: nur C, oder B (nimmt C mit). Auch `dienstausweis`. |
 | `/licenses 17` | Admin im Dienst | Alle Lizenzen mit Stand |
 
 Fahrschule, Amt oder Waffenladen stellen über die Exports aus (unten).
@@ -202,6 +207,16 @@ exports.core_inventory:RevokeLicense(characterId, 'driver', nil, 'Grund', actorA
 exports.core_inventory:HasLicense(characterId, 'driver', 'C')                             -- true, wenn gültig
 exports.core_inventory:GetLicenses(characterId)                                           -- Liste mit Stand
 exports.core_inventory:GetWeaponBySerial('SN-7KQ4-X2MD')                                  -- Register
+
+-- Dienstausweis (Orga-Script): beim Beitritt und bei Befoerderung, beim Austritt entziehen
+exports.core_inventory:IssueServiceCard(characterId, {
+    org = 'LSPD',                            -- Kuerzel, Pflicht
+    label = 'Los Santos Police Department',  -- optional, sonst aus Config ServiceOrgs
+    rank = 'Officer II',                     -- Pflicht
+    number = 'LSPD-482',                     -- optional, sonst die permanente ID
+}, actorAccountId)                                                                        -- true oder false, fehler
+exports.core_inventory:RevokeServiceCard(characterId, 'Aus dem LSPD ausgetreten', actorAccountId)
+exports.core_inventory:HasLicense(characterId, 'service')                                 -- true, solange gültig
 
 -- Lager (Server). Das Script prüft vorher, wer darf.
 exports.core_inventory:OpenStash(source, 'lspd_waffen', {

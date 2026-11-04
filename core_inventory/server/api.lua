@@ -841,6 +841,7 @@ DB.Ready(function()
             { usage = '/removeitem 17 water 1', text = 'Items abnehmen, auch angezogene Kleidung.', permission = 'items.manage' },
             { usage = '/invsee 17', text = 'Inventar ansehen und bearbeiten, auch offline. Jede Änderung wird geloggt.', permission = 'items.manage' },
             { usage = '/givelicense 17 fuehrerschein B', text = 'Lizenz ausstellen: fuehrerschein (B oder C), waffenschein, flugschein, bootsschein, angelschein.', permission = 'items.manage' },
+            { usage = '/givelicense 17 dienstausweis LSPD Officer II', text = 'Dienstausweis zum Testen. Im Betrieb stellt ihn das Orga-Script beim Beitritt aus.', permission = 'items.manage' },
             { usage = '/revokelicense 17 fuehrerschein C Grund', text = 'Lizenz entziehen. Im Register steht sie danach als entzogen.', permission = 'items.manage' },
             { usage = '/licenses 17', text = 'Alle Lizenzen eines Charakters mit Ablaufdatum.', permission = 'items.manage' },
         },

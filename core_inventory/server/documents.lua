@@ -7,12 +7,23 @@
 --   exports.core_inventory:HasLicense(characterId, 'driver', 'C')                       -> true, wenn gueltig
 --   exports.core_inventory:GetLicenses(characterId)                                     -> Liste mit Status
 --   exports.core_inventory:ShowDocument(source, 'id', zielServerId)                     -> true | false, fehler
+--
+-- Orga-Script (beim Beitritt, Befoerderung und Austritt):
+--   exports.core_inventory:IssueServiceCard(characterId, { org = 'LSPD', label = 'Los Santos Police Department',
+--       rank = 'Officer II', number = 'LSPD-482' }, actorAccountId)                       -> true | false, fehler
+--     label ist optional (sonst aus Config.Inventory.Documents.ServiceOrgs), number optional (sonst die permanente ID).
+--     Nochmal aufrufen aendert Dienstgrad oder Orga. Der Dienstausweis laeuft nicht ab.
+--   exports.core_inventory:RevokeServiceCard(characterId, grund, actorAccountId)          -> Item weg, im Register entzogen
+--   exports.core_inventory:HasLicense(characterId, 'service')                            -> true, solange er gilt
 
 Documents = {}
 
 local CORE = 'core'
 local CFG = Config.Inventory.Documents
 local SECONDS_PER_DAY = 86400
+local SERVICE = 'service'
+local SERVICE_TEXT_MAX = 48   -- Orga, Dienstgrad und Dienstnummer werden auf diese Laenge gekuerzt
+local SERVICE_ORG_MAX = 12
 
 local LICENSE_TABLE = [[
     CREATE TABLE IF NOT EXISTS licenses (
@@ -29,9 +40,16 @@ local LICENSE_TABLE = [[
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 ]]
 
+-- Ab 1.1.0: Angaben des Dienstausweises (JSON)
+local DETAILS_COLUMN = 'ALTER TABLE licenses ADD COLUMN IF NOT EXISTS details VARCHAR(255) NULL AFTER classes'
+
 DB.Ready(function()
     if DB.Query(LICENSE_TABLE) == nil then
         Platform.Print('error', 'Tabelle licenses konnte nicht angelegt werden. Bitte database/inventory.sql ausfuehren.')
+        return
+    end
+    if DB.Query(DETAILS_COLUMN) == nil then
+        Platform.Print('error', 'Spalte licenses.details fehlt. Bitte database/inventory.sql ausfuehren.')
     end
 end)
 
@@ -74,7 +92,7 @@ end
 
 local function readRows(characterId)
     local rows = DB.Query([[
-        SELECT type, classes, UNIX_TIMESTAMP(issued_at) AS issued, UNIX_TIMESTAMP(expires_at) AS expires,
+        SELECT type, classes, details, UNIX_TIMESTAMP(issued_at) AS issued, UNIX_TIMESTAMP(expires_at) AS expires,
                UNIX_TIMESTAMP(revoked_at) AS revoked, revoke_reason
         FROM licenses WHERE character_id = ?
     ]], { characterId }) or {}
@@ -90,6 +108,10 @@ local function readRows(characterId)
             revokedAt = tonumber(row.revoked),
             revokeReason = row.revoke_reason,
         }
+        local details = row.details and Platform.JsonDecode(row.details)
+        if type(details) == 'table' then
+            entry.details = details
+        end
         entry.status = statusOf({ revoked = entry.revokedAt, expires = entry.expiresAt }, now)
         list[#list + 1] = entry
     end
@@ -130,7 +152,14 @@ end
 ------------------------------------------------------------------------
 
 local function itemMeta(row)
-    return { classes = #row.classes > 0 and table.concat(row.classes, ',') or nil, expires = row.expiresAt, status = row.status ~= 'valid' and row.status or nil }
+    local details = row.details or {}
+    return {
+        classes = #row.classes > 0 and table.concat(row.classes, ',') or nil,
+        expires = row.expiresAt,
+        status = row.status ~= 'valid' and row.status or nil,
+        org = details.org,
+        rank = details.rank,
+    }
 end
 
 -- Inventar eines Charakters passend zum Register: Ausweis immer, Lizenzen solange nicht entzogen
@@ -174,6 +203,9 @@ function Documents.Issue(characterId, licenseType, class, actorAccountId)
     local info = TYPES[licenseType]
     if not characterId or not info or licenseType == 'id' then
         return false, 'unknown_license'
+    end
+    if licenseType == SERVICE then
+        return false, 'use_service'
     end
     if not Platform.CallExport(CORE, 'GetCharacterAccount', characterId) then
         return false, 'unknown_character'
@@ -261,6 +293,66 @@ function Documents.Revoke(characterId, licenseType, class, reason, actorAccountI
 end
 
 ------------------------------------------------------------------------
+-- Dienstausweis
+------------------------------------------------------------------------
+
+local function cleanText(value, maxLength)
+    if type(value) ~= 'string' and type(value) ~= 'number' then
+        return nil
+    end
+    local text = tostring(value):gsub('[%c]', ''):match('^%s*(.-)%s*$')
+    if text == '' then
+        return nil
+    end
+    return text:sub(1, maxLength)
+end
+
+-- service: { org, label?, rank, number? }. Beitritt und Befoerderung, laeuft nicht ab.
+function Documents.IssueService(characterId, service, actorAccountId)
+    characterId = tonumber(characterId)
+    if not characterId or type(service) ~= 'table' then
+        return false, 'invalid_service'
+    end
+    if not Platform.CallExport(CORE, 'GetCharacterAccount', characterId) then
+        return false, 'unknown_character'
+    end
+    local org = cleanText(service.org, SERVICE_ORG_MAX)
+    local rank = cleanText(service.rank, SERVICE_TEXT_MAX)
+    if not org or not rank then
+        return false, 'invalid_service'
+    end
+    org = org:upper()
+    local details = {
+        org = org,
+        label = cleanText(service.label, SERVICE_TEXT_MAX) or CFG.ServiceOrgs[org] or org,
+        rank = rank,
+        number = cleanText(service.number, SERVICE_TEXT_MAX) or tostring(characterId),
+    }
+    local ok = DB.Update([[
+        INSERT INTO licenses (character_id, type, details, expires_at) VALUES (?, ?, ?, NULL)
+        ON DUPLICATE KEY UPDATE details = VALUES(details), expires_at = NULL, issued_at = CURRENT_TIMESTAMP,
+            revoked_at = NULL, revoked_by = NULL, revoke_reason = NULL
+    ]], { characterId, SERVICE, Platform.JsonEncode(details) })
+    if ok == nil then
+        return false, 'db_error'
+    end
+    InventoryApi_WithCharacter(characterId, function(inv)
+        Documents.Sync(inv, characterId)
+    end)
+    local online = InventoryApi_SourceOf(characterId)
+    if online then
+        Network.SendToClient(online, 'core_inventory:changed', {})
+    end
+    log({ actor_account_id = actorAccountId, account_id = Platform.CallExport(CORE, 'GetCharacterAccount', characterId), character_id = characterId,
+        action = 'service_issue', data = details })
+    return true
+end
+
+function Documents.RevokeService(characterId, reason, actorAccountId)
+    return Documents.Revoke(characterId, SERVICE, nil, cleanText(reason, 255), actorAccountId)
+end
+
+------------------------------------------------------------------------
 -- Zeigen
 ------------------------------------------------------------------------
 
@@ -279,6 +371,7 @@ function Documents.Card(characterId, licenseType)
         dateOfBirth = record.dateOfBirth,
         gender = record.gender,
         number = characterId,
+        issuer = CFG.Issuer,
     }
     if licenseType ~= 'id' then
         local row = findRow(characterId, licenseType)
@@ -286,8 +379,15 @@ function Documents.Card(characterId, licenseType)
             return nil
         end
         card.status = row.status
+        card.issuedAt = row.issuedAt
         card.expiresAt = row.expiresAt
         card.revokedAt = row.revokedAt
+        if licenseType == SERVICE and row.details then
+            card.org = row.details.org
+            card.orgLabel = row.details.label
+            card.rank = row.details.rank
+            card.serviceNumber = row.details.number
+        end
         card.classes = {}
         for _, class in ipairs(row.classes) do
             local def = CFG.DriverClasses[class]
@@ -340,10 +440,14 @@ Platform.Export('RevokeLicense', Documents.Revoke)
 Platform.Export('HasLicense', Documents.Has)
 Platform.Export('GetLicenses', Documents.Licenses)
 Platform.Export('ShowDocument', Documents.Show)
+Platform.Export('IssueServiceCard', Documents.IssueService)
+Platform.Export('RevokeServiceCard', Documents.RevokeService)
 
 -- Fehlertexte fuer Befehle
 local ERRORS = {
-    unknown_license = 'Unbekannte Lizenz. Möglich: fuehrerschein, waffenschein, flugschein, bootsschein, angelschein.',
+    unknown_license = 'Unbekannte Lizenz. Möglich: fuehrerschein, waffenschein, flugschein, bootsschein, angelschein, dienstausweis.',
+    use_service = 'Den Dienstausweis stellt das Orga-Script aus: /givelicense <ID> dienstausweis <Orga> <Dienstgrad>.',
+    invalid_service = 'Beim Dienstausweis Orga und Dienstgrad angeben, z. B. /givelicense 17 dienstausweis LSPD Officer II.',
     unknown_character = 'Diesen Charakter gibt es nicht.',
     unknown_class = 'Beim Führerschein die Klasse angeben: B (PKW) oder C (LKW und Transporter).',
     needs_class = 'Für Klasse C braucht die Person zuerst Klasse B.',
@@ -353,7 +457,7 @@ local ERRORS = {
 Documents.Errors = ERRORS
 
 -- Befehlsnamen auf Deutsch -> Typ
-local COMMAND_TYPES = { fuehrerschein = 'driver', waffenschein = 'weapon', flugschein = 'pilot', bootsschein = 'boat', angelschein = 'fishing' }
+local COMMAND_TYPES = { fuehrerschein = 'driver', waffenschein = 'weapon', flugschein = 'pilot', bootsschein = 'boat', angelschein = 'fishing', dienstausweis = SERVICE }
 
 local function dateText(timestamp)
     return timestamp and os.date('%d.%m.%Y', timestamp) or '-'
@@ -370,7 +474,22 @@ Platform.RegisterCommand('givelicense', function(source, args)
         return
     end
     if not characterId or not licenseType then
-        Platform.Notify(source, 'Benutzung: /givelicense <permanente ID> <fuehrerschein|waffenschein|flugschein|bootsschein|angelschein> [B|C]', 'info')
+        Platform.Notify(source, 'Benutzung: /givelicense <permanente ID> <fuehrerschein|waffenschein|flugschein|bootsschein|angelschein> [B|C] oder /givelicense <ID> dienstausweis <Orga> <Dienstgrad>', 'info')
+        return
+    end
+    -- Dienstausweis zum Testen: /givelicense 17 dienstausweis LSPD Officer II
+    if licenseType == SERVICE then
+        local rank = table.concat(args, ' ', 4)
+        local ok, err = Documents.IssueService(characterId, { org = args[3], rank = rank }, actorAccountId)
+        if not ok then
+            Platform.Notify(source, ERRORS[err] or tostring(err), 'error')
+            return
+        end
+        Platform.Notify(source, ('Dienstausweis (%s, %s) für ID %d ausgestellt.'):format(args[3]:upper(), rank, characterId), 'success')
+        local target = InventoryApi_SourceOf(characterId)
+        if target then
+            Platform.Notify(target, 'Du hast einen Dienstausweis bekommen.', 'success')
+        end
         return
     end
     local ok, err = Documents.Issue(characterId, licenseType, args[3], actorAccountId)
@@ -434,7 +553,11 @@ Platform.RegisterCommand('licenses', function(source, args)
     for _, row in ipairs(rows) do
         local when = row.status == 'revoked' and row.revokedAt or row.expiresAt
         local classes = #row.classes > 0 and (' ' .. table.concat(row.classes, ',')) or ''
-        parts[#parts + 1] = ('%s%s: %s'):format(row.label, classes, STATUS[row.status]:format(dateText(when)))
+        if row.details then
+            classes = (' %s, %s'):format(row.details.org or '?', row.details.rank or '?')
+        end
+        local status = (row.status == 'valid' and not when) and 'gültig' or STATUS[row.status]:format(dateText(when))
+        parts[#parts + 1] = ('%s%s: %s'):format(row.label, classes, status)
     end
     Platform.Notify(source, ('ID %d: %s'):format(characterId, table.concat(parts, ' | ')), 'info')
 end)
