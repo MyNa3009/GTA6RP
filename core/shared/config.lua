@@ -18,7 +18,6 @@ Config.UI = {
         ink    = '232 234 237', -- Text und neutrale Flaechen
         accent = '214 164 72',  -- Hauptaktion, Auswahl
         signal = '220 82 72',   -- Fehler und Warnungen
-        info   = '84 140 220',  -- Hinweise ohne Gefahr, z. B. Twink-Interaktionen im Admin-Menue
     },
     -- So lange bleibt die Erfolgsmeldung nach dem Login sichtbar
     SuccessDelayMs = 900,

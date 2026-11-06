@@ -53,7 +53,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <style>
 :root {
@@ -69,11 +69,11 @@
   --c-sunken:      rgb(var(--rgb-base) / 0.35);
   --c-surface:     rgb(var(--rgb-ink) / 0.05);
   --c-surface-hi:  rgb(var(--rgb-ink) / 0.09);
-  --c-border:      rgb(var(--rgb-ink) / 0.12);
-  --c-border-hi:   rgb(var(--rgb-ink) / 0.24);
+  --c-border:      rgb(var(--rgb-ink) / 0.10);
+  --c-border-hi:   rgb(var(--rgb-ink) / 0.20);
   --c-text:        rgb(var(--rgb-ink) / 0.94);
-  --c-text-muted:  rgb(var(--rgb-ink) / 0.62);
-  --c-text-faint:  rgb(var(--rgb-ink) / 0.42);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
   --c-accent:      rgb(var(--rgb-accent));
   --c-accent-soft: rgb(var(--rgb-accent) / 0.16);
   --c-accent-line: rgb(var(--rgb-accent) / 0.55);
@@ -104,7 +104,7 @@
   --sheet-width: clamp(760px, 60vw, 1160px);
   --sheet-min-height: clamp(480px, 56vh, 680px);
   --sheet-pad: clamp(var(--space-6), 3vw, var(--space-8));
-  --field-height: clamp(42px, 2.4vw, 48px);
+  --field-height: clamp(44px, 2.4vw, 48px);
   --icon-size: 20px;
   --text-max: 52ch;
 }
@@ -190,7 +190,7 @@ button, input { font: inherit; color: inherit; }
   margin: 0;
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -244,11 +244,11 @@ button, input { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 .char__name { font-size: var(--fs-md); font-weight: 600; }
-.char__meta { font-size: var(--fs-xs); color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+.char__meta { font-size: var(--fs-xs); color: var(--c-text-2); font-variant-numeric: tabular-nums; }
 
 .char--banned .char__meta { color: var(--c-signal); font-weight: 600; }
 
-.char--new { color: var(--c-text-muted); }
+.char--new { color: var(--c-text-2); }
 .char--new:hover:not(:disabled) { color: var(--c-text); }
 
 .aside__foot {
@@ -273,7 +273,7 @@ button, input { font: inherit; color: inherit; }
   margin: 0 0 var(--space-2);
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-faint);
+  color: var(--c-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -291,7 +291,7 @@ button, input { font: inherit; color: inherit; }
   max-width: var(--text-max);
   font-size: var(--fs-md);
   line-height: 1.55;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
 }
 
 .facts {
@@ -308,7 +308,7 @@ button, input { font: inherit; color: inherit; }
   margin-bottom: var(--space-1);
   font-size: var(--fs-xs);
   font-weight: 500;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
 }
 .fact dd {
   margin: 0;
@@ -362,7 +362,7 @@ button, input { font: inherit; color: inherit; }
   color-scheme: dark;
   transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
 }
-.input::placeholder { color: var(--c-text-faint); }
+.input::placeholder { color: var(--c-text-muted); }
 .input:hover { border-color: var(--c-border-hi); }
 .input:focus-visible {
   outline: none;
@@ -401,7 +401,7 @@ legend.field__label { margin-bottom: var(--space-2); }
   border-radius: calc(var(--radius-md) - var(--space-1));
   font-size: var(--fs-sm);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .seg:hover span { color: var(--c-text); }
@@ -413,7 +413,7 @@ legend.field__label { margin-bottom: var(--space-2); }
   font-size: var(--fs-xs);
   line-height: 1.45;
 }
-.field__hint { color: var(--c-text-faint); }
+.field__hint { color: var(--c-text-muted); }
 .field__error { color: var(--c-signal); font-weight: 500; }
 .field__error:empty { display: none; }
 
@@ -472,7 +472,7 @@ legend.field__label { margin-bottom: var(--space-2); }
   padding: var(--space-2) 0;
   font-size: var(--fs-sm);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
 }

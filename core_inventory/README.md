@@ -1,4 +1,4 @@
-# core_inventory 1.1.0
+# core_inventory 1.1.1
 
 Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in der Hand, Rucksack mit eigenem Inhalt, Schnellzugriff, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`. Eigene Resource, damit man sie neu starten kann, ohne dass alle aus dem Spiel fliegen.
 
@@ -21,6 +21,8 @@ Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in 
 Die Core muss mindestens 1.6.0 sein. Ist sie älter, meldet sich das Inventar beim Start mit "Core ist zu alt" und macht nichts.
 
 **Update von älteren Versionen:** Beide Ordner (`core` und `core_inventory`) ersetzen, Server neu starten. Die neuen Tabellen entstehen beim Start von selbst.
+
+Ab 1.1.1: Überschriften im Fenster in normaler Schreibweise ("Taschen" statt "TASCHEN"), Gewicht in "kg", lesbarere Grautöne.
 
 Ab 1.1.0: Neuer **Dienstausweis** (Reihe "Dokumente", siebter Platz). Alle Dokumente sehen aus wie echte Karten im Scheckkartenformat (fiktiver State of San Andreas), mit Foto, Siegel, Unterschrift und Stempel bei abgelaufen oder entzogen. Neue Item-Bilder für alle Dokumente. Die Spalte `licenses.details` legt das Inventar beim Start selbst an.
 

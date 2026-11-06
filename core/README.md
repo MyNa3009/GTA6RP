@@ -1,10 +1,18 @@
-# Core 1.7.7 (Testserver)
+# Core 1.7.8 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.7.7
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. Admin-Menü fast im Vollbild (bis 2200 × 1300 px). Hinweise zur Person (aktive Strafen, neuer PC, verknüpfte Logins, Twinks) stehen ab 1600 px Breite in einer eigenen Spalte rechts statt über den Reitern. Ohne Hinweise nutzt die Akte die ganze Breite.
+3. Tickets: Das Admin-Fenster wächst mit dem Bildschirm, das Spieler-Fenster ist etwas größer.
+4. Alle UIs: lesbarere Grautöne, kein Gewicht 800 mehr, Abstände auf dem 4px-Raster, feinere Ränder in der Charakterauswahl, größere Symbole bei Hunger und Durst.
+5. Die Farbe `info` (Blau) gibt es nicht mehr. Wer `Config.UI.Colors` angepasst hat, kann die Zeile löschen, sie wird ignoriert.
 
 ## Update von 1.7.6
 

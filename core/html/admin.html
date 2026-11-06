@@ -6,7 +6,7 @@
 
   EINGEHEND (Server -> UI)
   admin_open  {
-    colors: { base: string, ink: string, accent: string, signal: string, info: string },  // RGB-Kanaele
+    colors: { base: string, ink: string, accent: string, signal: string },  // RGB-Kanaele
     currency: string, serverName: string,
     self: Self, players: OnlinePlayer[]
   }
@@ -91,7 +91,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <style>
 :root {
@@ -100,7 +100,6 @@
   --rgb-ink:    232 234 237;
   --rgb-accent: 214 164 72;
   --rgb-signal: 220 82 72;
-  --rgb-info:   84 140 220;  /* nur fuer Hinweise ohne Gefahr (Twinks) */
 
   --c-bg:          rgb(var(--rgb-base) / 0.97);
   --c-scrim:       rgb(var(--rgb-base) / 0.45);
@@ -110,8 +109,8 @@
   --c-border:      rgb(var(--rgb-ink) / 0.10);
   --c-border-hi:   rgb(var(--rgb-ink) / 0.22);
   --c-text:        rgb(var(--rgb-ink) / 0.94);
-  --c-text-muted:  rgb(var(--rgb-ink) / 0.62);
-  --c-text-faint:  rgb(var(--rgb-ink) / 0.42);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
   --c-accent:      rgb(var(--rgb-accent));
   --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
   --c-accent-line: rgb(var(--rgb-accent) / 0.5);
@@ -119,9 +118,6 @@
   --c-signal:      rgb(var(--rgb-signal));
   --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
   --c-signal-line: rgb(var(--rgb-signal) / 0.45);
-  --c-info:        rgb(var(--rgb-info));
-  --c-info-soft:   rgb(var(--rgb-info) / 0.14);
-  --c-info-line:   rgb(var(--rgb-info) / 0.5);
 
   --shadow-panel: 0 20px 60px rgb(var(--rgb-base) / 0.6);
 
@@ -141,15 +137,16 @@
 
   --z-overlay: 10; --z-sticky: 2;
 
-  --panel-width: min(1440px, 94vw);
-  --panel-height: min(880px, 90vh);
+  --panel-width: min(96vw, 2200px);
+  --panel-height: min(94vh, 1300px);
+  --side-width: clamp(320px, 22vw, 460px);
   --sidebar-width: clamp(280px, 22vw, 360px);
-  --control-height: clamp(36px, 2vw, 42px);
+  --control-height: clamp(36px, 2vw, 44px);
   --icon-size: 20px;
   --dot-size: 8px;
   --label-width: clamp(90px, 7vw, 130px);
   --short-input: clamp(110px, 8vw, 150px);
-  --stripe-gap: 10px;
+  --stripe-gap: 12px;
   --notices-max: 52%;
   --cmd-usage-width: clamp(170px, 14vw, 260px);
   --cmd-rank-width: clamp(80px, 6vw, 110px);
@@ -210,7 +207,7 @@ button, input { font: inherit; color: inherit; }
 }
 
 .topbar__title { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
-.topbar__server { font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-muted); }
+.topbar__server { font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-2); }
 .topbar__spacer { flex: 1; }
 
 .chip {
@@ -222,7 +219,7 @@ button, input { font: inherit; color: inherit; }
   border-radius: var(--radius-full);
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   white-space: nowrap;
 }
 .chip[hidden] { display: none; }
@@ -274,7 +271,7 @@ button, input { font: inherit; color: inherit; }
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
@@ -319,7 +316,7 @@ button, input { font: inherit; color: inherit; }
   font-weight: 500;
   transition: border-color var(--dur-fast) var(--ease-out);
 }
-.input::placeholder { color: var(--c-text-faint); }
+.input::placeholder { color: var(--c-text-muted); }
 .input:hover { border-color: var(--c-border-hi); }
 .input:focus-visible { outline: none; border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft); }
 
@@ -344,7 +341,7 @@ button, input { font: inherit; color: inherit; }
   background: transparent;
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
@@ -368,7 +365,7 @@ button, input { font: inherit; color: inherit; }
   padding: var(--space-3) var(--space-4) var(--space-2);
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
 }
 
 .link {
@@ -377,7 +374,7 @@ button, input { font: inherit; color: inherit; }
   padding: 0;
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   cursor: pointer;
 }
 .link:hover { color: var(--c-text); }
@@ -415,7 +412,7 @@ button, input { font: inherit; color: inherit; }
 .player__text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .player__name, .player__meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player__name { font-size: var(--fs-sm); font-weight: 600; }
-.player__meta { font-size: var(--fs-xs); color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+.player__meta { font-size: var(--fs-xs); color: var(--c-text-2); font-variant-numeric: tabular-nums; }
 .player__duty { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-xs); font-weight: 600; color: var(--c-signal); }
 
 .player__badges { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
@@ -445,11 +442,13 @@ button, input { font: inherit; color: inherit; }
 
 /* Hinweise, Formular und Warnungen ueber den Tabs. Bei wenig Hoehe scrollen sie selbst, die Tabs bleiben sichtbar. */
 .notices { flex: 0 1 auto; min-height: 0; max-height: var(--notices-max); overflow-y: auto; }
-.warning__meta { color: var(--c-text-muted); font-size: var(--fs-xs); }
+.warning__meta { color: var(--c-text-2); font-size: var(--fs-xs); }
 
 .links { margin-top: var(--space-6); }
 .links__title { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; }
 .links .warning { margin: 0 0 var(--space-2); }
+/* In der Uebersicht neutral: die Warnung selbst steht schon rechts unter Hinweise */
+.links .warning:not(.warning--off) { border-color: var(--c-border); background: var(--c-surface); }
 
 .key-reveal {
   display: flex;
@@ -471,17 +470,15 @@ button, input { font: inherit; color: inherit; }
   user-select: all;
   overflow-wrap: anywhere;
 }
-.key-reveal__hint { flex-basis: 100%; margin: 0; font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
+.key-reveal__hint { flex-basis: 100%; margin: 0; font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-2); }
 .warning--off { border-color: var(--c-border); background: var(--c-surface); }
-.warning--info { border-color: var(--c-info-line); background: var(--c-info-soft); }
-.warning--info .warning__title { color: var(--c-info); }
-.player__twink { font-size: var(--fs-xs); font-weight: 700; color: var(--c-info); }
+.player__twink { font-size: var(--fs-xs); font-weight: 700; color: var(--c-text-2); }
 
 .empty {
   margin: 0;
   padding: var(--space-5) var(--space-4);
   font-size: var(--fs-sm);
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   line-height: 1.5;
 }
 .empty[hidden] { display: none; }
@@ -500,7 +497,7 @@ button, input { font: inherit; color: inherit; }
   max-width: 40ch;
   text-align: center;
   font-size: var(--fs-md);
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   line-height: 1.55;
 }
 .placeholder[hidden] { display: none; }
@@ -534,19 +531,61 @@ button, input { font: inherit; color: inherit; }
 .commands__title { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
 .commands__filter { max-width: clamp(220px, 18vw, 320px); margin-left: auto; }
 .commands__body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--space-5) var(--space-5); }
-.commands__empty { margin: var(--space-5) 0; font-size: var(--fs-sm); color: var(--c-text-muted); }
+.commands__empty { margin: var(--space-5) 0; font-size: var(--fs-sm); color: var(--c-text-2); }
 .commands__empty[hidden] { display: none; }
 .cmd-table { width: 100%; margin-top: var(--space-5); border-collapse: collapse; table-layout: fixed; }
 .cmd-table caption { text-align: left; padding-bottom: var(--space-2); }
 .cmd-table__title { display: block; font-size: var(--fs-sm); font-weight: 700; }
-.cmd-table__hint { display: block; margin-top: var(--space-1); font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
+.cmd-table__hint { display: block; margin-top: var(--space-1); font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-2); }
 .cmd-table td { padding: var(--space-2) var(--space-4) var(--space-2) 0; border-top: 1px solid var(--c-border); vertical-align: baseline; font-size: var(--fs-sm); line-height: 1.45; overflow-wrap: anywhere; }
 .cmd-usage { width: var(--cmd-usage-width); font-weight: 600; font-variant-numeric: tabular-nums; }
-.cmd-text { color: var(--c-text-muted); }
-.cmd-rank { width: var(--cmd-rank-width); padding-right: 0; text-align: right; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-faint); }
+.cmd-text { color: var(--c-text-2); }
+.cmd-rank { width: var(--cmd-rank-width); padding-right: 0; text-align: right; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
 
-.profile { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.profile {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  grid-template-areas: "head" "notices" "side" "tabs" "content";
+}
 .profile[hidden] { display: none; }
+.profile__head { grid-area: head; }
+.notices { grid-area: notices; }
+.tabs { grid-area: tabs; }
+.content { grid-area: content; }
+
+/* Hinweise zur Person: schmal ueber den Reitern, auf breiten Bildschirmen als eigene Spalte rechts.
+   Ohne Hinweise gibt es die Spalte nicht, die Akte nutzt dann die ganze Breite. */
+.profile__side {
+  grid-area: side;
+  min-height: 0;
+  max-height: var(--notices-max);
+  overflow-y: auto;
+  padding: 0 var(--space-6) var(--space-3);
+}
+.profile__side[hidden] { display: none; }
+.side__title { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; display: flex; gap: var(--space-2); align-items: baseline; }
+.side__count { font-size: var(--fs-sm); font-weight: 600; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+.profile__side .warning { margin: 0 0 var(--space-3); border-color: var(--c-border); background: var(--c-surface); }
+.profile__side .warning__title { display: flex; align-items: center; gap: var(--space-2); color: var(--c-signal); }
+.profile__side .warning__title::before { content: ''; width: var(--space-2); height: var(--space-2); flex: none; border-radius: 50%; background: currentColor; }
+.profile__side .warning--note .warning__title { color: var(--c-text); }
+.profile__side .warning--note .warning__title::before { background: var(--c-text-muted); }
+
+@media (min-width: 1600px) {
+  .profile[data-side] {
+    grid-template-columns: minmax(0, 1fr) var(--side-width);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-areas: "head side" "notices side" "tabs side" "content side";
+  }
+  .profile[data-side] .profile__side {
+    max-height: none;
+    padding: var(--space-5);
+    border-left: 1px solid var(--c-border);
+  }
+}
 
 .profile__head {
   display: flex;
@@ -558,11 +597,11 @@ button, input { font: inherit; color: inherit; }
 }
 
 .profile__title { margin: 0 0 var(--space-1); font-size: var(--fs-xl); font-weight: 700; overflow-wrap: anywhere; }
-.profile__meta { margin: 0; font-size: var(--fs-sm); color: var(--c-text-muted); font-variant-numeric: tabular-nums; display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center; }
+.profile__meta { margin: 0; font-size: var(--fs-sm); color: var(--c-text-2); font-variant-numeric: tabular-nums; display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center; }
 .status-online { color: var(--c-text); font-weight: 600; }
 
 .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
-.actions__hint { font-size: var(--fs-xs); color: var(--c-text-muted); }
+.actions__hint { font-size: var(--fs-xs); color: var(--c-text-2); }
 .actions__hint[hidden] { display: none; }
 
 .message {
@@ -594,7 +633,7 @@ button, input { font: inherit; color: inherit; }
   background: transparent;
   font-size: var(--fs-sm);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   cursor: pointer;
   white-space: nowrap;
   transition: color var(--dur-fast) var(--ease-out);
@@ -637,9 +676,9 @@ button, input { font: inherit; color: inherit; }
   gap: var(--space-5);
 }
 .fact { min-width: 0; }
-.fact dt { margin-bottom: var(--space-1); font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
+.fact dt { margin-bottom: var(--space-1); font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-2); }
 .fact dd { margin: 0; font-size: var(--fs-md); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.fact__sub { display: block; font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
+.fact__sub { display: block; font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-2); }
 
 /* ---------- Tabellen ---------- */
 
@@ -658,7 +697,7 @@ button, input { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--c-border);
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   text-align: left;
   white-space: nowrap;
 }
@@ -672,7 +711,7 @@ button, input { font: inherit; color: inherit; }
 .num { text-align: right; white-space: nowrap; }
 .table th.num { text-align: right; }
 .nowrap { white-space: nowrap; }
-.muted { color: var(--c-text-muted); }
+.muted { color: var(--c-text-2); }
 .minus { color: var(--c-signal); font-weight: 600; }
 .plus { font-weight: 600; }
 .tag {
@@ -682,12 +721,12 @@ button, input { font: inherit; color: inherit; }
   background: var(--c-surface-hi);
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
 }
 .tag--danger { background: var(--c-signal-soft); color: var(--c-text); }
 .tag--active { background: var(--c-accent-soft); color: var(--c-text); }
 .action-name { font-weight: 600; }
-.detail { color: var(--c-text-muted); font-size: var(--fs-xs); line-height: 1.5; }
+.detail { color: var(--c-text-2); font-size: var(--fs-xs); line-height: 1.5; }
 
 .skeleton-row td { height: calc(var(--space-6) + var(--space-1)); }
 .skeleton {
@@ -718,11 +757,11 @@ button, input { font: inherit; color: inherit; }
 }
 .punish[hidden] { display: none; }
 .punish__title { margin: 0; font-size: var(--fs-md); font-weight: 700; }
-.punish__sub { margin: var(--space-1) 0 0; font-size: var(--fs-xs); color: var(--c-text-muted); overflow-wrap: anywhere; }
+.punish__sub { margin: var(--space-1) 0 0; font-size: var(--fs-xs); color: var(--c-text-2); overflow-wrap: anywhere; }
 .punish__sub:empty { display: none; }
 .punish__row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); gap: var(--space-3); align-items: center; }
 .punish__row[hidden] { display: none; }
-.punish__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+.punish__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
 .punish__controls { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; min-width: 0; }
 .punish__error { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--c-signal); }
 .punish__error:empty { display: none; }
@@ -739,7 +778,7 @@ button, input { font: inherit; color: inherit; }
   background: var(--c-surface);
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-muted);
+  color: var(--c-text-2);
   cursor: pointer;
   white-space: nowrap;
   transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
@@ -750,7 +789,7 @@ button, input { font: inherit; color: inherit; }
 .choice[aria-pressed="true"] { background: var(--c-signal-soft); border-color: var(--c-signal); color: var(--c-text); }
 
 .player__jail { font-size: var(--fs-xs); font-weight: 700; color: var(--c-accent); }
-.player__dim { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+.player__dim { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); font-variant-numeric: tabular-nums; }
 
 .section-title { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; }
 .section-title + .empty { padding-top: 0; }
@@ -881,6 +920,10 @@ button, input { font: inherit; color: inherit; }
             </div>
           </form>
 
+          </div>
+
+          <aside class="profile__side" id="profile-side" hidden aria-labelledby="side-title">
+            <h3 class="side__title" id="side-title"><span id="side-title-text"></span><span class="side__count" id="side-count"></span></h3>
           <section class="warning" id="punish-status" hidden aria-labelledby="punish-status-title">
             <p class="warning__title" id="punish-status-title"></p>
             <div class="warning__rows" id="punish-status-rows"></div>
@@ -891,7 +934,7 @@ button, input { font: inherit; color: inherit; }
             <div class="warning__rows" id="device-warning-rows"></div>
           </section>
 
-          <section class="warning warning--info" id="twinks" hidden aria-labelledby="twinks-title">
+          <section class="warning warning--note" id="twinks" hidden aria-labelledby="twinks-title">
             <p class="warning__title" id="twinks-title"></p>
             <div class="warning__rows" id="twinks-rows"></div>
           </section>
@@ -900,7 +943,7 @@ button, input { font: inherit; color: inherit; }
             <p class="warning__title" id="warning-title"></p>
             <div class="warning__rows" id="warning-rows"></div>
           </section>
-          </div>
+          </aside>
 
           <nav class="tabs" role="tablist" id="tabs" aria-label="Bereiche der Akte"></nav>
 
@@ -1431,6 +1474,7 @@ const TEXT = {
   multiRestore: 'Wieder anzeigen',
   multiDismissed: (by, at) => `Ausgeblendet${by ? ` von ${by}` : ''} am ${at}`,
   linksTitle: 'Verknüpfte Logins',
+  sideTitle: 'Hinweise',
   adminKey: {
     title: 'Admin-Key',
     exists: 'Key vorhanden',
@@ -1560,7 +1604,7 @@ const TEXT = {
 };
 
 const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
-const COLOR_KEYS = ['base', 'ink', 'accent', 'signal', 'info'];
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
 const TAB_KEYS = ['overview', 'characters', 'punishments', 'inventory', 'twink', 'money', 'item', 'death', 'connection', 'account', 'admin', 'security', 'all'];
 const LOG_TABS = new Set(['twink', 'money', 'item', 'death', 'connection', 'account', 'admin', 'security', 'all']);
 // Inventar nur, wenn core_inventory laeuft
@@ -1633,6 +1677,7 @@ const el = {
   deviceWarning: $('device-warning'), deviceWarningTitle: $('device-warning-title'), deviceWarningRows: $('device-warning-rows'),
   twinks: $('twinks'), twinksTitle: $('twinks-title'), twinksRows: $('twinks-rows'),
   punishStatus: $('punish-status'), punishStatusTitle: $('punish-status-title'), punishStatusRows: $('punish-status-rows'),
+  profileSide: $('profile-side'), sideTitle: $('side-title-text'), sideCount: $('side-count'),
 };
 
 /* ---------- Hilfen ---------- */
@@ -2090,6 +2135,16 @@ function twinkLine(entry) {
   return row;
 }
 
+// Spalte Hinweise nur, wenn es etwas zu sagen gibt
+function renderSide() {
+  const boxes = [el.punishStatus, el.deviceWarning, el.warning, el.twinks];
+  const visible = boxes.filter((box) => !box.hidden).length;
+  el.profileSide.hidden = visible === 0;
+  if (visible > 0) el.profile.dataset.side = ''; else delete el.profile.dataset.side;
+  setText(el.sideTitle, TEXT.sideTitle);
+  setText(el.sideCount, String(visible));
+}
+
 function renderTwinks() {
   const twinks = (state.profile && state.profile.twinks) || { total: 0, recent: [] };
   el.twinks.hidden = twinks.total === 0;
@@ -2104,6 +2159,7 @@ async function setDeviceAlert(alertId, dismissed) {
   if (!state.profile || state.busy) return;
   state.busy = 'device';
   renderDeviceWarning();
+  renderSide();
   const result = await Bridge.send('admin_device_alert', { accountId: state.profile.account.id, alertId, dismissed });
   state.busy = null;
   if (result && result.ok && result.data) {
@@ -2121,6 +2177,7 @@ async function setLink(otherAccountId, dismissed) {
   if (!state.profile || state.busy) return;
   state.busy = 'link';
   renderWarning();
+  renderSide();
   const result = await Bridge.send('admin_link', { accountId: state.profile.account.id, otherAccountId, dismissed });
   state.busy = null;
   if (result && result.ok && result.data) {
@@ -3087,6 +3144,7 @@ function render() {
     renderDeviceWarning();
     renderWarning();
     renderTwinks();
+    renderSide();
     renderTabs();
     renderContent();
   }
@@ -3481,7 +3539,7 @@ Bridge.send('ui_ready', { ui: 'admin', version: CONTRACT_VERSION });
 if (Bridge.platform === 'mock') {
   // Im Browser: vier Spieler, Akte von ID 12 mit Beispiel-Einträgen. Aktionen gehen erst nach "Admin-Dienst starten".
   Mock.push('admin_open', {
-    colors: { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72', info: '84 140 220' },
+    colors: { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72' },
     currency: 'USD', serverName: 'Testserver', self: Mock.self, players: Mock.players, warningCount: 3,
     ticketsOpen: 2,
     // Befehlsliste aus der Core, Ansicht eines Junior Administrators

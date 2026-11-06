@@ -42,8 +42,8 @@
   --c-border:      rgb(var(--rgb-ink) / 0.10);
   --c-border-hi:   rgb(var(--rgb-ink) / 0.22);
   --c-text:        rgb(var(--rgb-ink) / 0.94);
-  --c-text-muted:  rgb(var(--rgb-ink) / 0.62);
-  --c-text-faint:  rgb(var(--rgb-ink) / 0.42);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
   --c-accent:      rgb(var(--rgb-accent));
   --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
   --c-on-accent:   rgb(var(--rgb-base));
@@ -69,7 +69,7 @@
   --z-overlay: 10;
 
   --panel-width: min(440px, 92vw);
-  --control-height: clamp(40px, 2.2vw, 46px);
+  --control-height: clamp(40px, 2.2vw, 48px);
   --key-spacing: 0.12em;
 }
 
@@ -115,10 +115,10 @@ button, input { font: inherit; color: inherit; }
 }
 
 .title { margin: 0; font-size: var(--fs-lg); font-weight: 700; text-wrap: balance; }
-.sub { margin: var(--space-1) 0 0; font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-muted); line-height: 1.45; }
+.sub { margin: var(--space-1) 0 0; font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-2); line-height: 1.45; }
 
 .field { display: grid; gap: var(--space-2); }
-.label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+.label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
 
 .input-row { display: flex; gap: var(--space-2); }
 
@@ -137,7 +137,7 @@ button, input { font: inherit; color: inherit; }
   text-transform: uppercase;
   transition: border-color var(--dur-fast) var(--ease-out);
 }
-.input::placeholder { color: var(--c-text-faint); letter-spacing: normal; text-transform: none; font-weight: 500; }
+.input::placeholder { color: var(--c-text-muted); letter-spacing: normal; text-transform: none; font-weight: 500; }
 .input:hover:not(:disabled) { border-color: var(--c-border-hi); }
 .input:focus-visible { outline: none; border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft); }
 .input[aria-invalid="true"] { border-color: var(--c-signal-line); }
@@ -170,7 +170,7 @@ button, input { font: inherit; color: inherit; }
 .btn--primary { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); }
 .btn--primary:hover:not(:disabled) { background: var(--c-accent); border-color: transparent; opacity: 0.9; }
 
-.hint { margin: 0; padding-top: var(--space-3); border-top: 1px solid var(--c-border); font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-faint); line-height: 1.45; }
+.hint { margin: 0; padding-top: var(--space-3); border-top: 1px solid var(--c-border); font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); line-height: 1.45; }
 
 @media (prefers-reduced-motion: reduce) {
   .panel { animation: none; }
