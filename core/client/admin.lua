@@ -9,6 +9,58 @@ local ERROR_TEXT = {
 
 local isOpen = false
 
+local LOOK_ERROR_TEXT = {
+    no_permission = 'Dafür hast du keine Rechte.',
+    duty_required = 'Das geht nur im Admin-Dienst. Starte ihn mit /aduty.',
+    invalid_input = 'Ungültiger Wert.',
+    not_logged_in = 'Du bist nicht eingeloggt.',
+    timeout = 'Der Server antwortet nicht.',
+}
+
+local LOOK_USAGE = 'Benutzung: /admin tarnung | /admin tag an|aus | /admin alpha 0-255 | /admin reset'
+
+-- /admin <tarnung|tag|alpha|reset>: Aussehen im Admin-Dienst. Ohne Argument oeffnet sich das Menue.
+-- Gibt true zurueck, wenn die Eingabe eine Optik-Einstellung war.
+local function changeLook(args)
+    local what = tostring(args[1] or ''):lower()
+    local request
+    if what == 'tarnung' or what == 'tarn' then
+        -- Wie ein normaler Spieler: kein roter Admin-Tag, nicht durchsichtig
+        request = { tag = false, alpha = 255 }
+    elseif what == 'tag' then
+        local value = tostring(args[2] or ''):lower()
+        if value == 'an' or value == 'on' then
+            request = { tag = true }
+        elseif value == 'aus' or value == 'off' then
+            request = { tag = false }
+        else
+            Notify.Show(LOOK_USAGE, 'info')
+            return true
+        end
+    elseif what == 'alpha' then
+        local alpha = tonumber(args[2])
+        if not alpha or alpha < 0 or alpha > 255 then
+            Notify.Show('Alpha ist eine Zahl von 0 (unsichtbar) bis 255 (normal). ' .. LOOK_USAGE, 'info')
+            return true
+        end
+        request = { alpha = math.floor(alpha) }
+    elseif what == 'reset' then
+        request = { reset = true }
+    else
+        return false
+    end
+
+    local result = Network.Call('admin_look', request)
+    if not result or not result.ok then
+        local code = result and result.error or 'timeout'
+        Notify.Show(LOOK_ERROR_TEXT[code] or ('Nicht möglich: ' .. tostring(code)), 'error')
+        return true
+    end
+    local look = result.data
+    Notify.Show(('Dienst-Optik: Admin-Tag %s, Durchsichtigkeit %d (255 = normal).'):format(look.tag and 'an' or 'aus', look.alpha), 'success')
+    return true
+end
+
 local function open()
     if isOpen then
         return
@@ -44,7 +96,12 @@ local function close()
 end
 
 Platform.RegisterKeyCommand('adminmenu', 'Admin-Menü öffnen', Config.Admin.OpenKey, open)
-Platform.RegisterKeyCommand('admin', 'Admin-Menü öffnen', nil, open)
+Platform.RegisterKeyCommand('admin', 'Admin-Menü öffnen oder Dienst-Optik ändern', nil, function(args)
+    if type(args) == 'table' and #args > 0 and changeLook(args) then
+        return
+    end
+    open()
+end)
 
 Platform.UiOn('admin_close', function()
     close()

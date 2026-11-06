@@ -1,10 +1,18 @@
-# Core 1.7.8 (Testserver)
+# Core 1.7.9 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.7.8
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. Im Admin-Dienst bist du unsterblich: Die Unverwundbarkeit wird laufend neu gesetzt (Ped und Spieler) und hält auch nach Beobachten, Wiederbeleben oder Sperren. Hunger und Durst machen im Dienst keinen Schaden.
+3. Noclip: Ohne Tastendruck bleibst du genau an deiner Position. Schwerkraft, Geschwindigkeit und Einfrieren werden jeden Frame erzwungen, damit man nicht nach ein paar Sekunden nach unten driftet.
+4. Neu: Das Aussehen im Dienst lässt sich mit `/admin` einstellen (Recht `admin.duty`, nur im Dienst, wird mit Dienstende nicht zurückgesetzt, aber beim Ausloggen). `/admin tarnung` wie ein normaler Spieler (kein roter Tag, nicht durchsichtig), `/admin tag an|aus`, `/admin alpha 0-255`, `/admin reset`. `/admin` ohne Wort öffnet weiter das Menü. Jede Änderung steht im Log (`duty_look`).
+5. Login und Charakterauswahl: Beim ersten Join fehlte manchmal die Maus, weil das Schließen des Ladebildschirms den Fokus weggenommen hat. Solange ein Menü offen ist, wird der Fokus jetzt neu gesetzt, falls er verloren geht.
 
 ## Update von 1.7.7
 
@@ -248,7 +256,7 @@ ensure core
 | Fünfmal falscher Key | 15 Minuten gesperrt, Meldung an alle mit `admin.keys`, Einträge `admin_key_failed` und `admin_key_locked` |
 | Akte eines Teammitglieds, Übersicht | Bereich "Admin-Key": erstellen, neu erstellen oder löschen (Recht `admin.keys`, nur Ränge unter dir, nie eigene Charaktere). Der neue Key steht nur einmal da, der alte gilt sofort nicht mehr |
 | Chat: `/` tippen als Spieler | Keine Admin-Befehle in den Vorschlägen |
-| `/aduty` | Admin-Dienst an oder aus: durchsichtig, unverwundbar, Rang + Name + ID rot über dem Kopf |
+| `/aduty` | Admin-Dienst an oder aus: durchsichtig, unsterblich, Rang + Name + ID rot über dem Kopf. Mit `/admin tarnung` unauffällig wie ein Spieler |
 | `/revive`, `/givemoney` ohne Dienst | "Das geht nur im Admin-Dienst." |
 | F10 oder `/admin` | Admin-Menü (Recht `admin.menu`) |
 | Spieler anklicken | Akte des Charakters, mit Login-Nummer, allen Charakteren derselben Person und allen Log-Einträgen. Einträge anderer Charaktere sind mit "Als Name (ID x)" markiert |
