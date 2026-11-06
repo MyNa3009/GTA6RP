@@ -1282,8 +1282,28 @@ function Platform.UiSend(action, data)
     SendNUIMessage({ action = action, data = data or {} })
 end
 
+-- Fokus (Maus und Tastatur) fuer die UI. Solange er gewollt ist, wird er bei Verlust neu gesetzt:
+-- Beim Join nimmt das Schliessen des Ladebildschirms den Fokus wieder weg, dann haette man im Login keine Maus.
+local FOCUS_WATCH_MS = 250
+local wantFocus = false
+local focusWatchRunning = false
+
 function Platform.UiFocus(enabled)
-    SetNuiFocus(enabled, enabled)
+    wantFocus = enabled == true
+    SetNuiFocus(wantFocus, wantFocus)
+    if not wantFocus or focusWatchRunning then
+        return
+    end
+    focusWatchRunning = true
+    CreateThread(function()
+        while wantFocus do
+            Wait(FOCUS_WATCH_MS)
+            if wantFocus and not IsNuiFocused() then
+                SetNuiFocus(true, true)
+            end
+        end
+        focusWatchRunning = false
+    end)
 end
 
 -- Handler bekommt die Daten aus der UI und gibt { ok, data, error } zurueck

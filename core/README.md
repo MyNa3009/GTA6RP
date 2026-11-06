@@ -12,6 +12,7 @@ Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der 
 2. Im Admin-Dienst bist du unsterblich: Die Unverwundbarkeit wird laufend neu gesetzt (Ped und Spieler) und hält auch nach Beobachten, Wiederbeleben oder Sperren. Hunger und Durst machen im Dienst keinen Schaden.
 3. Noclip: Ohne Tastendruck bleibst du genau an deiner Position. Schwerkraft, Geschwindigkeit und Einfrieren werden jeden Frame erzwungen, damit man nicht nach ein paar Sekunden nach unten driftet.
 4. Neu: Das Aussehen im Dienst lässt sich mit `/admin` einstellen (Recht `admin.duty`, nur im Dienst, wird mit Dienstende nicht zurückgesetzt, aber beim Ausloggen). `/admin tarnung` wie ein normaler Spieler (kein roter Tag, nicht durchsichtig), `/admin tag an|aus`, `/admin alpha 0-255`, `/admin reset`. `/admin` ohne Wort öffnet weiter das Menü. Jede Änderung steht im Log (`duty_look`).
+5. Login und Charakterauswahl: Beim ersten Join fehlte manchmal die Maus, weil das Schließen des Ladebildschirms den Fokus weggenommen hat. Solange ein Menü offen ist, wird der Fokus jetzt neu gesetzt, falls er verloren geht.
 
 ## Update von 1.7.7
 
