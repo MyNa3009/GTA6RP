@@ -14,7 +14,9 @@ local GROUPS = {
             { usage = '/geld, /ueberweisen, /geben', text = 'Kontostand, Überweisung, Bargeld geben. Für alle Spieler.' },
             { usage = '/relog', text = 'Zurück zum Login.' },
             { usage = '/admin oder F10', text = 'Admin-Menü öffnen.', permission = 'admin.menu' },
-            { usage = '/aduty', text = 'Admin-Dienst an oder aus. Die meisten Befehle gehen nur im Dienst.', permission = 'admin.duty', command = 'aduty' },
+            { usage = '/aduty', text = 'Admin-Dienst an oder aus. Die meisten Befehle gehen nur im Dienst. Im Dienst bist du unsterblich.', permission = 'admin.duty', command = 'aduty' },
+            { usage = '/admin tarnung', text = 'Im Dienst wie ein normaler Spieler aussehen: kein roter Admin-Tag, nicht durchsichtig. Rückgängig mit /admin reset.', permission = 'admin.duty' },
+            { usage = '/admin tag an|aus, /admin alpha 0-255', text = 'Admin-Tag über dem Kopf und Durchsichtigkeit einzeln einstellen (255 = normal, 0 = unsichtbar).', permission = 'admin.duty' },
             { usage = 'Tab', text = 'Erkennungsmodus: Name, IDs, Gesundheit und Warnungen über jedem Spieler.', permission = 'admin.esp' },
         },
     },
@@ -28,7 +30,7 @@ local GROUPS = {
     {
         title = 'Bewegen',
         entries = {
-            { usage = 'Z oder /nc', text = 'Noclip. W fliegt dahin, wohin du schaust, auch nach oben und unten. A S D, Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam.', permission = 'admin.noclip' },
+            { usage = 'Z oder /nc', text = 'Noclip. W fliegt dahin, wohin du schaust, auch nach oben und unten. Ohne Tasten bleibst du genau stehen. A S D, Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam.', permission = 'admin.noclip' },
             { usage = '/tp', text = 'Zu einem zufälligen anderen Spieler.', permission = 'player.teleport', command = 'tp' },
             { usage = '/tp 17, /goto 17', text = 'Zu ID 17 teleportieren.', permission = 'player.teleport', command = 'goto' },
             { usage = '/tp x y [z]', text = 'Zu Koordinaten. Ohne Höhe auf den Boden.', permission = 'player.teleport' },

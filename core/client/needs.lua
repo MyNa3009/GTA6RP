@@ -27,7 +27,9 @@ local function startDamage()
     Platform.Async(function()
         while starving() do
             Platform.Wait(CFG.DamageIntervalSeconds * 1000)
-            if starving() and not Platform.IsOwnPedDead() then
+            -- Im Admin-Dienst bist du unsterblich, auch Hunger und Durst machen nichts
+            local onDuty = Network.GetPlayerPublic(Platform.GetOwnServerId(), 'adminDuty') ~= nil
+            if starving() and not onDuty and not Platform.IsOwnPedDead() then
                 local empty = (current.hunger <= 0 and 1 or 0) + (current.thirst <= 0 and 1 or 0)
                 Platform.AddHealth(-CFG.DamagePerNeed * empty)
             end

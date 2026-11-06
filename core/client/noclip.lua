@@ -38,6 +38,7 @@ local function run()
     while active do
         Platform.Wait(0)
         Platform.DisableNoclipControlsThisFrame()
+        Platform.NoclipHold()
         if Config.Noclip.Invisible and Config.Noclip.VisibleForSelf then
             Platform.ShowNoclipLocallyThisFrame()
         end

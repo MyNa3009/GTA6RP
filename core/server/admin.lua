@@ -54,6 +54,19 @@ function Core.StopNoclip(player, reason)
     Network.SendToClient(player.source, NOCLIP_EVENT, { on = false })
 end
 
+-- Was alle Clients ueber den Dienst-Admin sehen: Rang, Name und die eigene Optik (tag, alpha).
+-- Nur abweichende Werte werden gesendet, ohne Angabe gilt die Config (Config.AdminDuty).
+local function publishDuty(player)
+    local rank = Core.GetRank(player.source)
+    local look = player.adminLook or {}
+    Network.SetPlayerPublic(player.source, DUTY_KEY, {
+        rank = rank and rank.label or '',
+        name = characterName(player),
+        tag = look.tag,
+        alpha = look.alpha,
+    })
+end
+
 -- Gibt true/false (neuer Zustand) zurueck oder nil und einen Fehlercode
 function AdminDuty.Set(source, on)
     local player = Core.GetPlayer(source)
@@ -76,7 +89,7 @@ function AdminDuty.Set(source, on)
     if on then
         local rank = Core.GetRank(source)
         player.adminDuty = { since = os.time() }
-        Network.SetPlayerPublic(source, DUTY_KEY, { rank = rank.label, name = characterName(player) })
+        publishDuty(player)
         Core.Log({
             actor_account_id = player.accountId,
             account_id = player.accountId,
@@ -116,6 +129,7 @@ function AdminDuty.Clear(player, reason)
     Spectate.Stop(player, reason)
     local minutes = math.floor((os.time() - player.adminDuty.since) / SECONDS_PER_MINUTE)
     player.adminDuty = nil
+    player.adminLook = nil
     Network.SetPlayerPublic(player.source, DUTY_KEY, nil)
     Core.Log({
         actor_account_id = player.accountId,
@@ -1142,6 +1156,61 @@ Core.RegisterCallback('admin_noclip', function(source, data)
         })
     end
     return { ok = true, data = { on = true } }
+end)
+
+-- Aussehen im Admin-Dienst (/admin tarnung, tag, alpha, reset). Nur im Dienst, gilt auch fuer spaetere Dienste.
+-- data: { reset = true } oder { tag = true|false, alpha = 0..255 } (jeweils optional)
+Core.RegisterCallback('admin_look', function(source, data)
+    local denied = deny(source, 'admin.duty')
+    if denied then return denied end
+
+    local player = Core.GetPlayer(source)
+    if not player.adminDuty then
+        return { ok = false, error = 'duty_required' }
+    end
+
+    local look = player.adminLook or {}
+    if data.reset == true then
+        look = {}
+    else
+        if data.tag ~= nil then
+            if type(data.tag) ~= 'boolean' then
+                return { ok = false, error = 'invalid_input' }
+            end
+            -- Nur "aus" muss gemerkt werden, an ist der Normalfall
+            look.tag = (data.tag == false) and false or nil
+        end
+        if data.alpha ~= nil then
+            local alpha = tonumber(data.alpha)
+            if not alpha or alpha ~= alpha or alpha < 0 or alpha > 255 then
+                return { ok = false, error = 'invalid_input' }
+            end
+            alpha = math.floor(alpha)
+            -- Gleich der Config-Voreinstellung: nichts gesondert merken
+            look.alpha = (alpha ~= Config.AdminDuty.Alpha) and alpha or nil
+        end
+    end
+    if next(look) == nil then
+        look = nil
+    end
+    player.adminLook = look
+    publishDuty(player)
+
+    Core.Log({
+        actor_account_id = player.accountId,
+        account_id = player.accountId,
+        character_id = player.characterId,
+        category = 'admin',
+        action = 'duty_look',
+        data = { tag = look and look.tag, alpha = look and look.alpha, reset = data.reset == true or nil },
+    })
+    return {
+        ok = true,
+        data = {
+            tag = not (look and look.tag == false),
+            alpha = look and look.alpha or Config.AdminDuty.Alpha,
+        },
+    }
 end)
 
 -- Geraete-Warnung (neuer PC) aus- oder wieder einblenden

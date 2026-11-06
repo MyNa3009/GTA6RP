@@ -51,14 +51,26 @@ end
 local invinciblePed = nil -- Ped, den dieses Script unverwundbar gemacht hat, sonst nil
 
 -- Nur zuruecksetzen, was der Admin-Dienst gesetzt hat, damit andere Scripts (z. B. Safezones) nicht ueberschrieben werden.
--- Neuer Ped im Dienst (z. B. nach dem Wiederbeleben): wird erneut gesetzt.
+-- Im Dienst wird es bei jedem Durchlauf neu gesetzt: Spectate-Ende, Wiederbeleben, Sperren und andere Scripts
+-- setzen das Flag sonst unbemerkt zurueck.
 local function setOwnInvincible(on)
-    local ped = on and Platform.GetOwnPed() or nil
-    if invinciblePed == ped then
-        return
+    if on then
+        invinciblePed = Platform.GetOwnPed()
+        Platform.SetInvincible(true)
+    elseif invinciblePed then
+        invinciblePed = nil
+        Platform.SetInvincible(false)
     end
-    invinciblePed = ped
-    Platform.SetInvincible(on)
+end
+
+-- Aussehen im Dienst: vom Admin selbst einstellbar (/admin tarnung, tag, alpha, reset). Ohne Angabe gilt die Config.
+local function dutyAlpha(duty)
+    local alpha = tonumber(duty and duty.alpha) or dutyStyle.Alpha
+    return math.max(0, math.min(255, alpha))
+end
+
+local function dutyTagVisible(duty)
+    return not (duty and duty.tag == false)
 end
 
 local function refresh()
@@ -74,10 +86,15 @@ local function refresh()
     local ownDuty = Network.GetPlayerPublic(ownId, 'adminDuty')
     if ownDuty then
         local ped = Platform.GetOwnPed()
-        Platform.SetPedAlpha(ped, dutyStyle.Alpha)
+        local alpha = dutyAlpha(ownDuty)
+        if alpha >= 255 then
+            Platform.ResetPedAlpha(ped)
+        else
+            Platform.SetPedAlpha(ped, alpha)
+        end
         transparent[ownId] = ped
         seenDuty[ownId] = true
-        if dutyStyle.Invincible then
+        if dutyStyle.Invincible and not Platform.IsOwnPedDead() then
             setOwnInvincible(true)
         end
     elseif invinciblePed then
@@ -91,7 +108,12 @@ local function refresh()
         local duty = Network.GetPlayerPublic(entry.serverId, 'adminDuty')
 
         if duty and entry.serverId ~= ownId then
-            Platform.SetPedAlpha(entry.ped, dutyStyle.Alpha)
+            local alpha = dutyAlpha(duty)
+            if alpha >= 255 then
+                Platform.ResetPedAlpha(entry.ped)
+            else
+                Platform.SetPedAlpha(entry.ped, alpha)
+            end
             transparent[entry.serverId] = entry.ped
             seenDuty[entry.serverId] = true
         end
@@ -99,7 +121,7 @@ local function refresh()
         -- Im Admin-Erkennungsmodus stehen die IDs schon im ausfuehrlichen Text
         local espActive = AdminEsp and AdminEsp.IsActive()
         if playing and id and not espActive and Platform.IsPedVisible(entry.ped) then
-            if duty and Config.Overhead.Enabled and entry.distance <= dutyStyle.TagDistance then
+            if duty and dutyTagVisible(duty) and Config.Overhead.Enabled and entry.distance <= dutyStyle.TagDistance then
                 list[#list + 1] = {
                     ped = entry.ped,
                     label = Platform.PrepareWorldText(dutyLines(duty, id)),

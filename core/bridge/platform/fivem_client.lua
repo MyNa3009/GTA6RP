@@ -240,6 +240,8 @@ end
 ------------------------------------------------------------------------
 
 local noclipEntity = nil
+local NOCLIP_TELEPORT_DISTANCE = 3.0 -- weiter weg gilt als Teleport, nicht als Abdriften
+local noclipPosition = nil -- gemerkte Position im Noclip, damit nichts den Spieler wegtreibt
 
 -- Fliegt mit dem Fahrzeug, wenn man am Steuer sitzt, sonst mit dem Ped
 local function noclipTarget()
@@ -284,6 +286,14 @@ function Platform.SetNoclip(enabled, invisible, toGround)
     end
     FreezeEntityPosition(entity, enabled)
     SetEntityCollision(entity, not enabled, not enabled)
+    -- Ohne Schwerkraft und ohne Restgeschwindigkeit kann nichts nach unten ziehen
+    SetEntityHasGravity(entity, not enabled)
+    if enabled then
+        SetEntityVelocity(entity, 0.0, 0.0, 0.0)
+        noclipPosition = GetEntityCoords(entity)
+    else
+        noclipPosition = nil
+    end
     if isVehicle then
         SetEntityInvincible(entity, enabled)
     end
@@ -346,13 +356,39 @@ function Platform.NoclipMove(forward, right, up, distance, followPitch)
     local dirZ = math.sin(pitch)
     local rightX, rightY = math.cos(heading), math.sin(heading)
 
-    local coords = GetEntityCoords(entity)
+    local coords = noclipPosition or GetEntityCoords(entity)
     local x = coords.x + (dirX * forward + rightX * right) * distance
     local y = coords.y + (dirY * forward + rightY * right) * distance
     local z = coords.z + (dirZ * forward + up) * distance
 
     SetEntityCoordsNoOffset(entity, x, y, z, true, true, true)
     SetEntityHeading(entity, rotation.z)
+    noclipPosition = vector3(x, y, z)
+end
+
+-- Jeden Frame im Noclip: Der Spieler bleibt genau da, wo er ist.
+-- Andere Scripts, Ragdoll oder das Spiel selbst koennen das Einfrieren aufheben (dann faellt man langsam nach unten).
+function Platform.NoclipHold()
+    local entity = noclipEntity
+    if not entity or not DoesEntityExist(entity) then
+        return
+    end
+    if not IsEntityPositionFrozen(entity) then
+        FreezeEntityPosition(entity, true)
+    end
+    SetEntityCollision(entity, false, false)
+    SetEntityHasGravity(entity, false)
+    SetEntityVelocity(entity, 0.0, 0.0, 0.0)
+    if noclipPosition then
+        local coords = GetEntityCoords(entity)
+        local drift = #(coords - noclipPosition)
+        if drift > NOCLIP_TELEPORT_DISTANCE then
+            -- Versetzt (z. B. /tp im Noclip): neue Position uebernehmen
+            noclipPosition = coords
+        elseif drift > 0.05 then
+            SetEntityCoordsNoOffset(entity, noclipPosition.x, noclipPosition.y, noclipPosition.z, true, true, true)
+        end
+    end
 end
 
 ------------------------------------------------------------------------
@@ -442,8 +478,10 @@ function Platform.ResetPedAlpha(ped)
     end
 end
 
+-- Sowohl Ped als auch Spieler: Manche Scripts setzen nur eines davon zurueck
 function Platform.SetInvincible(enabled)
     SetEntityInvincible(PlayerPedId(), enabled)
+    SetPlayerInvincible(PlayerId(), enabled)
 end
 
 -- style: { Scale, HeightOffset, Color = { r, g, b, a }, Glow = { r, g, b, a }? }
@@ -651,9 +689,12 @@ function Platform.SetHiddenCommands(names)
     removeSuggestions()
 end
 
+-- Der Befehl selbst reicht seine Argumente (Liste von Woertern) an handler weiter, die Taste nicht
 function Platform.RegisterKeyCommand(name, description, defaultKey, handler)
-    RegisterCommand(name, function()
-        CreateThread(handler)
+    RegisterCommand(name, function(_, args)
+        CreateThread(function()
+            handler(args or {})
+        end)
     end, false)
     if defaultKey then
         local keyCommand = KEY_COMMAND_PREFIX .. name
