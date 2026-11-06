@@ -240,8 +240,10 @@ end
 ------------------------------------------------------------------------
 
 local noclipEntity = nil
+local LOOK_UP_DOWN_CONTROL = 2 -- INPUT_LOOK_UD (Maus hoch und runter)
 local NOCLIP_TELEPORT_DISTANCE = 3.0 -- weiter weg gilt als Teleport, nicht als Abdriften
-local noclipPosition = nil -- gemerkte Position im Noclip, damit nichts den Spieler wegtreibt
+local noclipPosition = nil
+local noclipCamPitch = nil -- gemerkte Kamera-Neigung, solange die Maus nicht bewegt wird -- gemerkte Position im Noclip, damit nichts den Spieler wegtreibt
 
 -- Fliegt mit dem Fahrzeug, wenn man am Steuer sitzt, sonst mit dem Ped
 local function noclipTarget()
@@ -288,6 +290,7 @@ function Platform.SetNoclip(enabled, invisible, toGround)
     SetEntityCollision(entity, not enabled, not enabled)
     -- Ohne Schwerkraft und ohne Restgeschwindigkeit kann nichts nach unten ziehen
     SetEntityHasGravity(entity, not enabled)
+    noclipCamPitch = nil
     if enabled then
         SetEntityVelocity(entity, 0.0, 0.0, 0.0)
         noclipPosition = GetEntityCoords(entity)
@@ -379,6 +382,17 @@ function Platform.NoclipHold()
     SetEntityCollision(entity, false, false)
     SetEntityHasGravity(entity, false)
     SetEntityVelocity(entity, 0.0, 0.0, 0.0)
+
+    -- GTA kippt die Kamera von selbst langsam nach unten, sobald man die Maus nicht bewegt.
+    -- Mit W fliegt man dahin, wohin die Kamera zeigt, also ging es dann von allein abwaerts.
+    -- Darum bleibt die Neigung genau so, wie du sie mit der Maus zuletzt eingestellt hast.
+    local lookUpDown = GetDisabledControlNormal(CONTROL_GROUP, LOOK_UP_DOWN_CONTROL)
+    if noclipCamPitch == nil or lookUpDown ~= 0.0 then
+        noclipCamPitch = GetGameplayCamRelativePitch()
+    else
+        SetGameplayCamRelativePitch(noclipCamPitch, 1.0)
+    end
+
     if noclipPosition then
         local coords = GetEntityCoords(entity)
         local drift = #(coords - noclipPosition)
@@ -1289,8 +1303,21 @@ local wantFocus = false
 local focusWatchRunning = false
 
 function Platform.UiFocus(enabled)
+    local hadFocus = wantFocus
     wantFocus = enabled == true
-    SetNuiFocus(wantFocus, wantFocus)
+    if wantFocus and hadFocus then
+        -- Wechsel von einer UI zur naechsten (z. B. Login zur Charakterauswahl): Der Mauszeiger
+        -- verschwindet sonst, weil die alte UI unter ihm ausgeblendet wird. Kurz aus und wieder an zeigt ihn neu.
+        SetNuiFocus(false, false)
+        CreateThread(function()
+            Wait(0)
+            if wantFocus then
+                SetNuiFocus(true, true)
+            end
+        end)
+    else
+        SetNuiFocus(wantFocus, wantFocus)
+    end
     if not wantFocus or focusWatchRunning then
         return
     end

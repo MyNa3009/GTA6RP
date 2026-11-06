@@ -1,10 +1,16 @@
-# Core 1.7.9 (Testserver)
+# Core 1.7.10 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.7.9
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration. `core_inventory` danach neu starten (nutzt dieselbe Bridge).
+2. Noclip: Die Kamera kippt nicht mehr von selbst nach unten, wenn man die Maus nicht bewegt. Dadurch ist man beim Fliegen mit W langsam abwärts geflogen. Die Neigung bleibt jetzt, wie du sie mit der Maus eingestellt hast.
+3. Charakterauswahl: Nach dem Login fehlte der Mauszeiger. Beim Wechsel von einer UI zur nächsten wird der Fokus jetzt kurz neu gesetzt, damit der Zeiger wieder erscheint.
 
 ## Update von 1.7.8
 
