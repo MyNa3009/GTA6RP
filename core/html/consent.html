@@ -2,7 +2,7 @@
 <!--
   UI: Anfrage (Zustimmung)
   CONTRACT_VERSION: 1
-  Reine Anzeige oben oder unten in der Mitte, ohne Maus- und Tastaturfokus. Die Tasten (Y und N) liest Lua.
+  Reine Anzeige oben oder unten in der Mitte, ohne Kasten, ohne Maus- und Tastaturfokus. Die Tasten (Y und N) liest Lua.
 
   EINGEHEND (Lua -> UI)
   consent_open   {
@@ -32,8 +32,8 @@
 <style>
 /*
   Oberflaechentyp: Monitor (mit zwei Tasten). Dichte 7, Bewegung 2, Varianz 2.
-  Kurze Frage in der Mitte oben oder unten, die Spielsicht bleibt frei. Highlight: die zwei Tasten als Keycaps.
-  Der Zeitbalken unten zeigt, wie lange die Anfrage noch offen ist.
+  Kurze Frage frei im Bild (ohne Kasten), Lesbarkeit ueber Schatten wie bei der A-Jail-Anzeige.
+  Highlight: die zwei Tasten als Keycaps. Die feine Linie darunter zeigt, wie lange die Anfrage noch offen ist.
 */
 :root {
   --rgb-base:   14 15 18;
@@ -41,17 +41,16 @@
   --rgb-accent: 214 164 72;
   --rgb-signal: 220 82 72;
 
-  --c-bg:          rgb(var(--rgb-base) / 0.94);
-  --c-surface:     rgb(var(--rgb-ink) / 0.06);
-  --c-border:      rgb(var(--rgb-ink) / 0.08);
   --c-border-hi:   rgb(var(--rgb-ink) / 0.20);
   --c-text:        rgb(var(--rgb-ink) / 0.94);
-  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.88);
   --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
   --c-accent:      rgb(var(--rgb-accent));
   --c-signal:      rgb(var(--rgb-signal));
   --c-on-accent:   rgb(var(--rgb-base));
-  --shadow:        0 8px 24px rgb(var(--rgb-base) / 0.5);
+  /* Ohne Kasten muss der Text auch vor hellem Himmel lesbar sein: enger dunkler Rand plus weicher Schein */
+  --text-shadow:   0 0 2px rgb(var(--rgb-base)), 0 1px 3px rgb(var(--rgb-base) / 0.95), 0 0 12px rgb(var(--rgb-base) / 0.7);
+  --key-bg:        rgb(var(--rgb-base) / 0.72);
 
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px;
   --radius-xs: 4px; --radius-sm: 6px; --radius-lg: 14px;
@@ -60,7 +59,8 @@
   --fs-sm: clamp(12px, 0.68vw, 15px);
   --fs-lg: clamp(16px, 0.9vw, 20px);
 
-  --card-w: clamp(320px, 24vw, 520px);
+  --card-w: clamp(320px, 28vw, 600px);
+  --timer-w: clamp(120px, 8vw, 180px);
   --edge-top: clamp(24px, 4vh, 56px);
   --edge-bottom: clamp(104px, 15vh, 200px);
   --keycap: clamp(24px, 1.4vw, 32px);
@@ -90,11 +90,11 @@ html, body {
   z-index: var(--z-card);
   width: var(--card-w);
   transform: translateX(-50%);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-lg);
-  background: var(--c-bg);
-  box-shadow: var(--shadow);
-  overflow: hidden;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  text-align: center;
+  text-shadow: var(--text-shadow);
   opacity: 1;
   transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
 }
@@ -105,7 +105,6 @@ html, body {
 .card.is-entering.is-bottom { opacity: 0; transform: translate(-50%, 8px); }
 
 .body {
-  padding: var(--space-4) var(--space-5) var(--space-4);
   display: grid;
   gap: var(--space-1);
 }
@@ -120,6 +119,7 @@ html, body {
 .text {
   margin: 0;
   font-size: var(--fs-sm);
+  font-weight: 500;
   color: var(--c-text-2);
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -128,9 +128,8 @@ html, body {
 
 .keys {
   display: flex;
+  justify-content: center;
   gap: var(--space-5);
-  padding: var(--space-3) var(--space-5) var(--space-4);
-  border-top: 1px solid var(--c-border);
 }
 .key {
   display: inline-flex;
@@ -149,8 +148,9 @@ html, body {
   padding: 0 var(--space-1);
   border: 1px solid var(--c-border-hi);
   border-radius: var(--radius-sm);
-  background: var(--c-surface);
+  background: var(--key-bg);
   color: var(--c-text);
+  text-shadow: none;
   font-family: inherit;
   font-size: var(--fs-xs);
   font-weight: 700;
@@ -162,8 +162,8 @@ html, body {
 .key.is-chosen.is-no { color: var(--c-signal); }
 .key.is-chosen.is-no kbd { background: var(--c-signal); border-color: var(--c-signal); color: rgb(var(--rgb-ink)); }
 
-.timer { height: var(--timer-h); background: var(--c-surface); }
-.timer span { display: block; height: 100%; background: var(--c-text-muted); transform-origin: left center; }
+.timer { width: var(--timer-w); height: var(--timer-h); border-radius: 2px; background: rgb(var(--rgb-base) / 0.6); box-shadow: 0 0 6px rgb(var(--rgb-base) / 0.5); overflow: hidden; }
+.timer span { display: block; height: 100%; background: var(--c-text); transform-origin: center; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
