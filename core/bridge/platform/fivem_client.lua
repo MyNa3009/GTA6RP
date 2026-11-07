@@ -1508,8 +1508,11 @@ end
 ------------------------------------------------------------------------
 
 -- Ereignis im eigenen Client, z. B. Platform.Emit('core:notify', { text = '...', type = 'info' })
-function Platform.Emit(event, data)
-    TriggerEvent(event, data)
+-- Lokales Ereignis an alle Resources dieses Clients, mit beliebig vielen Werten (seit Core 1.10.1 wie auf dem Server).
+-- Vorher kam nur der erste Wert an: Menue-Aktionen anderer Resources bekamen keinen Kontext und Ergebnisse
+-- (Fortschritt, Dialoge) kamen leer an.
+function Platform.Emit(event, ...)
+    TriggerEvent(event, ...)
 end
 
 -- Gesundheit erhoehen (GTA: 100 bewusstlos bis 200 voll), nie ueber das Maximum

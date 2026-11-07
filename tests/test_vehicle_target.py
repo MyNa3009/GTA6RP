@@ -138,5 +138,11 @@ lua.execute('Vehicles[50].lock = 2')
 check('abgeschlossen', P.EnterVehicleSeat(50, 0, 6.0) == (False, 'locked'))
 check('kein Fahrzeug', P.EnterVehicleSeat(404, 0, 6.0) == (False, 'not_found'))
 
+print('Lokale Ereignisse')
+lua.execute('Emitted = nil; function TriggerEvent(...) Emitted = table.pack(...) end')
+lua.execute("Platform.Emit('core_lib:select', 'core_ems:i:medkit', { player = { serverId = 2 } })")
+em = lua.globals().Emitted
+check('Emit gibt alle Werte weiter (Schlüssel und Kontext)', em.n == 3 and em[2] == 'core_ems:i:medkit' and em[3].player.serverId == 2, em and em.n)
+
 print(f'\n{ok} ok, {fail} Fehler')
 sys.exit(1 if fail else 0)
