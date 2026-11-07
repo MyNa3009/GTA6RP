@@ -1,14 +1,23 @@
-# core_lib 1.1.0
+# core_lib 1.2.0
 
 Bibliothek für alle Scripts des Servers, ähnlich wie ox_lib, aber im Design des Servers und mit mehr Minigames. Dazu das **G-Menü**: ein Interaktionsmenü, über das später fast alles läuft, immer in Kategorien geteilt (`Person`, `Fahrzeug`, `Organisation > Leader > Entlassen`).
 
 Alles, was die Core schon kann, bleibt in der Core und wird nicht doppelt gebaut: Callbacks (`Network.Call`), Tasten (`Platform.RegisterKeyCommand`), Meldungen (`core:notify`), Logging (`exports.core:Log`).
 
+## Update von 1.1.0
+
+1. Den Ordner `core_lib` ersetzen, danach `core` und `core_lib` neu starten (zwei neue Bridge-Funktionen in der Core 1.8.0).
+2. **Ziel ist die Person, die du anschaust**, nicht mehr die nächste. Unter ihr läuft ein Kreis am Boden, dann drückst du `G`. Das Ziel bleibt, bis das Menü zu ist, auch wenn du wegschaust. Geht die Person weiter als 1 m über die Reichweite hinaus weg, kommt "Die Person ist nicht mehr in der Nähe". Die Auswahl "Wen meinst du?" gibt es nicht mehr.
+3. Zu Fuß gilt das Fahrzeug, auf das du schaust (für den Kofferraum).
+4. `canUse` und die Schlösser sind wieder weg. Wofür man keine Berechtigung hat, steht gar nicht im Menü. Das regelt `canShow`. Eine Kategorie ohne erlaubte Einträge fehlt im Kreis.
+5. Neu in der Config: `Config.Lib.Interact.Target` (Winkel, Farbe und Deckkraft des Kreises). Typ und Größe des Kreises stehen in `data/target_gta5.lua`.
+6. Neuer Export im Client: `GetInteractionTarget()` gibt die angeschaute Person `{ serverId, characterId, distance }` oder nil zurück.
+
 ## Update von 1.0.0
 
 1. Den Ordner `core_lib` ersetzen und neu starten. Core und Inventar bleiben gleich.
 2. Neues G-Menü: Kategorien im Kreis in der Bildmitte, rechts daneben die Liste der gewählten Kategorie. Unten links stehen die Tasten.
-3. Neu: `canUse` an Einträgen. Gibt es `false` zurück, steht der Eintrag mit Schloss da und lässt sich nicht wählen. Sind alle Einträge einer Kategorie gesperrt, bekommt die Kategorie im Kreis ein Schloss.
+3. (In 1.2.0 wieder entfernt: `canUse` mit Schlössern.)
 4. Eigene Farben für das Menü in `Config.Lib.Menu.Colors`: `accent` (gewählte Kategorie, Standard Türkis) und `mark` (Überschrift, Icons, Fehler, Standard Pink). Hintergrund und Schrift kommen weiter aus der Core.
 5. Die Suche im Menü ist weg, dafür gibt es die Schnellauswahl 1 bis 9 im Kreis und in der Liste.
 
@@ -69,10 +78,10 @@ Danach gibt es die Tabelle `lib`. Alles mit Ergebnis (`lib.progressBar`, `lib.sk
 - **In der Liste:** Klick oder `1` bis `9` führt aus oder öffnet die Unterkategorie. Pfeil hoch und runter wählt, `Enter` oder Pfeil rechts führt aus.
 - **Zurück:** Rechte Maustaste, Pfeil links, `Backspace` oder der Pfeil neben der Überschrift. Das geht von der Unterkategorie zur Liste, von der Liste zum Kreis und vom Kreis aus schließt es.
 - `Esc` oder `G` schließt sofort.
-- In der Mitte des Kreises steht die nächste Person ("ID 17 · 1,2 m"). Stehen mehrere Personen in der Nähe, fragt das Menü bei Aktionen mit einer Person "Wen meinst du?".
-- Gesperrte Einträge stehen mit Schloss da. Wer sie wählt, sieht "Dafür fehlt dir die Berechtigung." oder den Grund aus `canUse`.
+- **Ziel:** Schau die Person an, mit der du etwas machen willst. Unter ihr läuft dann ein Kreis am Boden. Drückst du jetzt `G`, gilt sie als Ziel, bis das Menü zu ist. In der Mitte des Kreises steht, wen du gewählt hast ("ID 17 · 1,2 m"). Schaust du niemanden an, fehlen alle Einträge, die eine Person brauchen.
+- Was du nicht darfst, steht gar nicht im Menü.
 
-Angezeigt wird nur, was gerade passt. Ohne Fahrzeug gibt es keinen Reiter Fahrzeug, ohne Person in der Nähe keine Einträge, die eine Person brauchen. Ist nichts zu tun, kommt die Meldung "Hier gibt es gerade nichts zu tun."
+Angezeigt wird nur, was gerade passt. Ohne Fahrzeug gibt es keine Kategorie Fahrzeug, ohne angeschaute Person keine Einträge, die eine Person brauchen, ohne Berechtigung (`canShow`) gar nichts. Ist nichts zu tun, kommt die Meldung "Hier gibt es gerade nichts zu tun."
 
 **Eingebaut:**
 
@@ -81,7 +90,7 @@ Angezeigt wird nur, was gerade passt. Ohne Fahrzeug gibt es keinen Reiter Fahrze
 | Person | Ausweis zeigen (Personalausweis, Führerschein, Waffenschein, Dienstausweis, Flugschein, Bootsschein, Angelschein), Durchsuchen, Geld geben |
 | Fahrzeug, am Steuer | Motor (an oder aus), Licht, Türen (einzeln und "Alle schließen", nur Türen, die es gibt), Fenster, Sitz wechseln |
 | Fahrzeug, als Mitfahrer | eigenes Fenster, Sitz wechseln |
-| Fahrzeug, zu Fuß daneben | Kofferraum öffnen |
+| Fahrzeug, zu Fuß (das Fahrzeug, auf das du schaust) | Kofferraum öffnen |
 
 Sitz wechseln geht bis 5 km/h (`Config.Lib.Interact.SeatChangeMaxKmh`). Abschließen gehört später zum Schlüssel-Script.
 
@@ -98,8 +107,7 @@ lib.addInteraction({
     description = 'Entlässt die Person aus deiner Organisation.',
     icon = 'user-minus',
     target = 'player',                     -- nur mit Person in der Nähe
-    canShow = function(ctx) return MyOrg ~= nil end,                       -- ohne Organisation gar nicht da
-    canUse = function(ctx) return MyOrg.isLeader, 'Nur für Leader' end,  -- sonst mit Schloss
+    canShow = function(ctx) return MyOrg ~= nil and MyOrg.isLeader end,   -- wer nicht Leader ist, sieht es nicht
     onSelect = function(ctx)
         local answer = lib.alertDialog({
             header = ('ID %d entlassen?'):format(ctx.player.characterId),
@@ -123,10 +131,9 @@ lib.addInteraction({
 | `description` | | zweite Zeile, gedämpft |
 | `icon` | | Name aus der Icon-Liste unten |
 | `order` | | Reihenfolge, kleiner = weiter oben (Standard 100) |
-| `target` | | `'player'`: nur mit Person in der Nähe, `ctx.player` ist gesetzt |
+| `target` | | `'player'`: nur, wenn man eine Person anschaut, `ctx.player` ist gesetzt |
 | `vehicle` | | `'inside'` (im Fahrzeug), `'driver'` (am Steuer), `'outside'` (zu Fuß neben einem Fahrzeug) |
-| `canShow` | | `function(ctx) return true end`, schnell und ohne Warten. `false`: Eintrag fehlt ganz |
-| `canUse` | | `function(ctx) return false, 'Grund' end`: Eintrag mit Schloss, der Grund steht darunter. Schnell und ohne Warten |
+| `canShow` | | `function(ctx) return true end`, schnell und ohne Warten. Auch für Berechtigungen: `false` = Eintrag fehlt ganz |
 | `state` | | `function(ctx) return 'an' end`, kurzer Zustand rechts in der Zeile |
 | `keepOpen` | | Menü bleibt nach der Aktion offen und wird neu aufgebaut (z. B. Türen auf und zu) |
 
@@ -134,8 +141,8 @@ lib.addInteraction({
 
 | Feld | Inhalt |
 |---|---|
-| `ctx.player` | gewählte oder nächste Person `{ serverId, characterId, distance }` |
-| `ctx.players` | alle Personen in der Nähe, nächste zuerst |
+| `ctx.player` | angeschaute Person `{ serverId, characterId, distance }` oder nil |
+| `ctx.players` | `{ ctx.player }` oder leer (für ältere Scripts) |
 | `ctx.vehicle` | `{ handle, inside, seat, isDriver, engine, lights, speedKmh, freeSeats }` im Fahrzeug, `{ handle, inside = false }` zu Fuß daneben |
 
 `lib.setInteractionCategory(pfad, { icon, order })` legt Icon und Reihenfolge einer Kategorie oder Unterkategorie fest. Die Kategorien Person (10), Fahrzeug (20) und Organisation (30) stehen fest in der Config. Im Kreis ist Platz für bis zu 8 Kategorien. Unterkategorien stehen vor den einzelnen Einträgen. Einträge einer Resource verschwinden, wenn sie stoppt.
@@ -278,6 +285,7 @@ Wer `init.lua` nicht nutzen will, ruft die Exports direkt. Die Start-Exports war
 | `RegisterContext(def)`, `ShowContext(id)`, `HideContext()`, `GetOpenContext()` | |
 | `ShowTextUI(text, optionen)`, `HideTextUI()`, `IsTextUIOpen()` | |
 | `AddInteraction(def)`, `RemoveInteraction(id)`, `SetInteractionCategory(pfad, o)`, `OpenInteractionMenu()`, `CloseInteractionMenu()` | |
+| `GetInteractionTarget()` | angeschaute Person `{ serverId, characterId, distance }` oder nil |
 | `Notify(text, typ, dauer)` | |
 
 | Server | Gibt zurück |
@@ -286,7 +294,7 @@ Wer `init.lua` nicht nutzen will, ruft die Exports direkt. Die Start-Exports war
 | `GetMinigameResult(nummer)` | nil (läuft), dann einmal true oder false |
 | `Notify(source, text, typ)` | |
 
-**Fehlercodes:** `locked` (Eintrag gesperrt), `busy` (läuft schon etwas), `invalid_input`, `dead`, `no_character`, `not_found`, `id_taken` (ID gehört einer anderen Resource), `invalid_target`, `invalid_vehicle`, `no_action`, `too_many`.
+**Fehlercodes:** `player_gone` (Ziel zu weit weg), `busy` (läuft schon etwas), `invalid_input`, `dead`, `no_character`, `not_found`, `id_taken` (ID gehört einer anderen Resource), `invalid_target`, `invalid_vehicle`, `no_action`, `too_many`.
 
 ## Icons
 
@@ -294,7 +302,7 @@ Wer `init.lua` nicht nutzen will, ruft die Exports direkt. Die Start-Exports war
 
 ## Config
 
-Alles in `config.lua` unter `Config.Lib`: Farben des Menüs (`Menu.Colors`), Taste und Befehl des G-Menüs, Abstand für Personen und Fahrzeuge, feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Hintergrund und Schrift aller UIs kommen aus `Config.UI.Colors` der Core, das Menü hat dazu eigene Akzentfarben.
+Alles in `config.lua` unter `Config.Lib`: Farben des Menüs (`Menu.Colors`), Taste und Befehl des G-Menüs, Reichweite für Personen und Fahrzeuge, Blickziel und Kreis (`Interact.Target`), feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Hintergrund und Schrift aller UIs kommen aus `Config.UI.Colors` der Core, das Menü hat dazu eigene Akzentfarben.
 
 ## Aufbau
 
@@ -304,6 +312,7 @@ core_lib/
   modules/              zones.lua, cache.lua, laufen in der Resource, die sie einbindet
   config.lua            Config.Lib
   data/vehicle_gta5.lua Türen, Fenster, Sitze (GTA-5-Indizes)
+  data/target_gta5.lua  Kreis am Boden unter dem Ziel (GTA-Markertyp)
   client/               main (UI, Fokus, Ergebnisse), progress, minigames, dialogs, textui, menu (Kontextmenüs),
                         interact (G-Menü), interact_person, interact_vehicle
   server/main.lua       Minigames vom Server mit Zeitprüfung
@@ -323,4 +332,4 @@ python3 tests/test_core_lib.py      # ohne Datenbank, 130 Prüfungen
 python3 tests/test_give_item.py     # Geld geben im Inventar, braucht die Test-Datenbank
 ```
 
-Nur im Spiel prüfbar: Animationen und Props im Fortschrittsbalken, das Sperren der Steuerung, Motor, Licht, Türen, Fenster und Sitzwechsel am echten Fahrzeug, die Tastatur ohne Mauszeiger bei Skillcheck und Schloss, und ob `G` mit einer anderen Taste kollidiert.
+Nur im Spiel prüfbar: ob das Anschauen sich gut anfühlt (Winkel `Target.MaxAngle`), wie der Kreis am Boden aussieht und ob er bei Schrägen richtig sitzt, Animationen und Props im Fortschrittsbalken, das Sperren der Steuerung, Motor, Licht, Türen, Fenster und Sitzwechsel am echten Fahrzeug, die Tastatur ohne Mauszeiger bei Skillcheck und Schloss, und ob `G` mit einer anderen Taste kollidiert.

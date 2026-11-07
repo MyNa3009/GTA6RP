@@ -467,6 +467,61 @@ function Platform.ReleaseHeadshot(handle)
     end
 end
 
+-- Spieler, den man gerade anschaut (Mitte der Kamera), in maxDistance Metern. Gibt { serverId, ped, distance } oder nil.
+-- Gewaehlt wird, wer am naechsten an der Blickrichtung steht, hoechstens maxAngle Grad daneben und mit freier Sicht.
+-- Ueber den Winkel statt per Strahl, weil ein duenner Strahl Personen oft verfehlt (seit Core 1.8.0).
+local SIGHT_AIM_HEIGHT = 0.3   -- Brusthoehe ueber dem Mittelpunkt des Peds
+
+function Platform.GetPlayerInSight(maxDistance, maxAngle)
+    local me = PlayerId()
+    local myPed = PlayerPedId()
+    local myCoords = GetEntityCoords(myPed)
+    local camera = GetGameplayCamCoord()
+    local rotation = GetGameplayCamRot(2)
+    local pitch, yaw = math.rad(rotation.x), math.rad(rotation.z)
+    local forward = vector3(-math.sin(yaw) * math.cos(pitch), math.cos(yaw) * math.cos(pitch), math.sin(pitch))
+    local limit = math.cos(math.rad(maxAngle))
+    local best, bestDot = nil, limit
+
+    for _, player in ipairs(GetActivePlayers()) do
+        if player ~= me then
+            local ped = GetPlayerPed(player)
+            if ped ~= 0 and IsEntityVisible(ped) then
+                local coords = GetEntityCoords(ped)
+                local distance = #(coords - myCoords)
+                if distance <= maxDistance then
+                    local toPed = coords + vector3(0.0, 0.0, SIGHT_AIM_HEIGHT) - camera
+                    local length = #toPed
+                    local dot = length > 0 and (toPed.x * forward.x + toPed.y * forward.y + toPed.z * forward.z) / length or -1
+                    if dot > bestDot and HasEntityClearLosToEntity(myPed, ped, LOS_FLAGS) then
+                        best = { serverId = GetPlayerServerId(player), ped = ped, distance = distance }
+                        bestDot = dot
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- Kreis am Boden unter einem Spieler (Server-ID). Jeden Frame aufrufen, solange er sichtbar sein soll.
+-- style: { type, size, zOffset, rotate, color = { r, g, b }, alpha }. Werte kommen aus data/ der aufrufenden Resource.
+function Platform.DrawPlayerRing(serverId, style)
+    local player = GetPlayerFromServerId(serverId)
+    local ped = player ~= -1 and GetPlayerPed(player) or 0
+    if ped == 0 then
+        return false
+    end
+    local coords = GetEntityCoords(ped)
+    local color = style.color
+    DrawMarker(style.type, coords.x, coords.y, coords.z + style.zOffset,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        style.size, style.size, style.size,
+        color.r, color.g, color.b, style.alpha,
+        false, false, 2, style.rotate == true, nil, nil, false)
+    return true
+end
+
 function Platform.HasLineOfSight(ped)
     local myPed = PlayerPedId()
     return ped == myPed or HasEntityClearLosToEntity(myPed, ped, LOS_FLAGS)

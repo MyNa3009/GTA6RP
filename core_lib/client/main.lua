@@ -7,7 +7,7 @@ local REQUIRED_CORE = '1.8.0'
 local missingBridge = {}
 for _, name in ipairs({ 'Async', 'AttachPropToOwnPed', 'ClearOwnTasks', 'CloseAllVehicleDoors', 'DeleteLocalProp',
     'DisableActionsThisFrame', 'Emit', 'Export', 'GetActionLabel', 'GetCallingResource', 'GetNearbyPlayers',
-    'GetOwnServerId', 'GetOwnVehicleState', 'GetTime', 'GetVehicleNearby', 'HasVehicleDoor', 'HasVehicleWindow',
+    'DrawPlayerRing', 'GetOwnServerId', 'GetOwnVehicleState', 'GetPlayerInSight', 'GetTime', 'GetVehicleInSight', 'HasVehicleDoor', 'HasVehicleWindow',
     'GetResourceName', 'IsActionPressed', 'IsOwnPedDead', 'IsOwnVehicle', 'IsResourceStarted', 'IsVehicleDoorOpen', 'IsVehicleWindowDown',
     'MoveToSeat', 'OnEvent', 'OnResourceStop', 'PlayOwnAnim', 'PlayOwnScenario', 'Print', 'CallExport',
     'RegisterKeyCommand', 'SetVehicleDoor', 'SetVehicleEngine', 'SetVehicleLights', 'SetVehicleWindow', 'StopOwnAnim',
@@ -185,5 +185,5 @@ Platform.Export('GetResult', function(id)
 end)
 
 Platform.Export('GetVersion', function()
-    return '1.1.0'
+    return '1.2.0'
 end)

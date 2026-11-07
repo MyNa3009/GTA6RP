@@ -6,10 +6,10 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 |---|---|---|
 | [`core/`](core/README.md) | 1.8.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
 | [`core_inventory/`](core_inventory/README.md) | 1.2.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
-| [`core_lib/`](core_lib/README.md) | 1.1.0 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
+| [`core_lib/`](core_lib/README.md) | 1.2.0 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
 | [`tests/`](tests/README.md) | | Tests für die Serverlogik beider Resources |
 
-Das Inventar 1.2.0 braucht mindestens die Core 1.6.0, die `core_lib` 1.1.0 die Core 1.8.0. Empfohlen ist immer die neueste Core, darum alle Ordner zusammen aktualisieren.
+Das Inventar 1.2.0 braucht mindestens die Core 1.6.0, die `core_lib` 1.2.0 die Core 1.8.0. Empfohlen ist immer die neueste Core, darum alle Ordner zusammen aktualisieren.
 
 ## Installation
 

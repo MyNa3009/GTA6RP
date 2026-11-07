@@ -9,10 +9,18 @@ Config.Lib = {
         -- Einstellungen > Tastenbelegung > FiveM > "Interaktionsmenü öffnen"
         Key = 'G',
         Command = 'interaktion',
-        -- Personen in diesem Umkreis (Meter) gelten als "in der Naehe"
+        -- Ziel ist die Person, die man anschaut, hoechstens so weit weg (Meter)
         PlayerDistance = 3.0,
-        -- Fahrzeug in diesem Umkreis, wenn man zu Fuss ist (z. B. fuer den Kofferraum)
+        -- Zu Fuss: das Fahrzeug, auf das man schaut, hoechstens so weit weg (z. B. fuer den Kofferraum)
         VehicleDistance = 5.0,
+        -- Blickziel und Kreis am Boden unter der Person. Aussehen des Kreises in data/target_gta5.lua.
+        Target = {
+            MaxAngle = 12,          -- so viele Grad neben der Bildmitte zaehlt noch als "angeschaut"
+            IntervalMs = 150,       -- so oft wird das Blickziel gesucht (nur bei geschlossenem Menue)
+            KeepTolerance = 1.0,    -- bei offenem Menue darf sich die Person so viele Meter weiter entfernen
+            Color = '45 212 191',   -- Farbe des Kreises als 'R G B'
+            Alpha = 200,            -- Deckkraft 0 bis 255
+        },
         -- Sitz wechseln nur bis zu dieser Geschwindigkeit
         SeatChangeMaxKmh = 5,
         -- Nach einer Aktion mit keepOpen wird das Menue so viel spaeter neu aufgebaut

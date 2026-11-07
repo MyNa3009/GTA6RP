@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   UI: Menue (G-Menue und Kontextmenues der core_lib)
-  CONTRACT_VERSION: 2
+  CONTRACT_VERSION: 3
   G-Menue: Kategorien im Kreis, rechts daneben die Liste der gewaehlten Kategorie mit Unterkategorien.
   Kontextmenue: nur die Liste in der Bildmitte.
 
@@ -9,29 +9,27 @@
   menu_open {
     mode: "interact" | "context",
     title: string,
-    subtitle?: string,                  // z. B. "Nächste Person: ID 17 · 1,2 m"
+    subtitle?: string,                  // angeschaute Person, z. B. "Person: ID 17 · 1,2 m"
     tabs?: Tab[],                       // nur interact: die Kategorien im Kreis
-    items?: Node[],                     // nur context
-    players?: { serverId: number, label: string }[]   // fuer "Wen meinst du?"
+    items?: Node[]                      // nur context
   }
   menu_update  wie menu_open, die UI bleibt an derselben Stelle (Kategorie, Unterkategorie, Auswahl)
   menu_close   {}
 
-  Tab  { id: string, label: string, icon?: string, locked?: boolean, items: Node[] }
+  Tab  { id: string, label: string, icon?: string, items: Node[] }
   Node {
     id: string, label: string, description?: string, icon?: string,
     badge?: string,                     // kurzer Zustand rechts, z. B. "an", "offen"
     title?: string, children?: Node[],  // Unterkategorie
-    target?: "player",                  // braucht eine Person
-    locked?: boolean,                   // sichtbar mit Schloss, nicht waehlbar
+    target?: "player",                  // braucht die angeschaute Person
     disabled?: boolean, readOnly?: boolean,
     progress?: number,                  // 0 bis 100
     metadata?: { label: string, value: string }[]
   }
 
   AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
-  ui_ready     { ui: "menu", version: 2 }        -> data.colors { base, ink, accent, mark }
-  menu_select  { id: string, player?: number }   -> data { choose?: true, close?: boolean }
+  ui_ready     { ui: "menu", version: 3 }        -> data.colors { base, ink, accent, mark }
+  menu_select  { id: string }                    -> data { close?: boolean }
   menu_close   {}
 -->
 <html lang="de">
@@ -86,7 +84,6 @@
   --ring-r: clamp(150px, 10.25vw, 270px);
   --orb: clamp(60px, 4.1vw, 104px);
   --orb-icon: calc(var(--orb) * 0.38);
-  --lock-badge: clamp(18px, 1.05vw, 26px);
   --center-dot: 4px;
 
   /* Liste */
@@ -205,20 +202,6 @@ button { font: inherit; color: inherit; }
 .orb-label .n { font-size: var(--fs-2xs); font-weight: 500; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
 .orb[aria-pressed="true"] .orb-label { color: var(--c-accent); }
 
-.lock-badge {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: var(--lock-badge);
-  height: var(--lock-badge);
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--c-border-hi);
-  border-radius: 50%;
-  background: rgb(var(--rgb-base));
-  color: var(--c-text-2);
-}
-.lock-badge svg { width: 55%; height: 55%; }
 
 /* ---------- Liste ---------- */
 .panel {
@@ -307,9 +290,7 @@ button { font: inherit; color: inherit; }
 }
 .row.is-active { background: rgb(var(--rgb-base)); border-color: var(--c-accent-line); }
 .row:active { transform: scale(0.99); }
-.row.is-locked { cursor: not-allowed; }
-.row.is-locked .num, .row.is-locked .icon, .row.is-locked .text { opacity: 0.45; }
-.row[aria-disabled="true"]:not(.is-locked) { cursor: default; color: var(--c-text-muted); }
+.row[aria-disabled="true"] { cursor: default; color: var(--c-text-muted); }
 .row[aria-disabled="true"]:active { transform: none; }
 
 .num {
@@ -493,7 +474,7 @@ button { font: inherit; color: inherit; }
 <ul class="keys" id="keys" hidden></ul>
 
 <script id="bridge">
-const CONTRACT_VERSION = 2;
+const CONTRACT_VERSION = 3;
 
 const Bridge = (() => {
   const handlers = {};
@@ -544,7 +525,6 @@ const Mock = {
   delay: 120,
   responses: {
     menu_select: (data) => {
-      if (data.id === 'e:person_search' && data.player === undefined) return { ok: true, data: { choose: true } };
       if (data.id === 'e:vehicle_engine') return { ok: true, data: { close: false } };
       return { ok: true, data: { close: true } };
     },
@@ -565,18 +545,15 @@ const Mock = {
 const TEXT = {
   back: 'Zurück',
   close: 'Schließen',
-  choose: 'Wen meinst du?',
   noItems: 'Hier gibt es gerade nichts zu tun.',
-  locked: 'Gesperrt',
   keys: [
     ['ESC', 'Menü verlassen'],
     ['RMB', 'Zurück / verlassen'],
     ['1-9', 'Schnellauswahl'],
   ],
   errors: {
-    locked: 'Dafür fehlt dir die Berechtigung.',
     not_found: 'Das geht gerade nicht mehr. Menü neu öffnen.',
-    player_gone: 'Die Person ist nicht mehr in der Nähe.',
+    player_gone: 'Die Person ist nicht mehr in der Nähe. Schau sie an und öffne das Menü neu.',
     not_open: 'Das Menü ist schon zu.',
     bridge_error: 'Keine Verbindung zum Spiel.',
     client_error: 'Das hat nicht geklappt.',
@@ -586,9 +563,8 @@ const TEXT = {
 
 const MAX_HOTKEYS = 9;
 const CLOSE_KEY = 'g';
-const PLAYER_PREFIX = 'p:';
 const FULL_TURN = 2 * Math.PI;
-const SUBTITLE_SPLIT = ': ';   // "Nächste Person: ID 17 · 1,2 m" -> zwei Zeilen in der Mitte des Kreises
+const SUBTITLE_SPLIT = ': ';   // "Person: ID 17 · 1,2 m" -> zwei Zeilen in der Mitte des Kreises
 
 const state = {
   open: false,
@@ -597,11 +573,9 @@ const state = {
   subtitle: '',
   tabs: [],
   items: [],
-  players: [],
   tabIndex: 0,
   level: 'ring',      // 'ring': Tasten steuern den Kreis, 'list': die Liste
   stack: [],          // geoeffnete Unterkategorien
-  choosing: null,     // { id, label } bei "Wen meinst du?"
   cursor: 0,
   busy: false,
   error: '',
@@ -654,21 +628,17 @@ function rootItems() {
 }
 
 function currentItems() {
-  if (state.choosing) {
-    return state.players.map((player) => ({ id: PLAYER_PREFIX + player.serverId, label: player.label, icon: 'user', player: player.serverId }));
-  }
   const top = state.stack[state.stack.length - 1];
   return top ? top.children || [] : rootItems();
 }
 
 function currentTitle() {
-  if (state.choosing) return TEXT.choose;
   const top = state.stack[state.stack.length - 1];
   if (top) return top.title || top.label;
   return isInteract() ? currentTab()?.label || '' : state.title;
 }
 
-const isSelectable = (node) => node && !node.locked && !node.disabled && !node.readOnly;
+const isSelectable = (node) => node && !node.disabled && !node.readOnly;
 
 /* ---------- Kreis ---------- */
 
@@ -716,16 +686,7 @@ function renderRing() {
   el.ring.querySelectorAll('.orb').forEach((orb, index) => {
     const tab = state.tabs[index];
     orb.setAttribute('aria-pressed', String(index === state.tabIndex));
-    orb.setAttribute('aria-label', tab.locked ? `${tab.label}, ${TEXT.locked}` : tab.label);
-    let badge = orb.querySelector('.lock-badge');
-    if (tab.locked && !badge) {
-      badge = document.createElement('span');
-      badge.className = 'lock-badge';
-      badge.appendChild(svgIcon('lock'));
-      orb.appendChild(badge);
-    } else if (!tab.locked && badge) {
-      badge.remove();
-    }
+    orb.setAttribute('aria-label', tab.label);
   });
 }
 
@@ -742,8 +703,7 @@ function rowFor(node, index) {
   button.setAttribute('role', 'menuitem');
   button.dataset.action = 'select';
   button.dataset.index = String(index);
-  if (node.locked) button.classList.add('is-locked');
-  if (!isSelectable(node) && !(node.children && !node.locked)) button.setAttribute('aria-disabled', 'true');
+  if (!isSelectable(node) && !node.children) button.setAttribute('aria-disabled', 'true');
   if (node.children) button.setAttribute('aria-haspopup', 'menu');
 
   const num = document.createElement('span');
@@ -782,12 +742,8 @@ function rowFor(node, index) {
 
   const side = document.createElement('span');
   side.className = 'side';
-  if (node.locked) {
-    side.appendChild(svgIcon('lock'));
-  } else {
-    if (node.badge) side.appendChild(document.createTextNode(node.badge));
-    if (node.children) side.appendChild(svgIcon('chevron-right'));
-  }
+  if (node.badge) side.appendChild(document.createTextNode(node.badge));
+  if (node.children) side.appendChild(svgIcon('chevron-right'));
   button.appendChild(side);
   li.appendChild(button);
   return li;
@@ -892,7 +848,6 @@ function selectTab(index, enter) {
   if (next !== state.tabIndex) {
     state.tabIndex = next;
     state.stack = [];
-    state.choosing = null;
     state.cursor = 0;
   }
   state.level = enter ? 'list' : 'ring';
@@ -902,12 +857,10 @@ function selectTab(index, enter) {
   if (enter) el.list.focus();
 }
 
-// Eine Ebene zurueck: Personenwahl, Unterkategorie, Liste, dann schliessen
+// Eine Ebene zurueck: Unterkategorie, Liste, dann schliessen
 function back() {
   setError('');
-  if (state.choosing) {
-    state.choosing = null;
-  } else if (state.stack.length > 0) {
+  if (state.stack.length > 0) {
     state.stack.pop();
   } else if (isInteract() && state.level === 'list') {
     state.level = 'ring';
@@ -924,11 +877,6 @@ async function choose(index) {
   if (!node || state.busy) return;
   state.level = 'list';
   state.cursor = index;
-  if (node.locked) {
-    renderCursor();
-    setError('locked');
-    return;
-  }
   if (node.children) {
     state.stack.push(node);
     state.cursor = 0;
@@ -939,28 +887,20 @@ async function choose(index) {
   }
   if (!isSelectable(node)) return;
 
-  const payload = state.choosing ? { id: state.choosing.id, player: node.player } : { id: node.id };
   state.busy = true;
   setError('');
   renderCursor();
-  const result = await Bridge.send('menu_select', payload);
+  const result = await Bridge.send('menu_select', { id: node.id });
   state.busy = false;
   if (!state.open) return;
   if (!result || !result.ok) {
     setError(result?.error || 'client_error');
     return;
   }
-  if (result.data?.choose) {
-    state.choosing = { id: node.id, label: node.label };
-    state.cursor = 0;
-    renderList();
-    return;
-  }
   if (result.data?.close) {
     close(false);
     return;
   }
-  state.choosing = null;
   renderStatus();
 }
 
@@ -979,7 +919,6 @@ function readPayload(data) {
   state.subtitle = typeof data.subtitle === 'string' ? data.subtitle : '';
   state.tabs = Array.isArray(data.tabs) ? data.tabs : [];
   state.items = Array.isArray(data.items) ? data.items : [];
-  state.players = Array.isArray(data.players) ? data.players : [];
 }
 
 // Nach einem Neuaufbau dieselbe Stelle wiederfinden (gleiche IDs)
@@ -1002,7 +941,6 @@ Bridge.on('menu_open', (data) => {
   readPayload(data);
   state.tabIndex = 0;
   state.stack = [];
-  state.choosing = null;
   state.cursor = 0;
   state.level = isInteract() ? 'ring' : 'list';
   state.busy = false;
@@ -1135,18 +1073,14 @@ document.addEventListener('keydown', (e) => {
           { id: 'c.1.2', label: 'Bison', description: 'LS 1907 · Tank 31 %', icon: 'car', progress: 31 },
         ] },
         { id: 'c.2', label: 'Stellplatzgebühr', icon: 'banknote', readOnly: true, metadata: [{ label: 'Preis', value: '150 $' }, { label: 'Fällig', value: 'jeden Montag' }] },
-        { id: 'c.3', label: 'Fahrzeug einparken', icon: 'key', locked: true, description: 'Du sitzt in keinem Fahrzeug.' },
+        { id: 'c.3', label: 'Fahrzeug einparken', icon: 'key', disabled: true, description: 'Du sitzt in keinem Fahrzeug.' },
       ] });
       return;
     }
     Mock.push('menu_open', {
       mode: 'interact',
       title: 'Interaktion',
-      subtitle: 'Nächste Person: ID 17 · 1,2 m',
-      players: [
-        { serverId: 4, label: 'ID 17 · 1,2 m' },
-        { serverId: 9, label: 'ID 342 · 2,6 m' },
-      ],
+      subtitle: 'Person: ID 17 · 1,2 m',
       tabs: [
         { id: 'g:Person', label: 'Person', icon: 'hand', items: [
           { id: 'e:person_give_cash', label: 'Geld übergeben', icon: 'banknote', target: 'player' },
@@ -1155,13 +1089,12 @@ document.addEventListener('keydown', (e) => {
           { id: 'g:Person/Ausweis zeigen', label: 'Ausweis zeigen', title: 'Ausweis zeigen', icon: 'id-card', children: [
             { id: 'e:person_doc_id', label: 'Personalausweis', icon: 'id-card', target: 'player' },
             { id: 'e:person_doc_driver', label: 'Führerschein', icon: 'id-card', target: 'player' },
-            { id: 'e:person_doc_weapon', label: 'Waffenschein', icon: 'id-card', target: 'player', locked: true, description: 'Du hast keinen gültigen Waffenschein.' },
+            { id: 'e:person_doc_weapon', label: 'Waffenschein', icon: 'id-card', target: 'player' },
           ] },
           { id: 'e:person_search', label: 'Durchsuchen', icon: 'search', target: 'player' },
           { id: 'g:Person/Rechtswidrige Handlungen', label: 'Rechtswidrige Handlungen', title: 'Rechtswidrige Handlungen', icon: 'alert', children: [
             { id: 'e:crime_rob', label: 'Ausrauben', icon: 'wallet', target: 'player' },
           ] },
-          { id: 'e:person_steal', label: 'Bargeld stehlen', icon: 'wallet', target: 'player', locked: true },
         ] },
         { id: 'g:Fahrzeug', label: 'Fahrzeug', icon: 'car', items: [
           { id: 'e:vehicle_engine', label: 'Motor', icon: 'power', badge: 'an' },
@@ -1178,10 +1111,6 @@ document.addEventListener('keydown', (e) => {
         { id: 'g:Grundstücke', label: 'Grundstücke', icon: 'home', items: [
           { id: 'e:house_lock', label: 'Haustür abschließen', icon: 'lock' },
           { id: 'e:house_ring', label: 'Klingeln', icon: 'volume' },
-        ] },
-        { id: 'g:Leader', label: 'Leader', icon: 'crown', locked: true, items: [
-          { id: 'e:org_hire', label: 'Mitglied einstellen', icon: 'user-plus', locked: true },
-          { id: 'e:org_fire', label: 'Entlassen', icon: 'user-minus', locked: true },
         ] },
         { id: 'g:Organisation', label: 'Organisation', icon: 'landmark', items: [
           { id: 'e:org_duty', label: 'Dienst', icon: 'shield', badge: 'außer Dienst' },

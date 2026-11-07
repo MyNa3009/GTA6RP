@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_lib'
 description 'Bibliothek fuer die eigene Core: G-Menue, Kontextmenues, Fortschritt, Minigames, Dialoge, TextUI, Zonen'
-version '1.1.0'
+version '1.2.0'
 
 -- Startet nach der Core und nutzt deren Config und Bridge (es gibt nur eine Stelle mit FiveM-Natives)
 dependencies {
@@ -15,6 +15,7 @@ shared_scripts {
     '@core/shared/config.lua',
     'config.lua',
     'data/vehicle_gta5.lua',
+    'data/target_gta5.lua',
 }
 
 server_scripts {

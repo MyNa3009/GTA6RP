@@ -1,7 +1,8 @@
 -- G-Menue (Interaktionsmenue): ein Menue fuer fast alles, immer in Kategorien geteilt.
 -- Scripts haengen Eintraege mit AddInteraction an einen Pfad, z. B. 'Organisation/Leader'. Der erste Teil ist
--- der Reiter oben, jeder weitere Teil eine Unterkategorie. Was gerade nicht passt (kein Fahrzeug, niemand in der
--- Naehe, canShow sagt nein), wird nicht angezeigt. Der Server prueft jede Aktion trotzdem selbst.
+-- die Kategorie im Kreis, jeder weitere Teil eine Unterkategorie. Was gerade nicht passt (kein Fahrzeug, keine
+-- Person angeschaut, keine Berechtigung ueber canShow), wird gar nicht angezeigt. Der Server prueft trotzdem selbst.
+-- Ziel ist immer die Person, die man anschaut: Unter ihr laeuft ein Kreis am Boden, dann drueckt man G.
 if LibDisabled then return end
 
 Interact = {}
@@ -56,10 +57,9 @@ end
 --   path = 'Organisation/Leader',         Kategorie und Unterkategorien, Pflicht
 --   label = 'Mitglied entlassen',         Pflicht
 --   description, icon, order,             optional
---   target = 'none' | 'player',           'player': nur mit Person in der Naehe, ctx.player ist gesetzt
+--   target = 'none' | 'player',           'player': nur, wenn man eine Person anschaut, ctx.player ist gesetzt
 --   vehicle = 'inside' | 'driver' | 'outside',  nur im Fahrzeug, nur am Steuer, nur zu Fuss neben einem Fahrzeug
---   canShow = function(ctx) return true end,     schnell, ohne Warten. false: Eintrag fehlt ganz
---   canUse = function(ctx) return false, 'Nur fuer Leader' end,  false: Eintrag mit Schloss, nicht waehlbar
+--   canShow = function(ctx) return true end,     schnell, ohne Warten. Auch fuer Berechtigungen: false = nicht da
 --   state = function(ctx) return 'an' end,      kurzer Text rechts im Eintrag
 --   keepOpen = false,                     Menue bleibt nach der Aktion offen und wird neu aufgebaut
 --   onSelect = function(ctx) end | event = 'resource:event',
@@ -103,7 +103,6 @@ function Interact.Add(def, owner)
         target = def.target or 'none',
         vehicle = def.vehicle,
         canShow = def.canShow,
-        canUse = def.canUse,
         state = def.state,
         keepOpen = def.keepOpen == true,
         action = action,
@@ -154,26 +153,85 @@ end)
 -- Stand beim Oeffnen
 ------------------------------------------------------------------------
 
-local function nearbyPlayers()
-    local list = {}
-    for _, entry in ipairs(Platform.GetNearbyPlayers(CFG.PlayerDistance, false)) do
-        local characterId = Network.GetPlayerPublic(entry.serverId, 'coreId')
-        if characterId then
-            list[#list + 1] = {
-                serverId = entry.serverId,
-                characterId = characterId,
-                distance = math.floor(entry.distance * DISTANCE_ROUNDING + 0.5) / DISTANCE_ROUNDING,
-            }
-        end
-    end
-    table.sort(list, function(a, b) return a.distance < b.distance end)
-    return list
+local TARGET = Config.Lib.Interact.Target
+local RING = LibTargetData.Ring
+
+local target = nil        -- angeschaute Person { serverId, characterId, distance }, sonst nil
+local ringRunning = false
+
+local function round(distance)
+    return math.floor(distance * DISTANCE_ROUNDING + 0.5) / DISTANCE_ROUNDING
 end
 
--- ctx: { players, player (naechste Person), vehicle = { handle, inside, seat, isDriver, engine, lights, speedKmh, freeSeats } }
+local function readColor(rgb)
+    local r, g, b = tostring(rgb or ''):match('^(%d+)%s+(%d+)%s+(%d+)$')
+    return { r = tonumber(r) or 255, g = tonumber(g) or 255, b = tonumber(b) or 255 }
+end
+
+local RING_STYLE = {
+    type = RING.type,
+    size = RING.size,
+    zOffset = RING.zOffset,
+    rotate = RING.rotate,
+    color = readColor(TARGET.Color),
+    alpha = TARGET.Alpha,
+}
+
+-- Wen schaut man gerade an? Nur Spieler mit Charakter (permanente ID).
+local function findTarget()
+    if Platform.IsOwnPedDead() then
+        return nil
+    end
+    local seen = Platform.GetPlayerInSight(CFG.PlayerDistance, TARGET.MaxAngle)
+    if not seen then
+        return nil
+    end
+    local characterId = Network.GetPlayerPublic(seen.serverId, 'coreId')
+    if not characterId then
+        return nil
+    end
+    return { serverId = seen.serverId, characterId = characterId, distance = round(seen.distance) }
+end
+
+-- Ist die Person noch in Reichweite? (fuer Aktionen bei offenem Menue)
+local function inRange(serverId)
+    for _, entry in ipairs(Platform.GetNearbyPlayers(CFG.PlayerDistance + TARGET.KeepTolerance, false)) do
+        if entry.serverId == serverId then
+            return true
+        end
+    end
+    return false
+end
+
+-- Zeichnet den Kreis jeden Frame, aber nur solange es ein Ziel gibt
+local function startRing()
+    if ringRunning then
+        return
+    end
+    ringRunning = true
+    Platform.Async(function()
+        while target do
+            if not Platform.DrawPlayerRing(target.serverId, RING_STYLE) then
+                target = nil
+                break
+            end
+            Platform.Wait(0)
+        end
+        ringRunning = false
+    end)
+end
+
+local function setTarget(value)
+    target = value
+    if target then
+        startRing()
+    end
+end
+
+-- ctx: { player (angeschaute Person), players ({ player } oder leer),
+--        vehicle = { handle, inside, seat, isDriver, engine, lights, speedKmh, freeSeats } }
 local function buildContext()
-    local players = nearbyPlayers()
-    local ctx = { players = players, player = players[1] }
+    local ctx = { player = target, players = target and { target } or {} }
     local state = Platform.GetOwnVehicleState()
     if state then
         ctx.vehicle = {
@@ -187,9 +245,10 @@ local function buildContext()
             freeSeats = state.freeSeats,
         }
     else
-        local nearby = Platform.GetVehicleNearby(CFG.VehicleDistance)
-        if nearby then
-            ctx.vehicle = { handle = nearby, inside = false }
+        -- Zu Fuss: das Fahrzeug, auf das man schaut
+        local seen = Platform.GetVehicleInSight(CFG.VehicleDistance)
+        if seen then
+            ctx.vehicle = { handle = seen, inside = false }
         end
     end
     return ctx
@@ -228,37 +287,6 @@ end
 -- Baum fuer die UI
 ------------------------------------------------------------------------
 
--- Eintrag sichtbar, aber gesperrt? Gibt gesperrt und optional einen Grund zurueck.
-local function lockState(entry, ctx)
-    if not entry.canUse then
-        return false
-    end
-    local ok, usable, reason = pcall(entry.canUse, ctx)
-    if not ok then
-        Platform.Print('error', ('core_lib: canUse von "%s" (%s) ist fehlerhaft: %s'):format(entry.id, entry.owner, tostring(usable)))
-        return true
-    end
-    if usable == true then
-        return false
-    end
-    return true, Lib.Text(reason, DESCRIPTION_LENGTH)
-end
-
--- Gruppe gesperrt, wenn alles darin gesperrt ist
-local function markLockedGroups(list)
-    local allLocked = #list > 0
-    for _, node in ipairs(list) do
-        local children = node.children or node.items
-        if children then
-            node.locked = markLockedGroups(children) or nil
-        end
-        if not node.locked then
-            allLocked = false
-        end
-    end
-    return allLocked
-end
-
 local function categoryInfo(key)
     return categories[key] or {}
 end
@@ -286,7 +314,6 @@ end
 
 local function buildTree(ctx)
     local nodes = {}
-    local locked = {}         -- [nodeId] = true fuer gesperrte Eintraege
     local roots = {}          -- [name] = Reiter
     local groups = {}         -- [pfad] = Knoten
     local tabs = {}
@@ -324,14 +351,11 @@ local function buildTree(ctx)
             end
             local nodeId = 'e:' .. id
             nodes[nodeId] = entry
-            local isLocked, reason = lockState(entry, ctx)
-            locked[nodeId] = isLocked or nil
             local list = groupFor(entry.path)
             list[#list + 1] = {
                 id = nodeId,
                 label = entry.label,
-                description = isLocked and reason or entry.description,
-                locked = isLocked or nil,
+                description = entry.description,
                 icon = entry.icon,
                 badge = badge,
                 target = entry.target == 'player' and 'player' or nil,
@@ -342,22 +366,12 @@ local function buildTree(ctx)
 
     -- Leere Unterkategorien gibt es nicht, weil Gruppen nur fuer sichtbare Eintraege entstehen
     sortNodes(tabs)
-    markLockedGroups(tabs)
-    return tabs, nodes, locked
+    return tabs, nodes
 end
 
 local function payload(ctx, tabs)
-    local subtitle
-    if #ctx.players == 1 then
-        subtitle = 'Nächste Person: ' .. personLabel(ctx.player)
-    elseif #ctx.players > 1 then
-        subtitle = ('%d Personen in der Nähe'):format(#ctx.players)
-    end
-    local players = {}
-    for i, player in ipairs(ctx.players) do
-        players[i] = { serverId = player.serverId, label = personLabel(player) }
-    end
-    return { mode = 'interact', title = 'Interaktion', subtitle = subtitle, tabs = tabs, players = players }
+    local subtitle = ctx.player and ('Person: ' .. personLabel(ctx.player)) or nil
+    return { mode = 'interact', title = 'Interaktion', subtitle = subtitle, tabs = tabs }
 end
 
 ------------------------------------------------------------------------
@@ -371,8 +385,8 @@ local function refresh()
         return
     end
     local ctx = buildContext()
-    local tabs, nodes, locked = buildTree(ctx)
-    session.ctx, session.nodes, session.locked = ctx, nodes, locked
+    local tabs, nodes = buildTree(ctx)
+    session.ctx, session.nodes = ctx, nodes
     if #tabs == 0 then
         Menu.Close('interact')
         return
@@ -389,29 +403,21 @@ function Interact.Open()
         Lib.Notify('Bewusstlos kannst du nichts tun.', 'error')
         return
     end
+    -- Das Ziel beim Druecken auf G gilt, bis das Menue zu ist
+    setTarget(findTarget())
     local ctx = buildContext()
-    local tabs, nodes, locked = buildTree(ctx)
+    local tabs, nodes = buildTree(ctx)
     if #tabs == 0 then
         Lib.Notify('Hier gibt es gerade nichts zu tun.', 'info')
         return
     end
-    session = { ctx = ctx, nodes = nodes, locked = locked }
+    session = { ctx = ctx, nodes = nodes }
     Menu.Open('interact', payload(ctx, tabs), {
         select = onSelectNode,
         closed = function()
             session = nil
         end,
     })
-end
-
-local function findPlayer(ctx, serverId)
-    serverId = tonumber(serverId)
-    for _, player in ipairs(ctx.players) do
-        if player.serverId == serverId then
-            return player
-        end
-    end
-    return nil
 end
 
 -- Kopie des Stands fuer die Aktion: ohne Funktionen, mit der gewaehlten Person
@@ -427,21 +433,10 @@ onSelectNode = function(data)
     if not entry or not entries[entry.id] then
         return { ok = false, error = 'not_found' }
     end
-    if session.locked[data.id] then
-        return { ok = false, error = 'locked' }
-    end
     local ctx = session.ctx
     local player = ctx.player
-    if entry.target == 'player' then
-        if data.player ~= nil then
-            player = findPlayer(ctx, data.player)
-            if not player then
-                return { ok = false, error = 'player_gone' }
-            end
-        elseif #ctx.players > 1 then
-            -- Mehrere Personen in der Naehe: die UI fragt "Wen meinst du?" und schickt die Wahl mit
-            return { ok = true, data = { choose = true } }
-        end
+    if entry.target == 'player' and (not player or not inRange(player.serverId)) then
+        return { ok = false, error = 'player_gone' }
     end
 
     local value = actionContext(ctx, player)
@@ -460,6 +455,26 @@ end
 
 Platform.RegisterKeyCommand(CFG.Command, 'Interaktionsmenü öffnen', CFG.Key, function()
     Interact.Open()
+end)
+
+-- Blickziel suchen, solange das Menue zu ist. Bei offenem Menue bleibt das Ziel, bis die Person zu weit weg ist.
+Platform.Async(function()
+    while true do
+        if Menu.IsOpen('interact') then
+            if target and not inRange(target.serverId) then
+                target = nil
+            end
+        elseif not Menu.IsOpen() then
+            setTarget(findTarget())
+        elseif target then
+            target = nil
+        end
+        Platform.Wait(TARGET.IntervalMs)
+    end
+end)
+
+Platform.Export('GetInteractionTarget', function()
+    return target and { serverId = target.serverId, characterId = target.characterId, distance = target.distance } or nil
 end)
 
 Platform.Export('AddInteraction', function(def) return Interact.Add(def) end)

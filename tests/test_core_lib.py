@@ -91,6 +91,9 @@ function Platform.GetOwnServerId() return 1 end
 
 Nearby = {}
 function Platform.GetNearbyPlayers(dist, self) return Nearby end
+Sight = nil        -- Spieler, den man anschaut: { serverId, distance }
+function Platform.GetPlayerInSight(dist, angle) return Sight and { serverId = Sight.serverId, ped = 1, distance = Sight.distance } or nil end
+function Platform.DrawPlayerRing(serverId, style) record('DrawPlayerRing', serverId, style.type) return true end
 Public = {}
 function Network.GetPlayerPublic(id, key) return Public[id] and Public[id][key] end
 NetOn = {}
@@ -102,7 +105,7 @@ NearVehicle = nil  -- Fahrzeug zu Fuss in der Naehe
 Doors = {}         -- [index] = { valid, open }
 Windows = {}       -- [index] = { valid, down }
 function Platform.GetOwnVehicleState() return Vehicle end
-function Platform.GetVehicleNearby() return Vehicle and Vehicle.vehicle or NearVehicle end
+function Platform.GetVehicleInSight() return Vehicle and Vehicle.vehicle or NearVehicle end
 function Platform.IsOwnVehicle(v) return Vehicle ~= nil and v == Vehicle.vehicle end
 function Platform.SetVehicleEngine(v, on) record('SetVehicleEngine', v, on) Vehicle.engine = on return true end
 function Platform.SetVehicleLights(v, on) record('SetVehicleLights', v, on) return true end
@@ -130,6 +133,7 @@ def client_env():
     load(lua, os.path.join(CORE, 'shared/config.lua'))
     load(lua, os.path.join(LIB, 'config.lua'))
     load(lua, os.path.join(LIB, 'data/vehicle_gta5.lua'))
+    load(lua, os.path.join(LIB, 'data/target_gta5.lua'))
     for name in CLIENT_FILES:
         load(lua, os.path.join(LIB, name))
     return lua
@@ -224,34 +228,48 @@ check('Leader ist leer, weil alle Eintraege eine Person brauchen', leader is Non
 check('Fokus mit Maus', calls(lua, 'UiFocus')[-1] == [True, True])
 g.Menu.Close()
 
-print('G-Menue: zwei Personen in der Naehe')
+print('G-Menue: zwei Personen in der Naehe, angeschaut wird ID 342')
 lua.execute("Nearby = { { serverId = 4, distance = 1.23 }, { serverId = 9, distance = 2.61 } }; Public = { [4] = { coreId = 17 }, [9] = { coreId = 342 } }")
+lua.globals().Tick(200)
+check('ohne Hinschauen kein Ziel und kein Kreis', not calls(lua, 'DrawPlayerRing') and g.Exports['GetInteractionTarget']() is None)
+lua.execute("Sight = { serverId = 9, distance = 2.61 }")
+lua.globals().Tick(200)
+check('angeschaut: Kreis am Boden unter ID 342 (Markertyp aus data/)', calls(lua, 'DrawPlayerRing') and calls(lua, 'DrawPlayerRing')[-1] == [9, 27], calls(lua, 'DrawPlayerRing')[-1:])
+check('Ziel als Export', g.Exports['GetInteractionTarget']().characterId == 342)
 clear(lua)
 g.Interact.Open()
 payload = last_ui(lua, 'menu_open')
-check('Reiter Person und Organisation in fester Reihenfolge', tabs_of(payload) == ['Person', 'Organisation'], tabs_of(payload))
-check('Untertitel nennt zwei Personen', payload.subtitle == '2 Personen in der Nähe', payload.subtitle)
+check('Kategorien Person und Organisation in fester Reihenfolge', tabs_of(payload) == ['Person', 'Organisation'], tabs_of(payload))
+check('Mitte nennt die angeschaute Person, nicht die naechste', payload.subtitle == 'Person: ID 342 · 2,6 m', payload.subtitle)
+check('keine Personenliste mehr', payload.players is None)
 person = payload.tabs[1]['items']
 check('Person: Ausweis zeigen (Gruppe), Durchsuchen, Geld geben', [n.label for n in to_list(person)] == ['Ausweis zeigen', 'Durchsuchen', 'Geld geben'], [n.label for n in to_list(person)])
 docs = find(person, 'Ausweis zeigen').children
 check('sieben Dokumente in der Gruppe', len(to_list(docs)) == 7)
 leader = find(payload.tabs[2]['items'], 'Leader')
 check('Leader-Gruppe mit Einstellen vor Entlassen', [n.label for n in to_list(leader.children)] == ['Einstellen', 'Entlassen'], leader and [n.label for n in to_list(leader.children)])
-check('Personen fuer "Wen meinst du?" mitgeschickt', payload.players[1].label == 'ID 17 · 1,2 m' and payload.players[2].label == 'ID 342 · 2,6 m', [p.label for p in to_list(payload.players)])
-
+lua.execute("Sight = { serverId = 4, distance = 1.23 }")
+lua.globals().Tick(300)
+check('bei offenem Menue bleibt das Ziel, auch wenn man wegschaut', calls(lua, 'DrawPlayerRing')[-1][0] == 9)
 clear(lua)
 reply = ui(lua, 'menu_select', {'id': 'e:person_search'})
-check('mehrere Personen: UI soll fragen', reply.ok and reply.data.choose is True)
-check('noch nichts ausgefuehrt', not calls(lua, 'CallExport'))
-reply = ui(lua, 'menu_select', {'id': 'e:person_search', 'player': 99})
-check('unbekannte Person abgelehnt', reply.ok is False and reply.error == 'player_gone')
-reply = ui(lua, 'menu_select', {'id': 'e:person_search', 'player': 9})
 lua.globals().Tick(10)
-check('Durchsuchen mit gewaehlter Person', reply.ok and calls(lua, 'CallExport')[-1] == ['core_inventory', 'SearchPlayer', 9], calls(lua, 'CallExport'))
+check('Durchsuchen direkt bei der angeschauten Person', reply.ok and calls(lua, 'CallExport')[-1] == ['core_inventory', 'SearchPlayer', 9], calls(lua, 'CallExport'))
 check('Menue zu nach der Aktion', g.Menu.IsOpen() is False and calls(lua, 'UiFocus')[-1][0] is False)
+lua.globals().Tick(300)
+check('Menue zu: neues Blickziel ID 17', g.Exports['GetInteractionTarget']().characterId == 17)
+g.Interact.Open()
+lua.execute("Nearby = { { serverId = 9, distance = 2.0 } }")
+reply = ui(lua, 'menu_select', {'id': 'e:person_search'})
+check('Person weggegangen: abgelehnt', reply.ok is False and reply.error == 'player_gone')
+g.Menu.Close()
+lua.execute("Sight = { serverId = 9, distance = 2.0 }; Public[9] = nil")
+lua.globals().Tick(300)
+check('Person ohne Charakter ist kein Ziel', g.Exports['GetInteractionTarget']() is None)
+lua.execute("Public[9] = { coreId = 342 }")
 
 print('G-Menue: Aktion einer anderen Resource ueber init.lua (selectKey)')
-lua.execute("Nearby = { { serverId = 4, distance = 1.0 } }")
+lua.execute("Nearby = { { serverId = 4, distance = 1.0 } }; Sight = { serverId = 4, distance = 1.0 }")
 g.Interact.Open()
 clear(lua)
 reply = ui(lua, 'menu_select', {'id': 'e:org_hire'})
@@ -265,7 +283,7 @@ lua.globals().Tick(10)
 check('onSelect bekommt die Person', g.Selected is not None and g.Selected.player.serverId == 4)
 
 print('G-Menue: Fahrzeug am Steuer')
-lua.execute('''Nearby = {}
+lua.execute('''Nearby = {}; Sight = nil
 Vehicle = { vehicle = 501, seat = -1, isDriver = true, engine = true, lights = false, speedKmh = 0, freeSeats = { 0, 1 } }
 Doors = { [0] = { valid = true, open = false }, [1] = { valid = true, open = false }, [4] = { valid = true, open = false }, [5] = { valid = true, open = true } }
 Windows = { [0] = { valid = true, down = false }, [1] = { valid = true, down = false } }''')
@@ -346,28 +364,16 @@ check('Eintraege gestoppter Resource weg', payload is None or 'Organisation' not
 check('ohne Eintraege kein Menue, sondern Hinweis', payload is None and any(a[0] == 'core:notify' for a in calls(lua, 'Emit')), tabs_of(payload))
 g.Menu.Close()
 
-print('G-Menue: gesperrte Eintraege (canUse)')
+print('G-Menue: ohne Berechtigung gar nicht da (canShow)')
 g.Calling = 'org2'
-add(lua.table_from({'id': 'lead_hire', 'path': 'Leader', 'label': 'Einstellen', 'event': 'x',
-                    'canUse': lua.eval("function() return false, 'Nur für Leader' end")}))
-add(lua.table_from({'id': 'lead_fire', 'path': 'Leader', 'label': 'Entlassen', 'event': 'x',
-                    'canUse': lua.eval("function() error('kaputt') end")}))
-add(lua.table_from({'id': 'org_radio', 'path': 'Organisation', 'label': 'Funk', 'event': 'x', 'canUse': lua.eval('function() return true end')}))
-add(lua.table_from({'id': 'org_steal', 'path': 'Organisation', 'label': 'Kasse leeren', 'event': 'x', 'canUse': lua.eval('function() return false end')}))
+add(lua.table_from({'id': 'lead_hire', 'path': 'Leader', 'label': 'Einstellen', 'event': 'x', 'canShow': lua.eval('function() return false end')}))
+add(lua.table_from({'id': 'org_radio', 'path': 'Organisation', 'label': 'Funk', 'event': 'x', 'canShow': lua.eval('function() return true end')}))
 g.Calling = None
 clear(lua)
 g.Interact.Open()
 payload = last_ui(lua, 'menu_open')
-tabs = {t.label: t for t in to_list(payload.tabs)}
-check('Kategorie Leader gesperrt, weil alles darin gesperrt ist', tabs['Leader'].locked is True, tabs.get('Leader'))
-check('Organisation nicht gesperrt (Funk geht)', tabs['Organisation'].locked is None)
-hire = find(tabs['Leader']['items'], 'Einstellen')
-check('Grund steht als Beschreibung', hire.locked is True and hire.description == 'Nur für Leader')
-check('Fehler in canUse: gesperrt und gemeldet', find(tabs['Leader']['items'], 'Entlassen').locked is True and any('canUse' in str(a[1]) for a in calls(lua, 'Print')))
-reply = ui(lua, 'menu_select', {'id': 'e:org_steal'})
-check('gesperrter Eintrag laesst sich nicht ausfuehren', reply.ok is False and reply.error == 'locked')
-reply = ui(lua, 'menu_select', {'id': 'e:org_radio'})
-check('freier Eintrag geht', reply.ok is True)
+check('Kategorie ohne erlaubte Eintraege fehlt im Kreis', 'Leader' not in tabs_of(payload), tabs_of(payload))
+check('erlaubter Eintrag ist da, ohne Schloss', find(payload.tabs[1]['items'], 'Funk') is not None and find(payload.tabs[1]['items'], 'Funk').locked is None)
 g.Menu.Close()
 for fn in g.StopHandlers.values():
     fn('org2')
@@ -382,7 +388,7 @@ lua.execute('Dead = false')
 
 # ----------------------------------------------------------------------
 print('Geld geben (Dialog und Inventar)')
-lua.execute("Nearby = { { serverId = 4, distance = 1.0 } }")
+lua.execute("Nearby = { { serverId = 4, distance = 1.0 } }; Sight = { serverId = 4, distance = 1.0 }")
 g.Interact.Open()
 clear(lua)
 ui(lua, 'menu_select', {'id': 'e:person_give_cash'})
