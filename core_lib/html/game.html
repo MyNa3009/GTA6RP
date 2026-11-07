@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<!--
+  UI: Minigames (core_lib)
+  CONTRACT_VERSION: 1
+  Skillcheck (Ring unten in der Mitte), Schloss knacken, Hacken, Kabel verbinden (Feld in der Bildmitte).
+  Escape gibt auf. Das Ergebnis ist nur Komfort, bei Wertvollem prueft der Server Zeit und Zustand selbst.
+
+  EINGEHEND (Lua -> UI)
+  game_open {
+    id: number,
+    kind: "skillcheck" | "lockpick" | "hack" | "wires",
+    options:
+      skillcheck { stages: { area: number, speed: number, key: string }[] }   // area in Grad, speed in Umdrehungen pro Sekunde
+      lockpick   { pins: number, attempts: number, zone: number, speed: number, timeLimitMs: number }
+      hack       { grid: number, startLength: number, rounds: number, stepMs: number, timeLimitMs: number }
+      wires      { count: number, timeLimitMs: number }
+  }
+  game_close {}
+
+  AUSGEHEND (UI -> Lua)
+  ui_ready    { ui: "game", version: 1 }   -> data.colors
+  game_result { id: number, success: boolean }
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minigame</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Operate (kurz und angespannt). Dichte 6, Bewegung 4 (nur das Spielfeld bewegt sich), Varianz 2.
+  Richtung: angespannt, praezise, handwerklich. Welt: Schliesszylinder, Platine, Kabelbaum.
+  Highlight: das Spielfeld selbst. Rahmen ruhig, Akzent nur fuer Zielzone, Treffer und die aktuelle Taste.
+  Signatur: die Taste als grosse Keycap in der Mitte des Rings.
+*/
+:root {
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.92);
+  --c-surface:     rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.10);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.10);
+  --shadow:        0 8px 24px rgb(var(--rgb-base) / 0.5);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+
+  --dur-fast: 120ms; --dur-base: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --panel-w: clamp(360px, 30vw, 560px);
+  --ring: clamp(168px, 11vw, 220px);
+  --ring-bottom: clamp(104px, 15vh, 200px);
+  --timer-h: 4px;
+  --pin-w: clamp(36px, 2.6vw, 48px);
+  --pin-track-h: clamp(140px, 18vh, 200px);
+  --pin-h: 20px;
+  --cell: clamp(48px, 4vw, 72px);
+  --terminal: clamp(40px, 3vw, 52px);
+  --wire-gap: clamp(120px, 12vw, 220px);
+  --keycap-big: 48px;
+  --dot: 8px;
+  --z-panel: 10;
+  --z-result: 11;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-xs);
+  color: var(--c-text-2);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+[hidden] { display: none !important; }
+
+/* ---------- Gemeinsames Feld ---------- */
+.panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: var(--z-panel);
+  width: var(--panel-w);
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: rgb(var(--rgb-base) / 0.96);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.timer { height: var(--timer-h); background: var(--c-surface-hi); }
+.timer span { display: block; height: 100%; background: var(--c-text-2); transform-origin: left center; }
+.timer.is-low span { background: var(--c-signal); }
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5) 0;
+}
+.title { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+.sub { margin: var(--space-1) 0 0; font-size: var(--fs-sm); color: var(--c-text-2); }
+.counter {
+  flex: none;
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.counter strong { color: var(--c-text); font-weight: 600; }
+.board {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  min-height: calc(var(--pin-track-h) + var(--space-6) * 2);
+}
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  border-top: 1px solid var(--c-border);
+  color: var(--c-text-muted);
+  font-size: var(--fs-xs);
+}
+.foot span { display: inline-flex; align-items: center; gap: var(--space-1); }
+
+.result {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-result);
+  display: grid;
+  place-items: center;
+  background: rgb(var(--rgb-base) / 0.82);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+.result.is-win { color: var(--c-accent); }
+.result.is-lose { color: var(--c-signal); }
+
+/* ---------- Skillcheck ---------- */
+.skill {
+  position: fixed;
+  left: 50%;
+  bottom: var(--ring-bottom);
+  z-index: var(--z-panel);
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+}
+.skill-ring { position: relative; width: var(--ring); height: var(--ring); }
+.skill-ring svg { width: 100%; height: 100%; overflow: visible; }
+.skill-ring .face { fill: rgb(var(--rgb-base) / 0.88); }
+.skill-ring .track { fill: none; stroke: rgb(var(--rgb-ink) / 0.12); stroke-width: 12; }
+.skill-ring .zone { fill: none; stroke: var(--c-accent); stroke-width: 12; }
+.skill-ring .needle { stroke: rgb(var(--rgb-ink)); stroke-width: 4; stroke-linecap: round; }
+.skill-ring.is-hit .zone { stroke: rgb(var(--rgb-ink)); }
+.skill-ring.is-miss .needle { stroke: var(--c-signal); }
+.skill-key {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  min-width: var(--keycap-big);
+  height: var(--keycap-big);
+  transform: translate(-50%, -50%);
+  font-size: var(--fs-xl);
+  border-width: 2px;
+  border-radius: var(--radius-md);
+  color: var(--c-text);
+  background: var(--c-surface);
+}
+.dots { display: flex; gap: var(--space-2); }
+.dots i {
+  width: var(--dot); height: var(--dot);
+  border-radius: 50%;
+  border: 1px solid rgb(var(--rgb-ink) / 0.4);
+}
+.dots i.is-done { background: var(--c-accent); border-color: var(--c-accent); }
+.dots i.is-current { border-color: rgb(var(--rgb-ink)); }
+.skill-result { font-size: var(--fs-md); font-weight: 600; min-height: 1.4em; }
+.skill-result.is-win { color: var(--c-accent); }
+.skill-result.is-lose { color: var(--c-signal); }
+
+/* ---------- Schloss knacken ---------- */
+.pins { display: flex; gap: var(--space-3); cursor: pointer; }
+.pin {
+  position: relative;
+  width: var(--pin-w);
+  height: var(--pin-track-h);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  overflow: hidden;
+}
+.pin.is-active { border-color: rgb(var(--rgb-ink) / 0.4); background: var(--c-surface-hi); }
+.pin .shear {
+  position: absolute;
+  left: 0; right: 0;
+  background: var(--c-accent-soft);
+  border-top: 1px solid var(--c-accent-line);
+  border-bottom: 1px solid var(--c-accent-line);
+}
+.pin .key-pin {
+  position: absolute;
+  left: var(--space-1); right: var(--space-1);
+  bottom: 0;
+  height: var(--pin-h);
+  border-radius: var(--radius-xs);
+  background: rgb(var(--rgb-ink) / 0.55);
+  will-change: transform;
+}
+.pin.is-active .key-pin { background: rgb(var(--rgb-ink)); }
+.pin.is-set .key-pin { background: var(--c-accent); }
+.pin.is-slip .key-pin { background: var(--c-signal); }
+
+/* ---------- Hacken ---------- */
+.grid { display: grid; gap: var(--space-2); }
+.cell {
+  width: var(--cell);
+  height: var(--cell);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.cell:hover { background: var(--c-surface-hi); }
+.cell:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 2px; }
+.cell:active { transform: scale(0.97); }
+.cell.is-lit { background: var(--c-accent); border-color: var(--c-accent); }
+.cell.is-pressed { background: rgb(var(--rgb-ink) / 0.7); }
+.cell.is-wrong { background: var(--c-signal); border-color: var(--c-signal); }
+.grid.is-showing .cell { cursor: default; }
+
+/* ---------- Kabel ---------- */
+.wires { position: relative; display: grid; grid-template-columns: auto var(--wire-gap) auto; align-items: stretch; }
+.wires svg.lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.wires svg.lines path { fill: none; stroke-width: 6; stroke-linecap: round; }
+.column { display: grid; gap: var(--space-3); }
+.column.is-right { grid-column: 3; }
+.terminal {
+  width: var(--terminal);
+  height: var(--terminal);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.terminal:hover { background: var(--c-surface-hi); }
+.terminal:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 2px; }
+.terminal[aria-pressed="true"] { border-color: rgb(var(--rgb-ink)); background: var(--c-surface-hi); }
+.terminal:disabled { cursor: default; opacity: 0.55; }
+.terminal svg { width: 60%; height: 60%; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="s-circle"><circle cx="12" cy="12" r="8"/></g>
+    <g id="s-square"><rect x="5" y="5" width="14" height="14" rx="2"/></g>
+    <g id="s-triangle"><path d="M12 4 20 19H4z"/></g>
+    <g id="s-diamond"><path d="M12 3 21 12 12 21 3 12z"/></g>
+    <g id="s-hexagon"><path d="M7.5 4h9L21 12l-4.5 8h-9L3 12z"/></g>
+    <g id="s-cross"><path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/></g>
+  </defs>
+</svg>
+
+<!-- Skillcheck: unten in der Mitte, die Spielsicht bleibt frei -->
+<section class="skill" id="skill" aria-labelledby="skill-label" hidden>
+  <div class="skill-ring" id="skill-ring">
+    <svg viewBox="0 0 200 200" aria-hidden="true">
+      <circle class="face" cx="100" cy="100" r="96"/>
+      <circle class="track" cx="100" cy="100" r="84"/>
+      <path class="zone" id="skill-zone"/>
+      <g id="skill-needle"><line class="needle" x1="100" y1="8" x2="100" y2="34"/></g>
+    </svg>
+    <kbd class="skill-key" id="skill-key">E</kbd>
+  </div>
+  <p class="sub" id="skill-label"></p>
+  <div class="dots" id="skill-dots" aria-hidden="true"></div>
+  <p class="skill-result" id="skill-result" role="status" aria-live="polite"></p>
+</section>
+
+<!-- Schloss, Hacken, Kabel: Feld in der Mitte -->
+<section class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="title" hidden>
+  <div class="timer" id="timer"><span id="timer-fill"></span></div>
+  <header class="head">
+    <div>
+      <h1 class="title" id="title"></h1>
+      <p class="sub" id="sub"></p>
+    </div>
+    <p class="counter" id="counter" aria-live="polite"></p>
+  </header>
+  <div class="board" id="board"></div>
+  <footer class="foot" id="foot"></footer>
+  <div class="result" id="result" role="status" aria-live="assertive" hidden></div>
+</section>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();const Mock = {
+  async handle(event, data) {
+    console.info(`[mock] ${event}`, data);
+    return { ok: true };
+  },
+  push(event, data) {
+    Bridge.emit(event, data);
+  },
+};
+</script>
+
+<script id="app">
+const TEXT = {
+  win: 'Geschafft',
+  lose: 'Nicht geschafft',
+  giveUp: 'aufgeben',
+  skill: { hint: (key) => `${key} drücken, wenn der Zeiger im markierten Bereich ist` },
+  lockpick: {
+    title: 'Schloss knacken',
+    sub: 'Setz jeden Stift, wenn er im markierten Bereich steht',
+    counter: (set, total) => `Stift <strong>${set}</strong> von ${total}`,
+    attempts: (left) => `Dietriche übrig: ${left}`,
+    keySet: 'setzen',
+  },
+  hack: {
+    title: 'Terminal hacken',
+    show: 'Folge merken…',
+    input: (done, total) => `Folge nachgeben: ${done} von ${total}`,
+    counter: (round, total) => `Runde <strong>${round}</strong> von ${total}`,
+    keyMove: 'Feld wählen',
+    keyPress: 'drücken',
+  },
+  wires: {
+    title: 'Kabel verbinden',
+    sub: 'Verbinde jedes Kabel mit dem Anschluss in derselben Form und Farbe',
+    counter: (done, total) => `<strong>${done}</strong> von ${total} verbunden`,
+    keyMove: 'Anschluss wählen',
+    keySide: 'Seite wechseln',
+    keyPick: 'verbinden',
+    left: (shape) => `Kabel ${shape}`,
+    right: (shape) => `Anschluss ${shape}`,
+  },
+  shapes: { circle: 'Kreis', square: 'Quadrat', triangle: 'Dreieck', diamond: 'Raute', hexagon: 'Sechseck', cross: 'Kreuz' },
+};
+
+const UI = 'game';
+const RESULT_SHOW_MS = 650;      // so lange steht "Geschafft" oder "Nicht geschafft"
+const STAGE_PAUSE_MS = 220;      // Pause zwischen zwei Runden im Skillcheck
+const SKILL_MIN_START_DEG = 110; // die Zielzone liegt nie direkt am Start des Zeigers
+const SKILL_END_MARGIN_DEG = 12;
+const FULL_TURN = 360;
+const LOW_TIME_SHARE = 0.25;     // ab hier wird der Zeitbalken rot
+const PIN_ZONE_MIN = 0.12;       // Zielbereich der Stifte zwischen 12 % und 88 % der Bahn
+const PIN_ZONE_MAX = 0.88;
+const SLIP_MS = 260;
+const HACK_GAP_MS = 140;         // Pause zwischen zwei leuchtenden Feldern
+const HACK_PRESS_MS = 160;
+const WIRE_SHAPES = ['circle', 'square', 'triangle', 'diamond', 'hexagon', 'cross'];
+const WIRE_TINTS = ['rgb(var(--rgb-accent))', 'rgb(var(--rgb-signal))', 'rgb(var(--rgb-ink) / 0.92)', 'rgb(var(--rgb-ink) / 0.45)'];
+const SET_KEYS = [' ', 'Enter', 'e', 'E'];
+
+const state = {
+  open: false, id: null, kind: null, options: null, finished: false,
+  raf: 0, timers: [], timerEnd: 0,
+  skill: null, lock: null, hack: null, wires: null,
+};
+
+const el = {
+  skill: document.getElementById('skill'),
+  skillRing: document.getElementById('skill-ring'),
+  skillZone: document.getElementById('skill-zone'),
+  skillNeedle: document.getElementById('skill-needle'),
+  skillKey: document.getElementById('skill-key'),
+  skillLabel: document.getElementById('skill-label'),
+  skillDots: document.getElementById('skill-dots'),
+  skillResult: document.getElementById('skill-result'),
+  panel: document.getElementById('panel'),
+  timer: document.getElementById('timer'),
+  timerFill: document.getElementById('timer-fill'),
+  title: document.getElementById('title'),
+  sub: document.getElementById('sub'),
+  counter: document.getElementById('counter'),
+  board: document.getElementById('board'),
+  foot: document.getElementById('foot'),
+  result: document.getElementById('result'),
+};
+
+function applyColors(colors) {
+  if (!colors) return;
+  const root = document.documentElement.style;
+  ['base', 'ink', 'accent', 'signal'].forEach((key) => {
+    if (typeof colors[key] === 'string') root.setProperty(`--rgb-${key}`, colors[key]);
+  });
+}
+
+// Der Shell sagen, dass diese Anzeige jetzt weg ist (nur reine Anzeigen)
+function hideFrame(ui) {
+  try { if (window.parent !== window) window.parent.postMessage({ type: 'shell_hide', ui }, '*'); } catch (err) { /* ohne Shell */ }
+}
+
+/* ---------- Hilfen ---------- */
+
+function later(fn, ms) {
+  const handle = setTimeout(fn, ms);
+  state.timers.push(handle);
+  return handle;
+}
+
+function stopAll() {
+  cancelAnimationFrame(state.raf);
+  state.raf = 0;
+  state.timers.forEach(clearTimeout);
+  state.timers = [];
+}
+
+function random(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function shuffle(list) {
+  const copy = [...list];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function setFoot(parts) {
+  const fragment = document.createDocumentFragment();
+  [...parts, ['Esc', TEXT.giveUp]].forEach(([key, label]) => {
+    const span = document.createElement('span');
+    const kbd = document.createElement('kbd');
+    kbd.textContent = key;
+    span.append(kbd, document.createTextNode(label));
+    fragment.appendChild(span);
+  });
+  el.foot.replaceChildren(fragment);
+}
+
+function setCounter(html) {
+  // Nur feste Texte aus TEXT mit Zahlen, keine Eingaben von aussen
+  if (el.counter.innerHTML !== html) el.counter.innerHTML = html;
+}
+
+function startTimer(ms) {
+  el.timer.hidden = false;
+  el.timer.classList.remove('is-low');
+  el.timerFill.style.transition = 'none';
+  el.timerFill.style.transform = 'scaleX(1)';
+  void el.timerFill.offsetWidth;
+  el.timerFill.style.transition = `transform ${ms}ms linear`;
+  el.timerFill.style.transform = 'scaleX(0)';
+  state.timerEnd = performance.now() + ms;
+  later(() => el.timer.classList.add('is-low'), ms * (1 - LOW_TIME_SHARE));
+  later(() => finish(false), ms);
+}
+
+function stopTimer() {
+  const left = Math.max(0, state.timerEnd - performance.now());
+  el.timerFill.style.transition = 'none';
+  el.timerFill.style.transform = `scaleX(${left > 0 ? left / (left + 1) : 0})`;
+}
+
+function svgUse(id, fill) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.style.fill = fill;
+  const use = document.createElementNS(ns, 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.appendChild(use);
+  return svg;
+}
+
+/* ---------- Ergebnis ---------- */
+
+function finish(success) {
+  if (!state.open || state.finished) return;
+  state.finished = true;
+  stopAll();
+  if (state.kind === 'skillcheck') {
+    el.skillResult.textContent = success ? TEXT.win : TEXT.lose;
+    el.skillResult.className = `skill-result ${success ? 'is-win' : 'is-lose'}`;
+  } else {
+    stopTimer();
+    el.result.textContent = success ? TEXT.win : TEXT.lose;
+    el.result.className = `result ${success ? 'is-win' : 'is-lose'}`;
+    el.result.hidden = false;
+  }
+  const id = state.id;
+  setTimeout(() => {
+    Bridge.send('game_result', { id, success });
+    if (Bridge.platform === 'mock') close();
+  }, RESULT_SHOW_MS);
+}
+
+function close() {
+  stopAll();
+  state.open = false;
+  el.skill.hidden = true;
+  el.panel.hidden = true;
+  el.board.replaceChildren();
+}
+
+/* ---------- Skillcheck ---------- */
+
+// Bogen auf dem Kreis, 0 Grad oben, im Uhrzeigersinn
+function arcPath(radius, startDeg, endDeg) {
+  const point = (deg) => {
+    const rad = ((deg - 90) * Math.PI) / 180;
+    return [100 + radius * Math.cos(rad), 100 + radius * Math.sin(rad)];
+  };
+  const [x1, y1] = point(startDeg);
+  const [x2, y2] = point(endDeg);
+  const large = endDeg - startDeg > 180 ? 1 : 0;
+  return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius} ${radius} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+}
+
+function renderSkillDots() {
+  const s = state.skill;
+  const fragment = document.createDocumentFragment();
+  s.stages.forEach((_, index) => {
+    const dot = document.createElement('i');
+    if (index < s.index) dot.className = 'is-done';
+    else if (index === s.index) dot.className = 'is-current';
+    fragment.appendChild(dot);
+  });
+  el.skillDots.replaceChildren(fragment);
+  el.skillDots.hidden = s.stages.length < 2;
+}
+
+function startStage() {
+  const s = state.skill;
+  const stage = s.stages[s.index];
+  s.zoneStart = random(SKILL_MIN_START_DEG, FULL_TURN - stage.area - SKILL_END_MARGIN_DEG);
+  s.zoneEnd = s.zoneStart + stage.area;
+  s.angle = 0;
+  s.degPerMs = (stage.speed * FULL_TURN) / 1000;
+  s.last = performance.now();
+  s.waiting = false;
+  el.skillRing.classList.remove('is-hit', 'is-miss');
+  el.skillZone.setAttribute('d', arcPath(84, s.zoneStart, s.zoneEnd));
+  el.skillKey.textContent = stage.key;
+  el.skillLabel.textContent = TEXT.skill.hint(stage.key);
+  renderSkillDots();
+  state.raf = requestAnimationFrame(skillFrame);
+}
+
+function skillFrame(now) {
+  const s = state.skill;
+  s.angle += (now - s.last) * s.degPerMs;
+  s.last = now;
+  if (s.angle >= FULL_TURN) {
+    el.skillRing.classList.add('is-miss');
+    finish(false);
+    return;
+  }
+  el.skillNeedle.setAttribute('transform', `rotate(${s.angle.toFixed(2)} 100 100)`);
+  state.raf = requestAnimationFrame(skillFrame);
+}
+
+function skillPress(key) {
+  const s = state.skill;
+  if (s.waiting) return;
+  cancelAnimationFrame(state.raf);
+  const stage = s.stages[s.index];
+  const hit = key.toUpperCase() === stage.key && s.angle >= s.zoneStart && s.angle <= s.zoneEnd;
+  if (!hit) {
+    el.skillRing.classList.add('is-miss');
+    finish(false);
+    return;
+  }
+  el.skillRing.classList.add('is-hit');
+  s.index += 1;
+  if (s.index >= s.stages.length) {
+    renderSkillDots();
+    finish(true);
+    return;
+  }
+  s.waiting = true;
+  later(startStage, STAGE_PAUSE_MS);
+}
+
+function openSkill(options) {
+  state.skill = { stages: options.stages || [], index: 0 };
+  el.skillResult.textContent = '';
+  el.skillResult.className = 'skill-result';
+  el.skill.hidden = false;
+  startStage();
+}
+
+/* ---------- Schloss knacken ---------- */
+
+function openLockpick(options) {
+  const pins = [];
+  const container = document.createElement('div');
+  container.className = 'pins';
+  container.dataset.action = 'lock-set';
+  for (let i = 0; i < options.pins; i += 1) {
+    const start = random(PIN_ZONE_MIN, PIN_ZONE_MAX - options.zone);
+    const pin = document.createElement('div');
+    pin.className = 'pin';
+    const shear = document.createElement('div');
+    shear.className = 'shear';
+    shear.style.bottom = `${start * 100}%`;
+    shear.style.height = `${options.zone * 100}%`;
+    const keyPin = document.createElement('div');
+    keyPin.className = 'key-pin';
+    pin.append(shear, keyPin);
+    container.appendChild(pin);
+    pins.push({ node: pin, keyPin, start, end: start + options.zone, set: false });
+  }
+  el.board.replaceChildren(container);
+  state.lock = { pins, index: 0, attempts: options.attempts, speed: options.speed, phase: 0, last: performance.now(), height: 0, slipping: false };
+  el.title.textContent = TEXT.lockpick.title;
+  el.sub.textContent = TEXT.lockpick.sub;
+  setFoot([['Leertaste', TEXT.lockpick.keySet]]);
+  renderLock();
+  // Bahnhoehe einmal messen, danach nur transform
+  state.lock.height = pins[0].node.clientHeight - pins[0].keyPin.offsetHeight;
+  startTimer(options.timeLimitMs);
+  state.raf = requestAnimationFrame(lockFrame);
+}
+
+function renderLock() {
+  const l = state.lock;
+  l.pins.forEach((pin, index) => {
+    pin.node.classList.toggle('is-active', index === l.index);
+    pin.node.classList.toggle('is-set', pin.set);
+  });
+  setCounter(`${TEXT.lockpick.counter(Math.min(l.index + 1, l.pins.length), l.pins.length)}<br>${TEXT.lockpick.attempts(l.attempts)}`);
+}
+
+// Stift laeuft gleichmaessig hoch und runter (Dreieck), Position 0 unten bis 1 oben
+function lockPosition(phase) {
+  const t = phase % 2;
+  return t <= 1 ? t : 2 - t;
+}
+
+function lockFrame(now) {
+  const l = state.lock;
+  l.phase += ((now - l.last) / 1000) * l.speed * 2;
+  l.last = now;
+  const pin = l.pins[l.index];
+  if (pin && !l.slipping) {
+    pin.position = lockPosition(l.phase);
+    pin.keyPin.style.transform = `translateY(${(-pin.position * l.height).toFixed(1)}px)`;
+  }
+  state.raf = requestAnimationFrame(lockFrame);
+}
+
+function lockSet() {
+  const l = state.lock;
+  const pin = l.pins[l.index];
+  if (!pin || l.slipping) return;
+  // Der Stift sitzt, wenn seine Mitte im Zielbereich ist
+  const pinShare = pin.keyPin.offsetHeight / pin.node.clientHeight;
+  const center = pin.position * (1 - pinShare) + pinShare / 2;
+  if (center >= pin.start && center <= pin.end) {
+    pin.set = true;
+    l.index += 1;
+    l.phase = 0;
+    renderLock();
+    if (l.index >= l.pins.length) finish(true);
+    return;
+  }
+  l.attempts -= 1;
+  l.slipping = true;
+  pin.node.classList.add('is-slip');
+  renderLock();
+  if (l.attempts <= 0) {
+    finish(false);
+    return;
+  }
+  later(() => {
+    pin.node.classList.remove('is-slip');
+    l.slipping = false;
+    l.phase = 0;
+  }, SLIP_MS);
+}
+
+/* ---------- Hacken ---------- */
+
+function openHack(options) {
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  grid.style.gridTemplateColumns = `repeat(${options.grid}, var(--cell))`;
+  grid.setAttribute('role', 'grid');
+  const cells = [];
+  for (let i = 0; i < options.grid * options.grid; i += 1) {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'cell';
+    cell.dataset.action = 'hack-cell';
+    cell.dataset.index = String(i);
+    cell.tabIndex = i === 0 ? 0 : -1;
+    cell.setAttribute('aria-label', `Feld ${i + 1}`);
+    grid.appendChild(cell);
+    cells.push(cell);
+  }
+  el.board.replaceChildren(grid);
+  state.hack = { options, grid, cells, round: 1, sequence: [], step: 0, showing: true, focus: 0 };
+  el.title.textContent = TEXT.hack.title;
+  setFoot([['↑↓←→', TEXT.hack.keyMove], ['Enter', TEXT.hack.keyPress]]);
+  el.timer.hidden = true;
+  startHackRound();
+}
+
+function startHackRound() {
+  const h = state.hack;
+  const length = h.options.startLength + h.round - 1;
+  h.sequence = [];
+  while (h.sequence.length < length) {
+    const next = Math.floor(Math.random() * h.cells.length);
+    if (next !== h.sequence[h.sequence.length - 1]) h.sequence.push(next);
+  }
+  h.step = 0;
+  h.showing = true;
+  h.grid.classList.add('is-showing');
+  el.sub.textContent = TEXT.hack.show;
+  setCounter(TEXT.hack.counter(h.round, h.options.rounds));
+  el.timer.hidden = true;
+  h.sequence.forEach((cellIndex, i) => {
+    const at = i * (h.options.stepMs + HACK_GAP_MS) + HACK_GAP_MS;
+    later(() => h.cells[cellIndex].classList.add('is-lit'), at);
+    later(() => h.cells[cellIndex].classList.remove('is-lit'), at + h.options.stepMs);
+  });
+  later(() => {
+    h.showing = false;
+    h.grid.classList.remove('is-showing');
+    el.sub.textContent = TEXT.hack.input(0, h.sequence.length);
+    h.cells[h.focus].focus();
+    startTimer(h.options.timeLimitMs);
+  }, h.sequence.length * (h.options.stepMs + HACK_GAP_MS) + HACK_GAP_MS);
+}
+
+function hackPress(index) {
+  const h = state.hack;
+  if (h.showing || state.finished) return;
+  const cell = h.cells[index];
+  if (h.sequence[h.step] !== index) {
+    cell.classList.add('is-wrong');
+    finish(false);
+    return;
+  }
+  cell.classList.add('is-pressed');
+  later(() => cell.classList.remove('is-pressed'), HACK_PRESS_MS);
+  h.step += 1;
+  el.sub.textContent = TEXT.hack.input(h.step, h.sequence.length);
+  if (h.step < h.sequence.length) return;
+  if (h.round >= h.options.rounds) {
+    finish(true);
+    return;
+  }
+  // Naechste Runde: Zeit anhalten, Feld sperren (Klicks in der Pause zaehlen nicht), neue Folge zeigen
+  state.timers.forEach(clearTimeout);
+  state.timers = [];
+  h.showing = true;
+  h.grid.classList.add('is-showing');
+  h.round += 1;
+  later(startHackRound, STAGE_PAUSE_MS);
+}
+
+function hackMove(dx, dy) {
+  const h = state.hack;
+  const size = h.options.grid;
+  const x = (h.focus % size + dx + size) % size;
+  const y = (Math.floor(h.focus / size) + dy + size) % size;
+  h.cells[h.focus].tabIndex = -1;
+  h.focus = y * size + x;
+  h.cells[h.focus].tabIndex = 0;
+  h.cells[h.focus].focus();
+}
+
+/* ---------- Kabel ---------- */
+
+function openWires(options) {
+  const wires = [];
+  for (let i = 0; i < options.count; i += 1) {
+    wires.push({ id: i, shape: WIRE_SHAPES[i % WIRE_SHAPES.length], tint: WIRE_TINTS[i % WIRE_TINTS.length], done: false });
+  }
+  const board = document.createElement('div');
+  board.className = 'wires';
+  const ns = 'http://www.w3.org/2000/svg';
+  const lines = document.createElementNS(ns, 'svg');
+  lines.setAttribute('class', 'lines');
+  lines.setAttribute('aria-hidden', 'true');
+  const makeColumn = (list, side) => {
+    const column = document.createElement('div');
+    column.className = `column ${side === 'right' ? 'is-right' : ''}`;
+    list.forEach((wire, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'terminal';
+      button.dataset.action = 'wire';
+      button.dataset.side = side;
+      button.dataset.wire = String(wire.id);
+      button.dataset.index = String(index);
+      button.setAttribute('aria-pressed', 'false');
+      const name = TEXT.shapes[wire.shape];
+      button.setAttribute('aria-label', side === 'left' ? TEXT.wires.left(name) : TEXT.wires.right(name));
+      button.appendChild(svgUse(`s-${wire.shape}`, wire.tint));
+      column.appendChild(button);
+    });
+    return column;
+  };
+  const left = makeColumn(shuffle(wires), 'left');
+  const right = makeColumn(shuffle(wires), 'right');
+  board.append(lines, left, right);
+  el.board.replaceChildren(board);
+  state.wires = { wires, board, lines, left, right, picked: null, done: 0 };
+  el.title.textContent = TEXT.wires.title;
+  el.sub.textContent = TEXT.wires.sub;
+  setFoot([['↑↓', TEXT.wires.keyMove], ['←→', TEXT.wires.keySide], ['Enter', TEXT.wires.keyPick]]);
+  setCounter(TEXT.wires.counter(0, wires.length));
+  left.querySelector('.terminal').focus();
+  startTimer(options.timeLimitMs);
+}
+
+function drawWire(from, to, tint) {
+  const w = state.wires;
+  const box = w.board.getBoundingClientRect();
+  const a = from.getBoundingClientRect();
+  const b = to.getBoundingClientRect();
+  const x1 = a.right - box.left;
+  const y1 = a.top + a.height / 2 - box.top;
+  const x2 = b.left - box.left;
+  const y2 = b.top + b.height / 2 - box.top;
+  const mid = (x1 + x2) / 2;
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
+  path.style.stroke = tint;
+  w.lines.appendChild(path);
+}
+
+function wirePress(button) {
+  const w = state.wires;
+  if (button.disabled || state.finished) return;
+  if (button.dataset.side === 'left') {
+    if (w.picked) w.picked.setAttribute('aria-pressed', 'false');
+    w.picked = button;
+    button.setAttribute('aria-pressed', 'true');
+    const next = w.right.querySelector('.terminal:not(:disabled)');
+    if (next) next.focus();
+    return;
+  }
+  if (!w.picked) {
+    const first = w.left.querySelector('.terminal:not(:disabled)');
+    if (first) first.focus();
+    return;
+  }
+  const wire = w.wires[Number(w.picked.dataset.wire)];
+  if (button.dataset.wire !== w.picked.dataset.wire) {
+    drawWire(w.picked, button, 'rgb(var(--rgb-signal))');
+    finish(false);
+    return;
+  }
+  drawWire(w.picked, button, wire.tint);
+  w.picked.disabled = true;
+  button.disabled = true;
+  w.picked.setAttribute('aria-pressed', 'false');
+  w.picked = null;
+  w.done += 1;
+  setCounter(TEXT.wires.counter(w.done, w.wires.length));
+  if (w.done >= w.wires.length) {
+    finish(true);
+    return;
+  }
+  const next = w.left.querySelector('.terminal:not(:disabled)');
+  if (next) next.focus();
+}
+
+function wireMove(step) {
+  const current = document.activeElement;
+  if (!current || !current.classList.contains('terminal')) return;
+  const list = [...current.parentElement.querySelectorAll('.terminal:not(:disabled)')];
+  const index = list.indexOf(current);
+  const next = list[(index + step + list.length) % list.length];
+  if (next) next.focus();
+}
+
+function wireSide() {
+  const w = state.wires;
+  const current = document.activeElement;
+  const target = current && current.closest('.column') === w.left ? w.right : w.left;
+  const next = target.querySelector('.terminal:not(:disabled)');
+  if (next) next.focus();
+}
+
+/* ---------- Oeffnen und Eingabe ---------- */
+
+function open(data) {
+  close();
+  state.open = true;
+  state.finished = false;
+  state.id = data.id;
+  state.kind = data.kind;
+  state.options = data.options || {};
+  el.result.hidden = true;
+  el.counter.innerHTML = '';
+  if (state.kind === 'skillcheck') {
+    openSkill(state.options);
+    return;
+  }
+  el.panel.hidden = false;
+  if (state.kind === 'lockpick') openLockpick(state.options);
+  else if (state.kind === 'hack') openHack(state.options);
+  else if (state.kind === 'wires') openWires(state.options);
+  else finish(false);
+}
+
+el.board.addEventListener('click', (e) => {
+  if (!state.open || state.finished) return;
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+  if (target.dataset.action === 'lock-set') lockSet();
+  if (target.dataset.action === 'hack-cell') hackPress(Number(target.dataset.index));
+  if (target.dataset.action === 'wire') wirePress(target);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (!state.open || state.finished || e.repeat) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    finish(false);
+    return;
+  }
+  if (state.kind === 'skillcheck') {
+    if (e.key.length === 1 && /[a-z0-9]/i.test(e.key)) {
+      e.preventDefault();
+      skillPress(e.key);
+    }
+  } else if (state.kind === 'lockpick') {
+    if (SET_KEYS.includes(e.key)) {
+      e.preventDefault();
+      lockSet();
+    }
+  } else if (state.kind === 'hack') {
+    const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    if (moves[e.key]) {
+      e.preventDefault();
+      hackMove(...moves[e.key]);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      hackPress(state.hack.focus);
+    }
+  } else if (state.kind === 'wires') {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      wireMove(e.key === 'ArrowDown' ? 1 : -1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      wireSide();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (document.activeElement?.classList.contains('terminal')) wirePress(document.activeElement);
+    }
+  }
+});
+
+Bridge.on('game_open', open);
+Bridge.on('game_close', close);
+
+(async () => {
+  const result = await Bridge.send('ui_ready', { ui: UI, version: CONTRACT_VERSION });
+  if (result?.ok) applyColors(result.data?.colors);
+  if (Bridge.platform === 'mock') {
+    const kind = new URLSearchParams(location.search).get('kind') || 'lockpick';
+    const demo = {
+      skillcheck: { stages: [{ area: 44, speed: 0.75, key: 'E' }, { area: 44, speed: 0.75, key: 'E' }, { area: 28, speed: 1, key: 'W' }] },
+      lockpick: { pins: 5, attempts: 3, zone: 0.18, speed: 0.9, timeLimitMs: 45000 },
+      hack: { grid: 4, startLength: 3, rounds: 3, stepMs: 520, timeLimitMs: 20000 },
+      wires: { count: 4, timeLimitMs: 15000 },
+    };
+    Mock.push('game_open', { id: 1, kind, options: demo[kind] });
+  }
+})();
+</script>
+</body>
+</html>

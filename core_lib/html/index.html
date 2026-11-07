@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<!--
+  UI: Shell (ui_page der core_lib)
+  Jede UI ist eine eigene Datei und laeuft hier in einem iframe.
+  Die Shell leitet Nachrichten aus Lua an die passende UI weiter.
+
+  REGEL
+  Eventnamen beginnen mit dem UI-Namen: menu_open -> menu, game_open -> game.
+  <ui>_open blendet die UI ein, <ui>_close blendet sie aus.
+  data-passive bei reinen Anzeigen, damit sie keine Klicks abfangen.
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>core_lib UI</title>
+<style>
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.ui-frame {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+.ui-frame[hidden] { display: none; }
+.ui-frame[data-passive] { pointer-events: none; }
+</style>
+</head>
+<body>
+
+<!-- Reihenfolge = Ebene: Anzeigen unten, Menue darueber, Dialog und Minigame ganz oben -->
+<iframe class="ui-frame" data-ui="textui" src="textui.html" title="Hinweis" data-passive hidden></iframe>
+<iframe class="ui-frame" data-ui="progress" src="progress.html" title="Fortschritt" data-passive hidden></iframe>
+<iframe class="ui-frame" data-ui="menu" src="menu.html" title="Interaktion" hidden></iframe>
+<iframe class="ui-frame" data-ui="dialog" src="dialog.html" title="Dialog" hidden></iframe>
+<iframe class="ui-frame" data-ui="game" src="game.html" title="Minigame" hidden></iframe>
+
+<script>
+const OPEN_SUFFIX = '_open';
+const CLOSE_SUFFIX = '_close';
+
+const PASSIVE_HIDE_FALLBACK_MS = 1500;
+const hideTimers = {};
+const frames = {};
+document.querySelectorAll('.ui-frame').forEach((frame) => {
+  frames[frame.dataset.ui] = frame;
+});
+
+window.addEventListener('message', (e) => {
+  const msg = e.data;
+  if (!msg || typeof msg.action !== 'string') return;
+
+  const ui = msg.action.split('_')[0];
+  const frame = frames[ui];
+  if (!frame || !frame.contentWindow) {
+    console.warn(`[shell] Keine UI fuer ${msg.action}`);
+    return;
+  }
+
+  const opening = msg.action.endsWith(OPEN_SUFFIX);
+  if (opening) frame.hidden = false;
+
+  frame.contentWindow.postMessage(msg, '*');
+
+  if (opening && !frame.hasAttribute('data-passive')) frame.contentWindow.focus();
+  if (msg.action.endsWith(CLOSE_SUFFIX)) {
+    if (frame.hasAttribute('data-passive')) {
+      // Anzeigen zeigen kurz ihren Abschluss (z. B. "Abgebrochen") und melden sich dann mit shell_hide.
+      // Falls die Meldung ausbleibt, trotzdem ausblenden.
+      clearTimeout(hideTimers[ui]);
+      hideTimers[ui] = setTimeout(() => { frame.hidden = true; }, PASSIVE_HIDE_FALLBACK_MS);
+    } else {
+      // Bedienbare UIs sofort weg, sonst fangen sie Klicks fuer die UIs darunter ab
+      frame.hidden = true;
+    }
+  } else if (opening) {
+    clearTimeout(hideTimers[ui]);
+  }
+});
+
+// Eine UI meldet, dass sie fertig ausgeblendet ist
+window.addEventListener('message', (e) => {
+  const msg = e.data;
+  if (!msg || msg.type !== 'shell_hide' || typeof msg.ui !== 'string') return;
+  const frame = frames[msg.ui];
+  if (frame) {
+    clearTimeout(hideTimers[msg.ui]);
+    frame.hidden = true;
+  }
+});
+</script>
+</body>
+</html>

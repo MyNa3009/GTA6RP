@@ -41,10 +41,12 @@ Jeder Test endet mit einer Zeile wie `43 ok, 0 Fehler`.
 
 Admin-Keys sind in den Tests aus, damit die Rechte-Tests ohne Key-Eingabe laufen. Nur `test_admin_keys.py` schaltet sie mit `Env(admin_keys=True)` ein.
 
+`test_core_lib.py` braucht keine Datenbank. Er lädt die Client- und Server-Dateien der `core_lib` mit einer nachgebauten Bridge und lässt die Zeit virtuell laufen (G-Menü, Kontextmenüs, Dialoge, Fortschritt, Minigames, Zonen, `init.lua`).
+
 Syntax aller Lua-Dateien prüfen:
 
 ```bash
-python3 tests/syntax.py core core_inventory
+python3 tests/syntax.py core core_inventory core_lib
 ```
 
 ## Was die Tests nicht abdecken

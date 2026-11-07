@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<!--
+  UI: Dialog (core_lib)
+  CONTRACT_VERSION: 1
+  Eingabe mit mehreren Feldern oder eine Bestaetigung (Ja oder Nein). Mitte des Bildschirms, mit Maus und Tastatur.
+
+  EINGEHEND (Lua -> UI)
+  dialog_open {
+    id: number, kind: "input" | "alert", title: string,
+    confirmLabel?: string, cancelLabel?: string,
+    // input
+    fields?: Field[],
+    // alert
+    content?: string, cancel?: boolean, danger?: boolean
+  }
+  dialog_close {}
+
+  Field {
+    type: "input" | "number" | "textarea" | "select" | "checkbox" | "slider",
+    label: string, description?: string, placeholder?: string, required?: boolean, disabled?: boolean,
+    default?: string | number | boolean,
+    minLength?: number, maxLength?: number, password?: boolean,      // input, textarea
+    min?: number, max?: number, step?: number,                       // number, slider
+    options?: { value: string | number, label: string }[]            // select
+  }
+
+  AUSGEHEND (UI -> Lua), Antwort { ok, data?, error? }
+  ui_ready       { ui: "dialog", version: 1 }                       -> data.colors
+  dialog_submit  { id, values: any[] } | { id, cancelled: true } | { id, confirmed: boolean }
+                 // error "required" mit data.field (1-basiert): Pflichtfeld leer
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dialog</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Configure. Dichte 4, Bewegung 2, Varianz 2.
+  Ein Fenster in der Mitte, Felder untereinander, eine Hauptaktion rechts unten.
+  Bei Bestaetigungen fuer Gefaehrliches (danger) ist die Hauptaktion in der Signalfarbe.
+*/
+:root {
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.92);
+  --c-surface:     rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.10);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.10);
+  --shadow:        0 8px 24px rgb(var(--rgb-base) / 0.5);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+
+  --dur-fast: 120ms; --dur-base: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --dialog-w: clamp(360px, 30vw, 560px);
+  --dialog-max-h: min(84dvh, 900px);
+  --field-h: 40px;
+  --button-h: 40px;
+  --check: 20px;
+  --textarea-h: 96px;
+  --z-backdrop: 10;
+  --z-dialog: 20;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-xs);
+  color: var(--c-text-2);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-backdrop);
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: rgb(var(--rgb-base) / 0.35);
+}
+.backdrop[hidden] { display: none; }
+
+.dialog {
+  z-index: var(--z-dialog);
+  width: var(--dialog-w);
+  max-height: var(--dialog-max-h);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: rgb(var(--rgb-base) / 0.97);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.head { padding: var(--space-5) var(--space-5) var(--space-3); }
+.title { margin: 0; font-size: var(--fs-lg); font-weight: 600; text-wrap: balance; }
+.content {
+  margin: var(--space-2) 0 0;
+  color: var(--c-text-2);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  max-width: 65ch;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.content:empty { display: none; }
+
+.fields {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-5) var(--space-4);
+  display: grid;
+  gap: var(--space-4);
+}
+.fields:empty { display: none; }
+
+.field { display: grid; gap: var(--space-2); }
+.field-label { font-size: var(--fs-sm); font-weight: 600; color: var(--c-text); }
+.field-label .req { color: var(--c-text-muted); font-weight: 500; }
+.field-desc, .field-error { margin: 0; }
+.field-desc { font-size: var(--fs-xs); color: var(--c-text-muted); line-height: 1.4; }
+.field-error { font-size: var(--fs-xs); color: var(--c-signal); }
+.field-error:empty { display: none; }
+
+.input, .select, .textarea {
+  width: 100%;
+  height: var(--field-h);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+  color: var(--c-text);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.input[type="number"]::-webkit-inner-spin-button,
+.input[type="number"]::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.textarea { height: var(--textarea-h); padding: var(--space-2) var(--space-3); resize: vertical; line-height: 1.5; }
+.select { appearance: none; cursor: pointer; }
+.select option { background: rgb(var(--rgb-base)); color: rgb(var(--rgb-ink)); }
+.input::placeholder, .textarea::placeholder { color: var(--c-text-muted); }
+.input:hover, .select:hover, .textarea:hover { background: var(--c-surface-hi); }
+.input:focus-visible, .select:focus-visible, .textarea:focus-visible { outline: none; border-color: var(--c-accent-line); }
+.input:disabled, .select:disabled, .textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+.has-error .input, .has-error .select, .has-error .textarea { border-color: var(--c-signal); }
+
+.select-wrap { position: relative; }
+.select-wrap svg {
+  position: absolute; right: var(--space-3); top: 50%;
+  width: 16px; height: 16px; transform: translateY(-50%);
+  color: var(--c-text-muted); pointer-events: none;
+}
+
+.check {
+  display: flex; align-items: center; gap: var(--space-3);
+  cursor: pointer; font-size: var(--fs-md);
+}
+.check input {
+  appearance: none; flex: none;
+  width: var(--check); height: var(--check); margin: 0;
+  border: 1px solid rgb(var(--rgb-ink) / 0.24); border-radius: var(--radius-xs);
+  background: var(--c-surface); display: grid; place-items: center; cursor: pointer;
+}
+.check input:checked { background: var(--c-accent); border-color: var(--c-accent); }
+.check input:checked::after {
+  content: ''; width: 10px; height: 6px;
+  border-left: 2px solid var(--c-on-accent); border-bottom: 2px solid var(--c-on-accent);
+  transform: translateY(-1px) rotate(-45deg);
+}
+.check input:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 2px; }
+
+.slider { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); }
+.slider input { width: 100%; accent-color: rgb(var(--rgb-accent)); }
+.slider output { min-width: 48px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.foot {
+  display: flex; justify-content: flex-end; align-items: center; gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--c-border);
+}
+.foot .status { margin-right: auto; color: var(--c-signal); font-size: var(--fs-sm); }
+.button {
+  height: var(--button-h);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+  color: var(--c-text);
+  font: inherit; font-size: var(--fs-sm); font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.button:hover { background: var(--c-surface-hi); }
+.button:active { transform: scale(0.97); }
+.button:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 2px; }
+.button:disabled { opacity: 0.5; cursor: wait; }
+.button.is-primary { background: rgb(var(--rgb-ink) / 0.92); border-color: transparent; color: var(--c-on-accent); }
+.button.is-primary:hover { background: rgb(var(--rgb-ink)); }
+.button.is-danger { background: var(--c-signal); border-color: transparent; color: rgb(var(--rgb-ink)); }
+.button.is-danger:hover { background: rgb(var(--rgb-signal) / 0.85); }
+.button[hidden] { display: none; }
+.button kbd { margin-left: var(--space-2); height: 18px; min-width: 18px; border-color: rgb(var(--rgb-base) / 0.2); color: inherit; opacity: 0.7; }
+</style>
+</head>
+<body>
+
+<div class="backdrop" id="backdrop" hidden>
+  <form class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="title" novalidate>
+    <header class="head">
+      <h1 class="title" id="title"></h1>
+      <p class="content" id="content"></p>
+    </header>
+    <div class="fields" id="fields"></div>
+    <footer class="foot">
+      <span class="status" id="status" role="status" aria-live="polite"></span>
+      <button class="button" type="button" id="cancel" data-action="cancel"></button>
+      <button class="button is-primary" type="submit" id="confirm"></button>
+    </footer>
+  </form>
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs><g id="i-chevron-down" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></g></defs>
+</svg>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();const Mock = {
+  delay: 150,
+  async handle(event, data) {
+    await new Promise((r) => setTimeout(r, this.delay));
+    console.info(`[mock] ${event}`, data);
+    return { ok: true };
+  },
+  push(event, data) {
+    Bridge.emit(event, data);
+  },
+};
+</script>
+
+<script id="app">
+const TEXT = {
+  confirm: 'Bestätigen',
+  cancel: 'Abbrechen',
+  alertConfirm: 'Ja',
+  alertCancel: 'Nein',
+  optional: 'optional',
+  sending: 'Sendet…',
+  errors: {
+    required: 'Bitte ausfüllen.',
+    too_short: (min) => `Mindestens ${min} Zeichen.`,
+    too_small: (min) => `Mindestens ${numberFormat.format(min)}.`,
+    too_big: (max) => `Höchstens ${numberFormat.format(max)}.`,
+    not_number: 'Bitte eine Zahl eingeben.',
+    not_active: 'Der Dialog ist schon geschlossen.',
+    bridge_error: 'Keine Verbindung zum Spiel.',
+  },
+  errorFallback: 'Das hat nicht geklappt.',
+};
+
+const UI = 'dialog';
+const OPTIONAL_HINT_TYPES = ['input', 'number', 'textarea', 'select'];
+const numberFormat = new Intl.NumberFormat('de-DE');
+
+const state = { open: false, id: null, kind: 'input', fields: [], busy: false };
+
+const el = {
+  backdrop: document.getElementById('backdrop'),
+  dialog: document.getElementById('dialog'),
+  title: document.getElementById('title'),
+  content: document.getElementById('content'),
+  fields: document.getElementById('fields'),
+  status: document.getElementById('status'),
+  cancel: document.getElementById('cancel'),
+  confirm: document.getElementById('confirm'),
+};
+
+function applyColors(colors) {
+  if (!colors) return;
+  const root = document.documentElement.style;
+  ['base', 'ink', 'accent', 'signal'].forEach((key) => {
+    if (typeof colors[key] === 'string') root.setProperty(`--rgb-${key}`, colors[key]);
+  });
+}
+
+// Der Shell sagen, dass diese Anzeige jetzt weg ist (nur reine Anzeigen)
+function hideFrame(ui) {
+  try { if (window.parent !== window) window.parent.postMessage({ type: 'shell_hide', ui }, '*'); } catch (err) { /* ohne Shell */ }
+}
+
+function chevron() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(ns, 'use');
+  use.setAttribute('href', '#i-chevron-down');
+  svg.appendChild(use);
+  return svg;
+}
+
+/* ---------- Felder ---------- */
+
+function buildField(field, index) {
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+  wrap.dataset.index = String(index);
+  const inputId = `field-${index}`;
+  const descId = `field-${index}-desc`;
+  const errorId = `field-${index}-error`;
+
+  let control;
+  if (field.type === 'checkbox') {
+    const label = document.createElement('label');
+    label.className = 'check';
+    control = document.createElement('input');
+    control.type = 'checkbox';
+    control.checked = field.default === true;
+    label.append(control, document.createTextNode(field.label));
+    wrap.appendChild(label);
+  } else {
+    const label = document.createElement('label');
+    label.className = 'field-label';
+    label.htmlFor = inputId;
+    label.textContent = field.label;
+    if (!field.required && OPTIONAL_HINT_TYPES.includes(field.type)) {
+      const opt = document.createElement('span');
+      opt.className = 'req';
+      opt.textContent = ` (${TEXT.optional})`;
+      label.appendChild(opt);
+    }
+    wrap.appendChild(label);
+
+    if (field.type === 'textarea') {
+      control = document.createElement('textarea');
+      control.className = 'textarea';
+      if (field.maxLength) control.maxLength = field.maxLength;
+      control.value = typeof field.default === 'string' ? field.default : '';
+      wrap.appendChild(control);
+    } else if (field.type === 'select') {
+      const selectWrap = document.createElement('div');
+      selectWrap.className = 'select-wrap';
+      control = document.createElement('select');
+      control.className = 'select';
+      if (!field.required) control.appendChild(new Option('', ''));
+      (field.options || []).forEach((option, optionIndex) => {
+        const node = new Option(option.label, String(optionIndex));
+        if (option.value === field.default) node.selected = true;
+        control.appendChild(node);
+      });
+      selectWrap.append(control, chevron());
+      wrap.appendChild(selectWrap);
+    } else if (field.type === 'slider') {
+      const sliderWrap = document.createElement('div');
+      sliderWrap.className = 'slider';
+      control = document.createElement('input');
+      control.type = 'range';
+      control.min = String(field.min);
+      control.max = String(field.max);
+      control.step = String(field.step);
+      control.value = String(typeof field.default === 'number' ? field.default : field.min);
+      const output = document.createElement('output');
+      output.htmlFor = inputId;
+      output.textContent = numberFormat.format(Number(control.value));
+      control.addEventListener('input', () => { output.textContent = numberFormat.format(Number(control.value)); });
+      sliderWrap.append(control, output);
+      wrap.appendChild(sliderWrap);
+    } else {
+      control = document.createElement('input');
+      control.className = 'input';
+      if (field.type === 'number') {
+        control.type = 'number';
+        control.inputMode = 'decimal';
+        if (typeof field.min === 'number') control.min = String(field.min);
+        if (typeof field.max === 'number') control.max = String(field.max);
+        if (typeof field.step === 'number') control.step = String(field.step);
+        if (typeof field.default === 'number') control.value = String(field.default);
+      } else {
+        control.type = field.password ? 'password' : 'text';
+        if (field.maxLength) control.maxLength = field.maxLength;
+        control.value = typeof field.default === 'string' ? field.default : '';
+      }
+      control.autocomplete = 'off';
+      wrap.appendChild(control);
+    }
+    if (field.placeholder && 'placeholder' in control) control.placeholder = field.placeholder;
+  }
+
+  control.id = inputId;
+  control.name = inputId;
+  control.disabled = field.disabled === true;
+  if (field.required) control.setAttribute('aria-required', 'true');
+
+  if (field.description) {
+    const desc = document.createElement('p');
+    desc.className = 'field-desc';
+    desc.id = descId;
+    desc.textContent = field.description;
+    wrap.appendChild(desc);
+  }
+  const error = document.createElement('p');
+  error.className = 'field-error';
+  error.id = errorId;
+  wrap.appendChild(error);
+  control.setAttribute('aria-describedby', field.description ? `${descId} ${errorId}` : errorId);
+  return wrap;
+}
+
+function controlOf(index) {
+  return document.getElementById(`field-${index}`);
+}
+
+function setFieldError(index, message) {
+  const wrap = el.fields.querySelector(`[data-index="${index}"]`);
+  if (!wrap) return;
+  wrap.classList.toggle('has-error', Boolean(message));
+  const error = document.getElementById(`field-${index}-error`);
+  if (error.textContent !== message) error.textContent = message || '';
+  controlOf(index).setAttribute('aria-invalid', String(Boolean(message)));
+}
+
+// Werte lesen und bequem vorpruefen. Die echte Pruefung macht Lua und das Script dahinter.
+function readValues() {
+  const values = [];
+  let firstError = -1;
+  state.fields.forEach((field, index) => {
+    const control = controlOf(index);
+    let value = null;
+    let error = '';
+    if (field.type === 'checkbox') {
+      value = control.checked;
+    } else if (field.type === 'number' || field.type === 'slider') {
+      const raw = control.value.trim();
+      if (raw !== '') {
+        value = Number(raw);
+        if (!Number.isFinite(value)) error = TEXT.errors.not_number;
+        else if (typeof field.min === 'number' && value < field.min) error = TEXT.errors.too_small(field.min);
+        else if (typeof field.max === 'number' && value > field.max) error = TEXT.errors.too_big(field.max);
+      }
+    } else if (field.type === 'select') {
+      const option = field.options[Number(control.value)];
+      value = control.value === '' || !option ? null : option.value;
+    } else {
+      value = control.value;
+      if (field.type === 'input') value = value.trim();
+      if (value === '') value = null;
+      else if (field.minLength && value.length < field.minLength) error = TEXT.errors.too_short(field.minLength);
+    }
+    if (!error && field.required && (value === null || value === false && field.type !== 'checkbox')) error = TEXT.errors.required;
+    setFieldError(index, error);
+    if (error && firstError < 0) firstError = index;
+    values.push(value);
+  });
+  return { values, firstError };
+}
+
+/* ---------- Oeffnen, Senden, Schliessen ---------- */
+
+function setBusy(busy) {
+  state.busy = busy;
+  el.confirm.disabled = busy;
+  el.cancel.disabled = busy;
+  el.dialog.setAttribute('aria-busy', String(busy));
+}
+
+function setStatus(code) {
+  const text = code ? (TEXT.errors[code] || TEXT.errorFallback) : '';
+  if (el.status.textContent !== text) el.status.textContent = text;
+}
+
+function open(data) {
+  state.open = true;
+  state.id = data.id;
+  state.kind = data.kind === 'alert' ? 'alert' : 'input';
+  state.fields = state.kind === 'input' && Array.isArray(data.fields) ? data.fields : [];
+  setBusy(false);
+  setStatus('');
+
+  el.title.textContent = data.title || '';
+  el.content.textContent = state.kind === 'alert' && data.content ? data.content : '';
+  const fragment = document.createDocumentFragment();
+  state.fields.forEach((field, index) => fragment.appendChild(buildField(field, index)));
+  el.fields.replaceChildren(fragment);
+
+  const isAlert = state.kind === 'alert';
+  el.confirm.textContent = data.confirmLabel || (isAlert ? TEXT.alertConfirm : TEXT.confirm);
+  el.cancel.textContent = data.cancelLabel || (isAlert ? TEXT.alertCancel : TEXT.cancel);
+  el.cancel.hidden = isAlert && data.cancel === false;
+  el.confirm.classList.toggle('is-danger', isAlert && data.danger === true);
+  el.confirm.classList.toggle('is-primary', !(isAlert && data.danger === true));
+
+  el.backdrop.hidden = false;
+  const first = state.fields.findIndex((field) => !field.disabled);
+  (first >= 0 ? controlOf(first) : (isAlert && data.danger ? el.cancel : el.confirm)).focus();
+}
+
+function close() {
+  state.open = false;
+  el.backdrop.hidden = true;
+  el.fields.replaceChildren();
+}
+
+async function submit(payload) {
+  if (!state.open || state.busy) return;
+  setBusy(true);
+  setStatus('');
+  const result = await Bridge.send('dialog_submit', { id: state.id, ...payload });
+  setBusy(false);
+  if (!state.open) return;
+  if (!result || !result.ok) {
+    if (result?.error === 'required' && result.data?.field) {
+      const index = result.data.field - 1;
+      setFieldError(index, TEXT.errors.required);
+      controlOf(index)?.focus();
+      return;
+    }
+    setStatus(result?.error || 'bridge_error');
+    return;
+  }
+  close();
+}
+
+function confirm() {
+  if (state.kind === 'alert') {
+    submit({ confirmed: true });
+    return;
+  }
+  const { values, firstError } = readValues();
+  if (firstError >= 0) {
+    controlOf(firstError).focus();
+    return;
+  }
+  submit({ values });
+}
+
+function cancel() {
+  if (state.kind === 'alert') submit({ confirmed: false });
+  else submit({ cancelled: true });
+}
+
+el.dialog.addEventListener('submit', (e) => {
+  e.preventDefault();
+  confirm();
+});
+
+el.dialog.addEventListener('click', (e) => {
+  const target = e.target.closest('[data-action]');
+  if (target && target.dataset.action === 'cancel') cancel();
+});
+
+el.fields.addEventListener('input', (e) => {
+  const wrap = e.target.closest('.field');
+  if (wrap && wrap.classList.contains('has-error')) setFieldError(Number(wrap.dataset.index), '');
+});
+
+document.addEventListener('keydown', (e) => {
+  if (!state.open) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    cancel();
+  } else if (e.key === 'Enter' && e.target.tagName === 'TEXTAREA' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    confirm();
+  }
+});
+
+Bridge.on('dialog_open', open);
+Bridge.on('dialog_close', close);
+
+(async () => {
+  const result = await Bridge.send('ui_ready', { ui: UI, version: CONTRACT_VERSION });
+  if (result?.ok) applyColors(result.data?.colors);
+  if (Bridge.platform === 'mock') {
+    if (new URLSearchParams(location.search).get('kind') === 'alert') {
+      Mock.push('dialog_open', { id: 2, kind: 'alert', title: 'Mitglied entlassen', content: 'ID 342 wird aus dem LSPD entlassen. Rang, Dienstausweis und Zugriff auf Fahrzeuge der Organisation gehen verloren.', confirmLabel: 'Entlassen', cancelLabel: 'Abbrechen', cancel: true, danger: true });
+    } else {
+      Mock.push('dialog_open', { id: 1, kind: 'input', title: 'Rechnung ausstellen', confirmLabel: 'Ausstellen', fields: [
+        { type: 'number', label: 'Betrag', min: 1, max: 50000, step: 1, required: true, description: 'In Dollar, ohne Cent.' },
+        { type: 'select', label: 'Grund', required: true, options: [
+          { value: 'repair', label: 'Reparatur' }, { value: 'tow', label: 'Abschleppen' }, { value: 'parts', label: 'Ersatzteile' } ] },
+        { type: 'textarea', label: 'Notiz', maxLength: 200, placeholder: 'Zum Beispiel: Frontschaden, Motorhaube getauscht' },
+        { type: 'slider', label: 'Rabatt in Prozent', min: 0, max: 30, step: 5, default: 10 },
+        { type: 'checkbox', label: 'Kopie an die Werkstattkasse', default: true },
+      ] });
+    }
+  }
+})();
+</script>
+</body>
+</html>

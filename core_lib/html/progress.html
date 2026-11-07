@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<!--
+  UI: Fortschritt (core_lib)
+  CONTRACT_VERSION: 1
+  Reine Anzeige unten in der Mitte, ohne Fokus. Balken oder Kreis.
+
+  EINGEHEND (Lua -> UI)
+  progress_open  { label: string, style: "bar" | "circle", duration: number, cancelKey?: string }   // Dauer in ms
+  progress_close { completed: boolean }
+
+  AUSGEHEND (UI -> Lua)
+  ui_ready { ui: "progress", version: 1 }   -> data.colors
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fortschritt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Monitor. Dichte 8, Bewegung 2, Varianz 2.
+  Schmaler Balken unten in der Mitte, ueber dem Fahrzeug-HUD. Der Fuellstand ist das einzige Farbige.
+*/
+:root {
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.92);
+  --c-surface:     rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.10);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.10);
+  --shadow:        0 8px 24px rgb(var(--rgb-base) / 0.5);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+
+  --dur-fast: 120ms; --dur-base: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --bar-w: clamp(280px, 22vw, 420px);
+  --bar-h: 6px;
+  --ring: clamp(64px, 4.4vw, 84px);
+  --ring-stroke: 6;
+  --bottom: clamp(104px, 15vh, 200px);
+  --z-panel: 10;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-xs);
+  color: var(--c-text-2);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+.wrap {
+  position: fixed;
+  left: 50%;
+  bottom: var(--bottom);
+  z-index: var(--z-panel);
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  opacity: 1;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.wrap[hidden] { display: none; }
+.wrap.is-leaving { opacity: 0; }
+
+/* Balken */
+.bar {
+  width: var(--bar-w);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-bg);
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: var(--space-2);
+}
+.bar[hidden] { display: none; }
+.line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.label {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.percent {
+  flex: none;
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.track {
+  height: var(--bar-h);
+  border-radius: var(--radius-xs);
+  background: var(--c-surface-hi);
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  border-radius: var(--radius-xs);
+  background: var(--c-accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+.is-failed .fill { background: var(--c-signal); }
+.is-failed .label { color: var(--c-signal); }
+
+/* Kreis */
+.circle {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+}
+.circle[hidden] { display: none; }
+.ring {
+  position: relative;
+  width: var(--ring);
+  height: var(--ring);
+  border-radius: 50%;
+  background: var(--c-bg);
+  box-shadow: var(--shadow);
+}
+.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: var(--ring-stroke); }
+.ring .bg { stroke: rgb(var(--rgb-ink) / 0.10); }
+.ring .fg { stroke: var(--c-accent); stroke-linecap: round; }
+.is-failed .ring .fg { stroke: var(--c-signal); }
+.ring .percent {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  color: var(--c-text);
+}
+.circle .label {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--c-bg);
+}
+
+.hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--c-bg);
+  color: var(--c-text-muted);
+  font-size: var(--fs-xs);
+}
+.hint[hidden] { display: none; }
+</style>
+</head>
+<body>
+
+<div class="wrap" id="wrap" role="status" aria-live="polite" hidden>
+  <div class="bar" id="bar">
+    <div class="line">
+      <span class="label" id="bar-label"></span>
+      <span class="percent" id="bar-percent">0 %</span>
+    </div>
+    <div class="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="bar-track"><div class="fill" id="bar-fill"></div></div>
+  </div>
+  <div class="circle" id="circle" hidden>
+    <div class="ring" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="ring">
+      <svg viewBox="0 0 100 100" aria-hidden="true"><circle class="bg" cx="50" cy="50" r="44"/><circle class="fg" id="ring-fill" cx="50" cy="50" r="44"/></svg>
+      <span class="percent" id="ring-percent">0 %</span>
+    </div>
+    <span class="label" id="circle-label"></span>
+  </div>
+  <p class="hint" id="hint"><kbd id="hint-key">X</kbd><span id="hint-text"></span></p>
+</div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();const Mock = {
+  async handle(event, data) {
+    console.info(`[mock] ${event}`, data);
+    return { ok: true };
+  },
+  push(event, data) {
+    Bridge.emit(event, data);
+  },
+};
+</script>
+
+<script id="app">
+const TEXT = {
+  cancel: 'Abbrechen',
+  cancelled: 'Abgebrochen',
+  done: 'Fertig',
+};
+
+const UI = 'progress';
+const TICK_MS = 100;            // so oft wird die Prozentzahl erneuert
+const RESULT_SHOW_MS = 600;     // so lange bleibt "Abgebrochen" stehen
+const LEAVE_MS = 180;           // Ausblenden, passend zu --dur-base
+const RING_RADIUS = 44;
+const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
+const percentFormat = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
+
+const state = { open: false, style: 'bar', label: '', startedAt: 0, duration: 0, percent: -1, timer: null, leaveTimer: null };
+
+const el = {
+  wrap: document.getElementById('wrap'),
+  bar: document.getElementById('bar'),
+  barLabel: document.getElementById('bar-label'),
+  barPercent: document.getElementById('bar-percent'),
+  barTrack: document.getElementById('bar-track'),
+  barFill: document.getElementById('bar-fill'),
+  circle: document.getElementById('circle'),
+  ring: document.getElementById('ring'),
+  ringFill: document.getElementById('ring-fill'),
+  ringPercent: document.getElementById('ring-percent'),
+  circleLabel: document.getElementById('circle-label'),
+  hint: document.getElementById('hint'),
+  hintKey: document.getElementById('hint-key'),
+  hintText: document.getElementById('hint-text'),
+};
+el.ringFill.style.strokeDasharray = String(RING_LENGTH);
+el.hintText.textContent = TEXT.cancel;
+
+function applyColors(colors) {
+  if (!colors) return;
+  const root = document.documentElement.style;
+  ['base', 'ink', 'accent', 'signal'].forEach((key) => {
+    if (typeof colors[key] === 'string') root.setProperty(`--rgb-${key}`, colors[key]);
+  });
+}
+
+// Der Shell sagen, dass diese Anzeige jetzt weg ist (nur reine Anzeigen)
+function hideFrame(ui) {
+  try { if (window.parent !== window) window.parent.postMessage({ type: 'shell_hide', ui }, '*'); } catch (err) { /* ohne Shell */ }
+}
+
+function setPercent(value) {
+  const rounded = Math.max(0, Math.min(100, Math.floor(value)));
+  if (rounded === state.percent) return;
+  state.percent = rounded;
+  const text = `${percentFormat.format(rounded)} %`;
+  if (state.style === 'bar') {
+    el.barPercent.textContent = text;
+    el.barTrack.setAttribute('aria-valuenow', String(rounded));
+  } else {
+    el.ringPercent.textContent = text;
+    el.ring.setAttribute('aria-valuenow', String(rounded));
+  }
+}
+
+function stopTimers() {
+  clearInterval(state.timer);
+  clearTimeout(state.leaveTimer);
+  state.timer = null;
+  state.leaveTimer = null;
+}
+
+function start(data) {
+  stopTimers();
+  state.open = true;
+  state.style = data.style === 'circle' ? 'circle' : 'bar';
+  state.label = typeof data.label === 'string' ? data.label : '';
+  state.duration = Math.max(1, Number(data.duration) || 1);
+  state.startedAt = performance.now();
+  state.percent = -1;
+
+  el.wrap.classList.remove('is-leaving', 'is-failed');
+  el.bar.hidden = state.style !== 'bar';
+  el.circle.hidden = state.style !== 'circle';
+  el.barLabel.textContent = state.label;
+  el.circleLabel.textContent = state.label;
+  el.circleLabel.hidden = !state.label;
+  el.hint.hidden = !data.cancelKey;
+  if (data.cancelKey) el.hintKey.textContent = data.cancelKey;
+
+  // Fuellstand laeuft per CSS-Uebergang, die Zahl per Intervall
+  const duration = `${state.duration}ms`;
+  el.barFill.style.transition = 'none';
+  el.barFill.style.transform = 'scaleX(0)';
+  el.ringFill.style.transition = 'none';
+  el.ringFill.style.strokeDashoffset = String(RING_LENGTH);
+  el.wrap.hidden = false;
+  void el.wrap.offsetWidth; // Startzustand festhalten, bevor der Uebergang beginnt
+  el.barFill.style.transition = `transform ${duration} linear`;
+  el.barFill.style.transform = 'scaleX(1)';
+  el.ringFill.style.transition = `stroke-dashoffset ${duration} linear`;
+  el.ringFill.style.strokeDashoffset = '0';
+
+  setPercent(0);
+  state.timer = setInterval(() => {
+    setPercent(((performance.now() - state.startedAt) / state.duration) * 100);
+  }, TICK_MS);
+}
+
+function finish(completed) {
+  if (!state.open) return;
+  state.open = false;
+  clearInterval(state.timer);
+  state.timer = null;
+  if (completed) {
+    setPercent(100);
+  } else {
+    // Fuellstand an der aktuellen Stelle anhalten
+    const fraction = Math.min(1, (performance.now() - state.startedAt) / state.duration);
+    el.barFill.style.transition = 'none';
+    el.barFill.style.transform = `scaleX(${fraction})`;
+    el.ringFill.style.transition = 'none';
+    el.ringFill.style.strokeDashoffset = String(RING_LENGTH * (1 - fraction));
+    el.wrap.classList.add('is-failed');
+    el.barLabel.textContent = TEXT.cancelled;
+    el.circleLabel.textContent = TEXT.cancelled;
+    el.circleLabel.hidden = false;
+  }
+  el.hint.hidden = true;
+  state.leaveTimer = setTimeout(() => {
+    el.wrap.classList.add('is-leaving');
+    state.leaveTimer = setTimeout(() => {
+      if (state.open) return;
+      el.wrap.hidden = true;
+      hideFrame(UI);
+    }, LEAVE_MS);
+  }, completed ? 0 : RESULT_SHOW_MS);
+}
+
+Bridge.on('progress_open', start);
+Bridge.on('progress_close', (data) => finish(data.completed === true));
+
+(async () => {
+  const result = await Bridge.send('ui_ready', { ui: UI, version: CONTRACT_VERSION });
+  if (result?.ok) applyColors(result.data?.colors);
+  if (Bridge.platform === 'mock') {
+    const style = new URLSearchParams(location.search).get('style') || 'bar';
+    Mock.push('progress_open', { label: 'Reifen wechseln', style, duration: 6000, cancelKey: 'X' });
+  }
+})();
+</script>
+</body>
+</html>

@@ -605,8 +605,9 @@ register('inv_use', function(source, inv, data)
 end)
 
 -- Geben an einen Spieler in der Naehe
-register('inv_give', function(source, inv, data)
-    local target = tonumber(data.target)
+-- Gibt count Stueck aus dem Platz from an die Person target (Server-ID). Gemeinsam fuer inv_give und inv_give_item.
+local function give(source, inv, target, from, count)
+    target = tonumber(target)
     local targetCharacter = target and active[target]
     if not targetCharacter or target == source then
         return reply(false, 'target_offline', source, inv)
@@ -619,7 +620,7 @@ register('inv_give', function(source, inv, data)
     if math.sqrt(dx * dx + dy * dy + dz * dz) > CFG.GiveDistance then
         return reply(false, 'too_far', source, inv)
     end
-    local taken, err = Inventory.Take(inv, data.from, data.count)
+    local taken, err = Inventory.Take(inv, from, count)
     if not taken then
         return reply(false, err, source, inv)
     end
@@ -650,6 +651,25 @@ register('inv_give', function(source, inv, data)
     Network.SendToClient(target, 'core_inventory:changed', {})
     afterChange(target)
     return reply(true, nil, source, inv)
+end
+
+register('inv_give', function(source, inv, data)
+    return give(source, inv, data.target, data.from, data.count)
+end)
+
+-- Ein Item ohne Platzangabe geben, z. B. Bargeld ueber das G-Menue der core_lib.
+-- Nimmt den ersten Stapel mit genug Stueck. Dokumente gehen nicht (die zeigt man nur).
+register('inv_give_item', function(source, inv, data)
+    local def = type(data.item) == 'string' and ItemDef(data.item) or nil
+    local count = tonumber(data.count)
+    if not def or def.document or not count or count ~= math.floor(count) or count < 1 then
+        return reply(false, 'invalid_count', source, inv)
+    end
+    local from = Inventory.FindStack(inv, data.item, count)
+    if not from then
+        return reply(false, Inventory.Count(inv, data.item) >= count and 'split_stacks' or 'not_enough_own', source, inv)
+    end
+    return give(source, inv, data.target, from, count)
 end)
 
 -- Haufen in derselben Dimension, z. B. nach dem Einloggen

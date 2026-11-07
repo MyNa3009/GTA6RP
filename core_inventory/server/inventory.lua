@@ -439,6 +439,20 @@ function Inventory.Count(charInv, name)
     return total
 end
 
+-- Erster Stapel ohne eigene Daten mit mindestens count Stueck, Taschen vor Rucksack.
+-- Gibt eine Platz-Angabe { inv = 'self' | 'bag', slot } zurueck oder nil (fuer "Geld geben" im G-Menue).
+function Inventory.FindStack(charInv, name, count)
+    for index, inv in ipairs(containers(charInv)) do
+        for _, slot in ipairs(sortedSlots(inv)) do
+            local entry = inv.slots[slot]
+            if entry and entry.name == name and isEmptyMeta(entry.meta) and entry.count >= count then
+                return { inv = index == 1 and 'self' or 'bag', slot = slot }
+            end
+        end
+    end
+    return nil
+end
+
 -- Fuegt count Stueck hinzu: erst auf passende Stapel, dann in freie Plaetze, Taschen vor Rucksack.
 -- Alles oder nichts. Gibt true oder false und 'too_heavy' / 'no_space' / 'unknown_item' zurueck.
 function Inventory.Add(charInv, name, count, meta)

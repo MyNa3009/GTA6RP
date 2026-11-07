@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_inventory'
 description 'Inventar fuer die eigene Core: Plaetze, Gewicht, Kleidung, Rucksack, Schnellzugriff'
-version '1.1.1'
+version '1.2.0'
 
 -- Startet nach der Core und nutzt deren Config und Bridge (es gibt nur eine Stelle mit FiveM-Natives)
 dependencies {

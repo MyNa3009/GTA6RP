@@ -492,6 +492,41 @@ local function showDocument(docType, target)
 end
 Platform.Export('ShowDocument', showDocument)
 
+-- Ein Item ohne Platzangabe an eine Person (Server-ID) geben, z. B. Bargeld aus dem G-Menue der core_lib.
+-- Gibt true oder false zurueck. Fehler meldet das Inventar selbst.
+local GIVE_ERROR_TEXT = {
+    not_enough_own = 'So viel hast du nicht dabei.',
+    split_stacks = 'So viel liegt nicht auf einem Platz. Leg es im Inventar erst zusammen.',
+    invalid_count = 'Ungültige Menge.',
+    too_far = 'Die Person steht zu weit weg.',
+    target_offline = 'Die Person ist nicht mehr da.',
+    target_full = 'Die Person hat keinen Platz mehr.',
+    target_too_heavy = 'Das ist der Person zu schwer.',
+    twink_blocked = 'An eigene Charaktere kann man nichts geben.',
+    no_character = 'Das geht nur mit einem Charakter.',
+    timeout = 'Der Server antwortet nicht.',
+}
+
+local function giveItem(target, item, count)
+    if Platform.IsOwnPedDead() then
+        return false
+    end
+    local result = Network.Call('inv_give_item', { target = tonumber(target), item = item, count = tonumber(count) })
+    if not result or not result.ok then
+        local code = result and result.error or 'timeout'
+        notify(GIVE_ERROR_TEXT[code] or 'Das hat nicht geklappt.', 'error')
+        return false
+    end
+    if result.data and result.data.state then
+        lastState = result.data.state
+        if isOpen then
+            send('inv_state', { state = lastState })
+        end
+    end
+    return true
+end
+Platform.Export('GiveItem', giveItem)
+
 -- Vorlaeufig: naechste Person in Reichweite
 Platform.RegisterClientCommand('zeigen', function(args)
     local docType = DOC_COMMAND_TYPES[(args[1] or ''):lower()]

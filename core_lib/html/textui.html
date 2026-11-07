@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<!--
+  UI: TextUI (core_lib)
+  CONTRACT_VERSION: 1
+  Reine Anzeige am Bildschirmrand, ohne Fokus. Zum Beispiel "[E] Tür öffnen".
+
+  EINGEHEND (Lua -> UI)
+  textui_open  { text: string, key?: string, position: "left" | "right" | "top" | "bottom" }
+  textui_close {}
+
+  AUSGEHEND (UI -> Lua)
+  ui_ready { ui: "textui", version: 1 }   -> data.colors
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hinweis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Monitor. Dichte 8, Bewegung 1, Varianz 2.
+  Kleiner Hinweis am Rand. Die Taste ist das Wichtigste, darum steht sie als Keycap vorne.
+*/
+:root {
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.92);
+  --c-surface:     rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.10);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.10);
+  --shadow:        0 8px 24px rgb(var(--rgb-base) / 0.5);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+
+  --dur-fast: 120ms; --dur-base: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --edge: clamp(16px, 2vw, 40px);
+  --key-size: 28px;
+  --max-w: clamp(240px, 24vw, 460px);
+  --z-panel: 10;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-xs);
+  color: var(--c-text-2);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+.hint {
+  position: fixed;
+  z-index: var(--z-panel);
+  max-width: var(--max-w);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-bg);
+  box-shadow: var(--shadow);
+}
+.hint[hidden] { display: none; }
+.hint.is-left   { left: var(--edge); top: 50%; transform: translateY(-50%); }
+.hint.is-right  { right: var(--edge); top: 50%; transform: translateY(-50%); }
+.hint.is-top    { top: var(--edge); left: 50%; transform: translateX(-50%); }
+.hint.is-bottom { bottom: clamp(104px, 15vh, 200px); left: 50%; transform: translateX(-50%); }
+.hint.is-plain  { padding-left: var(--space-4); }
+
+.key {
+  flex: none;
+  min-width: var(--key-size);
+  height: var(--key-size);
+  font-size: var(--fs-sm);
+  border-color: var(--c-accent-line);
+  color: var(--c-accent);
+}
+.key[hidden] { display: none; }
+.text {
+  font-size: var(--fs-md);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+</style>
+</head>
+<body>
+
+<p class="hint is-left" id="hint" role="status" aria-live="polite" hidden><kbd class="key" id="key"></kbd><span class="text" id="text"></span></p>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();const Mock = {
+  async handle(event, data) {
+    console.info(`[mock] ${event}`, data);
+    return { ok: true };
+  },
+  push(event, data) {
+    Bridge.emit(event, data);
+  },
+};
+</script>
+
+<script id="app">
+const UI = 'textui';
+const POSITIONS = ['left', 'right', 'top', 'bottom'];
+
+const state = { text: '', key: '', position: 'left', open: false };
+const el = { hint: document.getElementById('hint'), key: document.getElementById('key'), text: document.getElementById('text') };
+
+function applyColors(colors) {
+  if (!colors) return;
+  const root = document.documentElement.style;
+  ['base', 'ink', 'accent', 'signal'].forEach((key) => {
+    if (typeof colors[key] === 'string') root.setProperty(`--rgb-${key}`, colors[key]);
+  });
+}
+
+// Der Shell sagen, dass diese Anzeige jetzt weg ist (nur reine Anzeigen)
+function hideFrame(ui) {
+  try { if (window.parent !== window) window.parent.postMessage({ type: 'shell_hide', ui }, '*'); } catch (err) { /* ohne Shell */ }
+}
+
+function render() {
+  el.hint.hidden = !state.open;
+  if (!state.open) return;
+  if (el.text.textContent !== state.text) el.text.textContent = state.text;
+  el.key.hidden = !state.key;
+  if (state.key && el.key.textContent !== state.key) el.key.textContent = state.key;
+  POSITIONS.forEach((pos) => el.hint.classList.toggle(`is-${pos}`, pos === state.position));
+  el.hint.classList.toggle('is-plain', !state.key);
+}
+
+Bridge.on('textui_open', (data) => {
+  state.open = true;
+  state.text = typeof data.text === 'string' ? data.text : '';
+  state.key = typeof data.key === 'string' ? data.key : '';
+  state.position = POSITIONS.includes(data.position) ? data.position : 'left';
+  render();
+});
+
+Bridge.on('textui_close', () => {
+  state.open = false;
+  render();
+  hideFrame(UI);
+});
+
+(async () => {
+  const result = await Bridge.send('ui_ready', { ui: UI, version: CONTRACT_VERSION });
+  if (result?.ok) applyColors(result.data?.colors);
+  if (Bridge.platform === 'mock') {
+    Mock.push('textui_open', { text: 'Werkbank benutzen', key: 'E', position: new URLSearchParams(location.search).get('pos') || 'left' });
+  }
+})();
+</script>
+</body>
+</html>

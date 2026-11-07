@@ -4,16 +4,17 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 
 | Ordner | Version | Inhalt |
 |---|---|---|
-| [`core/`](core/README.md) | 1.7.10 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
-| [`core_inventory/`](core_inventory/README.md) | 1.1.1 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
+| [`core/`](core/README.md) | 1.8.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
+| [`core_inventory/`](core_inventory/README.md) | 1.2.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
+| [`core_lib/`](core_lib/README.md) | 1.0.0 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
 | [`tests/`](tests/README.md) | | Tests für die Serverlogik beider Resources |
 
-Das Inventar 1.1.1 braucht mindestens die Core 1.6.0, empfohlen ist die neueste. Beide Ordner werden darum immer zusammen aktualisiert.
+Das Inventar 1.2.0 braucht mindestens die Core 1.6.0, die `core_lib` 1.0.0 die Core 1.8.0. Empfohlen ist immer die neueste Core, darum alle Ordner zusammen aktualisieren.
 
 ## Installation
 
 1. `core/database/schema.sql` in der Datenbank ausführen. Die Tabellen des Inventars legt das Inventar beim Start selbst an.
-2. Die Ordner `core` und `core_inventory` nach `resources/[core]/` kopieren.
+2. Die Ordner `core`, `core_inventory` und `core_lib` nach `resources/[core]/` kopieren.
 3. In der eigenen `server.cfg` nach der Datenbank-Verbindung ergänzen:
 
 ```cfg
@@ -23,6 +24,7 @@ set core_debug "true"
 ensure oxmysql
 ensure core
 ensure core_inventory
+ensure core_lib
 ```
 
 4. Server neu starten.
@@ -34,7 +36,7 @@ Für ein Update steht in der README jeder Resource ein Abschnitt `Update von x.y
 
 Damit der Umzug auf GTA 6 später möglich ist, gilt in jeder Resource:
 
-- **FiveM-Natives nur in `core/bridge/`.** Alle anderen Dateien nutzen `Platform`, `Network`, `DB` und `Identity`. Das Inventar hat keine eigene Bridge, es lädt die der Core.
+- **FiveM-Natives nur in `core/bridge/`.** Alle anderen Dateien nutzen `Platform`, `Network`, `DB` und `Identity`. Inventar und `core_lib` haben keine eigene Bridge, sie laden die der Core.
 - **GTA-5-Daten nur in `data/`** (Dateien `*_gta5.lua`): Waffen, Modelle, Koordinaten, Kleidung.
 - **Der Server entscheidet.** Werte im Client sind nur Anzeige.
 - **Die permanente Charakter-ID** ist der Schlüssel in allen Tabellen, Befehlen und Logs.

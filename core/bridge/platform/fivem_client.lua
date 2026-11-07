@@ -208,6 +208,7 @@ local ACTIONS = {
     noclipDown    = { control = 36, label = 'Strg' },   -- INPUT_DUCK
     noclipFast    = { control = 21, label = 'Shift' },  -- INPUT_SPRINT
     noclipSlow    = { control = 19, label = 'Alt' },    -- INPUT_CHARACTER_WHEEL
+    cancel        = { control = 73, label = 'X' },      -- INPUT_VEH_DUCK, Abbrechen (z. B. Fortschrittsbalken der core_lib)
 }
 local CONTROL_GROUP = 0
 
@@ -1300,23 +1301,29 @@ end
 -- Beim Join nimmt das Schliessen des Ladebildschirms den Fokus wieder weg, dann haette man im Login keine Maus.
 local FOCUS_WATCH_MS = 250
 local wantFocus = false
+local wantCursor = true   -- false: nur Tastatur fuer die UI, ohne Mauszeiger (z. B. Minigames mit Tasten)
 local focusWatchRunning = false
 
-function Platform.UiFocus(enabled)
+-- cursor (optional, Standard true): Mauszeiger anzeigen. Ohne Zeiger bekommt die UI nur die Tastatur.
+function Platform.UiFocus(enabled, cursor)
     local hadFocus = wantFocus
+    local hadCursor = wantCursor
     wantFocus = enabled == true
-    if wantFocus and hadFocus then
+    wantCursor = cursor ~= false
+    if wantFocus and hadFocus and hadCursor ~= wantCursor then
+        SetNuiFocus(true, wantCursor)
+    elseif wantFocus and hadFocus then
         -- Wechsel von einer UI zur naechsten (z. B. Login zur Charakterauswahl): Der Mauszeiger
         -- verschwindet sonst, weil die alte UI unter ihm ausgeblendet wird. Kurz aus und wieder an zeigt ihn neu.
         SetNuiFocus(false, false)
         CreateThread(function()
             Wait(0)
             if wantFocus then
-                SetNuiFocus(true, true)
+                SetNuiFocus(true, wantCursor)
             end
         end)
     else
-        SetNuiFocus(wantFocus, wantFocus)
+        SetNuiFocus(wantFocus, wantFocus and wantCursor)
     end
     if not wantFocus or focusWatchRunning then
         return
@@ -1326,7 +1333,7 @@ function Platform.UiFocus(enabled)
         while wantFocus do
             Wait(FOCUS_WATCH_MS)
             if wantFocus and not IsNuiFocused() then
-                SetNuiFocus(true, true)
+                SetNuiFocus(true, wantCursor)
             end
         end
         focusWatchRunning = false
@@ -1345,4 +1352,287 @@ function Platform.UiOn(event, handler)
             cb(result or { ok = true })
         end)
     end)
+end
+
+------------------------------------------------------------------------
+-- Ressourcen (seit Core 1.8.0, fuer core_lib und andere Addons)
+------------------------------------------------------------------------
+
+-- Name der Resource, die gerade einen Export dieser Resource aufruft, sonst nil
+function Platform.GetCallingResource()
+    local name = GetInvokingResource()
+    return name
+end
+
+-- handler(resourceName), wenn eine Resource auf diesem Client stoppt
+function Platform.OnResourceStop(handler)
+    AddEventHandler('onClientResourceStop', handler)
+end
+
+function Platform.OnEvent(event, handler)
+    AddEventHandler(event, handler)
+end
+
+function Platform.IsResourceStarted(name)
+    return GetResourceState(name) == 'started'
+end
+
+function Platform.GetResourceName()
+    return GetCurrentResourceName()
+end
+
+-- Export einer anderen Resource aufrufen. Gibt nil zurueck, wenn sie nicht laeuft oder einen Fehler wirft.
+function Platform.CallExport(resource, name, ...)
+    if GetResourceState(resource) ~= 'started' then
+        return nil
+    end
+    local args = table.pack(...)
+    local results = table.pack(pcall(function()
+        local target = exports[resource]
+        return target[name](target, table.unpack(args, 1, args.n))
+    end))
+    if not results[1] then
+        Platform.Print('error', ('Export %s:%s fehlgeschlagen: %s'):format(resource, name, tostring(results[2])))
+        return nil
+    end
+    return table.unpack(results, 2, results.n)
+end
+
+------------------------------------------------------------------------
+-- Steuerung sperren (seit Core 1.8.0)
+------------------------------------------------------------------------
+
+-- Gruppen von GTA-5-Controls. Die Logik kennt nur die Namen.
+local CONTROL_GROUPS = {
+    move   = { 30, 31, 32, 33, 34, 35, 36, 21, 22, 44 },             -- laufen, rennen, springen, Deckung
+    car    = { 63, 64, 71, 72, 75, 59, 60 },                         -- lenken, Gas, Bremse, aussteigen
+    combat = { 24, 25, 37, 45, 47, 58, 140, 141, 142, 143, 257, 263, 264 },
+    mouse  = { 1, 2, 106 },                                          -- umsehen
+}
+
+-- groups: { move = true, car = true, combat = true, mouse = true }. Jeden Frame aufrufen.
+function Platform.DisableActionsThisFrame(groups)
+    for name, on in pairs(groups) do
+        local list = on and CONTROL_GROUPS[name]
+        if list then
+            for i = 1, #list do
+                DisableControlAction(CONTROL_GROUP, list[i], true)
+            end
+        end
+    end
+    if groups.combat then
+        DisablePlayerFiring(PlayerId(), true)
+    end
+end
+
+------------------------------------------------------------------------
+-- Animationen und Props am eigenen Ped (seit Core 1.8.0)
+------------------------------------------------------------------------
+
+local ANIM_FLAG_LOOP = 1
+local ANIM_FLAG_UPPER_BODY = 16
+local ANIM_FLAG_CONTROLLABLE = 32
+local ANIM_BLEND = 3.0
+local PROP_ATTACH_TIMEOUT_MS = 2000
+
+-- Spielt eine Animation am eigenen Ped. options: { loop, upperBody, controllable, durationMs }. Gibt true oder false zurueck.
+function Platform.PlayOwnAnim(dict, clip, options)
+    options = options or {}
+    if type(dict) ~= 'string' or type(clip) ~= 'string' or not DoesAnimDictExist(dict) then
+        return false
+    end
+    RequestAnimDict(dict)
+    local timeout = GetGameTimer() + ANIM_LOAD_TIMEOUT_MS
+    while not HasAnimDictLoaded(dict) do
+        if GetGameTimer() > timeout then
+            return false
+        end
+        Wait(0)
+    end
+    local flags = 0
+    if options.loop ~= false then flags = flags + ANIM_FLAG_LOOP end
+    if options.upperBody then flags = flags + ANIM_FLAG_UPPER_BODY end
+    if options.controllable then flags = flags + ANIM_FLAG_CONTROLLABLE end
+    TaskPlayAnim(PlayerPedId(), dict, clip, ANIM_BLEND, ANIM_BLEND, tonumber(options.durationMs) or -1, flags, 0.0, false, false, false)
+    RemoveAnimDict(dict)
+    return true
+end
+
+function Platform.StopOwnAnim(dict, clip)
+    if type(dict) == 'string' and type(clip) == 'string' then
+        StopAnimTask(PlayerPedId(), dict, clip, ANIM_BLEND)
+    end
+end
+
+-- Szenario (z. B. 'WORLD_HUMAN_HAMMERING') am eigenen Ped
+function Platform.PlayOwnScenario(name)
+    if type(name) ~= 'string' then
+        return false
+    end
+    TaskStartScenarioInPlace(PlayerPedId(), name, 0, true)
+    return true
+end
+
+function Platform.ClearOwnTasks()
+    ClearPedTasks(PlayerPedId())
+end
+
+-- Objekt an einem Knochen des eigenen Peds. bone ist die GTA-Knochen-ID, pos und rot { x, y, z }.
+-- Gibt das Objekt zurueck (spaeter mit Platform.DeleteLocalProp entfernen) oder nil.
+function Platform.AttachPropToOwnPed(model, bone, pos, rot)
+    local hash = type(model) == 'number' and model or GetHashKey(model)
+    if not IsModelInCdimage(hash) then
+        return nil
+    end
+    RequestModel(hash)
+    local timeout = GetGameTimer() + PROP_ATTACH_TIMEOUT_MS
+    while not HasModelLoaded(hash) do
+        if GetGameTimer() > timeout then
+            return nil
+        end
+        Wait(0)
+    end
+    local ped = PlayerPedId()
+    local coords = GetEntityCoords(ped)
+    local object = CreateObject(hash, coords.x, coords.y, coords.z, false, false, false)
+    SetModelAsNoLongerNeeded(hash)
+    if object == 0 then
+        return nil
+    end
+    pos, rot = pos or {}, rot or {}
+    AttachEntityToEntity(object, ped, GetPedBoneIndex(ped, tonumber(bone) or 0),
+        (pos.x or 0.0) + 0.0, (pos.y or 0.0) + 0.0, (pos.z or 0.0) + 0.0,
+        (rot.x or 0.0) + 0.0, (rot.y or 0.0) + 0.0, (rot.z or 0.0) + 0.0,
+        true, true, false, true, 1, true)
+    SetEntityCollision(object, false, false)
+    return object
+end
+
+------------------------------------------------------------------------
+-- Fahrzeug, in dem man sitzt (seit Core 1.8.0, fuer das G-Menue der core_lib)
+-- Tueren und Fenster werden ueber die GTA-Indizes aus data/vehicle_gta5.lua der core_lib angesprochen.
+------------------------------------------------------------------------
+
+local KMH_PER_METER_SECOND = 3.6
+local MAX_DOOR_INDEX = 7
+local WINDOW_BONES = { [0] = 'window_lf', [1] = 'window_rf', [2] = 'window_lr', [3] = 'window_rr' }
+local windowsDown = {}   -- [vehicle] = { [index] = true }, GTA kennt den Zustand nicht selbst
+
+-- Stand des eigenen Fahrzeugs oder nil, wenn man nicht in einem sitzt
+-- { vehicle, seat, isDriver, engine, lights, speedKmh, freeSeats = { seat, ... } }
+function Platform.GetOwnVehicleState()
+    local ped = PlayerPedId()
+    local vehicle = GetVehiclePedIsIn(ped, false)
+    if vehicle == 0 then
+        return nil
+    end
+    local seat = nil
+    local maxSeat = GetVehicleMaxNumberOfPassengers(vehicle) - 1
+    local free = {}
+    for index = DRIVER_SEAT, maxSeat do
+        local occupant = GetPedInVehicleSeat(vehicle, index)
+        if occupant == ped then
+            seat = index
+        elseif occupant == 0 then
+            free[#free + 1] = index
+        end
+    end
+    local _, lightsOn, highBeams = GetVehicleLightsState(vehicle)
+    return {
+        vehicle = vehicle,
+        seat = seat,
+        isDriver = seat == DRIVER_SEAT,
+        engine = GetIsVehicleEngineRunning(vehicle),
+        lights = lightsOn == 1 or highBeams == 1,
+        speedKmh = GetEntitySpeed(vehicle) * KMH_PER_METER_SECOND,
+        freeSeats = free,
+    }
+end
+
+-- Fahrzeug fuer die naechsten Aufrufe noch gueltig?
+function Platform.IsOwnVehicle(vehicle)
+    return vehicle ~= nil and DoesEntityExist(vehicle) and GetVehiclePedIsIn(PlayerPedId(), false) == vehicle
+end
+
+function Platform.SetVehicleEngine(vehicle, on)
+    if not Platform.IsOwnVehicle(vehicle) then return false end
+    SetVehicleEngineOn(vehicle, on == true, false, true)
+    -- Ohne das startet GTA den Motor beim naechsten Gasgeben von selbst wieder
+    SetVehicleUndriveable(vehicle, on ~= true)
+    return true
+end
+
+-- Licht: an (true) oder aus (false). GTA schaltet sonst nach Tageszeit.
+function Platform.SetVehicleLights(vehicle, on)
+    if not Platform.IsOwnVehicle(vehicle) then return false end
+    SetVehicleLights(vehicle, on and 3 or 1) -- 3 = immer an, 1 = immer aus
+    return true
+end
+
+function Platform.HasVehicleDoor(vehicle, index)
+    index = tonumber(index)
+    if not vehicle or not DoesEntityExist(vehicle) or not index or index < 0 or index > MAX_DOOR_INDEX then
+        return false
+    end
+    return GetIsDoorValid(vehicle, index) and not IsVehicleDoorDamaged(vehicle, index)
+end
+
+function Platform.IsVehicleDoorOpen(vehicle, index)
+    return Platform.HasVehicleDoor(vehicle, index) and GetVehicleDoorAngleRatio(vehicle, index) > 0.0
+end
+
+function Platform.SetVehicleDoor(vehicle, index, open)
+    if not Platform.IsOwnVehicle(vehicle) or not Platform.HasVehicleDoor(vehicle, index) then return false end
+    if open then
+        SetVehicleDoorOpen(vehicle, index, false, false)
+    else
+        SetVehicleDoorShut(vehicle, index, false)
+    end
+    return true
+end
+
+function Platform.CloseAllVehicleDoors(vehicle)
+    if not Platform.IsOwnVehicle(vehicle) then return false end
+    SetVehicleDoorsShut(vehicle, false)
+    return true
+end
+
+function Platform.HasVehicleWindow(vehicle, index)
+    local bone = WINDOW_BONES[tonumber(index)]
+    return bone ~= nil and vehicle ~= nil and DoesEntityExist(vehicle) and GetEntityBoneIndexByName(vehicle, bone) ~= -1
+end
+
+function Platform.IsVehicleWindowDown(vehicle, index)
+    local state = windowsDown[vehicle]
+    return state ~= nil and state[tonumber(index)] == true
+end
+
+function Platform.SetVehicleWindow(vehicle, index, down)
+    index = tonumber(index)
+    if not Platform.IsOwnVehicle(vehicle) or not Platform.HasVehicleWindow(vehicle, index) then return false end
+    windowsDown[vehicle] = windowsDown[vehicle] or {}
+    if down then
+        RollDownWindow(vehicle, index)
+        windowsDown[vehicle][index] = true
+    else
+        RollUpWindow(vehicle, index)
+        windowsDown[vehicle][index] = nil
+    end
+    -- Nicht mehr existierende Fahrzeuge vergessen
+    for handle in pairs(windowsDown) do
+        if not DoesEntityExist(handle) then
+            windowsDown[handle] = nil
+        end
+    end
+    return true
+end
+
+-- Auf einen freien Sitz desselben Fahrzeugs wechseln
+function Platform.MoveToSeat(vehicle, seat)
+    seat = tonumber(seat)
+    if not Platform.IsOwnVehicle(vehicle) or not seat or not IsVehicleSeatFree(vehicle, seat) then
+        return false
+    end
+    SetPedIntoVehicle(PlayerPedId(), vehicle, seat)
+    return true
 end

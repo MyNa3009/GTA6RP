@@ -1,4 +1,4 @@
-# core_inventory 1.1.1
+# core_inventory 1.2.0
 
 Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in der Hand, Rucksack mit eigenem Inhalt, Schnellzugriff, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`. Eigene Resource, damit man sie neu starten kann, ohne dass alle aus dem Spiel fliegen.
 
@@ -10,7 +10,7 @@ Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in 
 | 2 | Inventar-Fenster (F2), Ziehen und Ablegen, Schnellzugriff 1 bis 5, geben, auf den Boden legen, Reiter "Inventar" in der Akte | fertig |
 | 3 | Waffen mit Seriennummer und Munition, Bargeld als Item, Kleidung sichtbar am Charakter, Startoutfit | fertig |
 | 4 | Legale und illegale Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`, Hände hoch | fertig |
-| 5 | G-Interaktionsmenü (eigenes Script, nutzt die Exports unten) | später |
+| 5 | G-Interaktionsmenü: steckt in [`core_lib`](../core_lib/README.md) und nutzt die Exports unten (Ausweis zeigen, Durchsuchen, Geld geben, Kofferraum) | fertig |
 
 ## Installation
 
@@ -21,6 +21,8 @@ Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in 
 Die Core muss mindestens 1.6.0 sein. Ist sie älter, meldet sich das Inventar beim Start mit "Core ist zu alt" und macht nichts.
 
 **Update von älteren Versionen:** Beide Ordner (`core` und `core_inventory`) ersetzen, Server neu starten. Die neuen Tabellen entstehen beim Start von selbst.
+
+Ab 1.2.0: Neuer Client-Export `GiveItem(serverId, item, menge)` und die Anfrage `inv_give_item`: ein Item ohne Platzangabe geben, für "Geld geben" im G-Menü der `core_lib`. Genommen wird der erste Stapel mit genug Stück (Taschen vor Rucksack). Distanz, Twinks, Platz und Gewicht prüft der Server wie beim Geben im Fenster, es steht genauso im Log. Neue Fehlercodes: `not_enough_own` (so viel hat man nicht) und `split_stacks` (genug da, aber auf mehrere Plätze verteilt).
 
 Ab 1.1.1: Überschriften im Fenster in normaler Schreibweise ("Taschen" statt "TASCHEN"), Gewicht in "kg", lesbarere Grautöne.
 
@@ -238,6 +240,7 @@ exports.core_inventory:IsCuffed(source), exports.core_inventory:IsHandsUp(source
 exports.core_inventory:SearchPlayer(serverId)
 exports.core_inventory:OpenNearestTrunk()
 exports.core_inventory:ShowDocument('driver', serverId)
+exports.core_inventory:GiveItem(serverId, 'cash', 250)                -- true oder false, Fehler meldet das Inventar selbst
 exports.core_inventory:IsHandsUp()
 ```
 

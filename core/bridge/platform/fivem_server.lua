@@ -30,6 +30,11 @@ function Platform.Async(fn)
     CreateThread(fn)
 end
 
+-- Millisekunden seit Serverstart, fuer Zeitmessungen (seit Core 1.8.0)
+function Platform.GetTime()
+    return GetGameTimer()
+end
+
 function Platform.Wait(ms)
     Wait(ms)
 end

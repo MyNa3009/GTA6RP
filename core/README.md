@@ -1,10 +1,18 @@
-# Core 1.7.10 (Testserver)
+# Core 1.8.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.7.10
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration. Danach `core_inventory` und `core_lib` neu starten (sie nutzen dieselbe Bridge).
+2. Neu in der Client-Bridge (für `core_lib` und andere Addons): `GetCallingResource`, `OnResourceStop`, `OnEvent`, `IsResourceStarted`, `GetResourceName`, `CallExport`, `DisableActionsThisFrame` (Gruppen `move`, `car`, `combat`, `mouse`), `PlayOwnAnim`, `StopOwnAnim`, `PlayOwnScenario`, `ClearOwnTasks`, `AttachPropToOwnPed`, und für das Fahrzeug, in dem man sitzt: `GetOwnVehicleState`, `IsOwnVehicle`, `SetVehicleEngine`, `SetVehicleLights`, `HasVehicleDoor`, `IsVehicleDoorOpen`, `SetVehicleDoor`, `CloseAllVehicleDoors`, `HasVehicleWindow`, `IsVehicleWindowDown`, `SetVehicleWindow`, `MoveToSeat`.
+3. `Platform.UiFocus(an, mauszeiger)`: Der zweite Wert ist neu und optional. `false` gibt der UI nur die Tastatur (z. B. Minigames mit Tasten). Ohne Angabe bleibt alles wie bisher.
+4. Neue Taste in der Bridge: `cancel` (X) zum Abbrechen von Fortschrittsbalken.
+5. Server-Bridge: `Platform.GetTime()` (Millisekunden) für Zeitmessungen.
 
 ## Update von 1.7.9
 
@@ -441,7 +449,7 @@ Passt alles: Server in txAdmin stoppen, dann dieselbe Datei in `fivem` einspiele
 
 ## Für andere Resources
 
-Andere Resources (z. B. `core_inventory`) nutzen die Bridge und die Config der Core mit `@core/bridge/...` und `@core/shared/config.lua` im fxmanifest. Die Netzwerk-Events tragen den Resource-Namen (`core_inventory:cb:request`), dadurch kommen sich die Resources nicht in die Quere.
+Andere Resources (z. B. `core_inventory`, `core_lib`) nutzen die Bridge und die Config der Core mit `@core/bridge/...` und `@core/shared/config.lua` im fxmanifest. Die Netzwerk-Events tragen den Resource-Namen (`core_inventory:cb:request`), dadurch kommen sich die Resources nicht in die Quere.
 
 Exports (`exports.core:...`):
 
