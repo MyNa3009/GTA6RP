@@ -1,6 +1,13 @@
-# core_ems 1.0.0
+# core_ems 1.1.0
 
 Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskasten, Verkauf von Verbänden, Verbandskästen und Tabletten, Untersuchen und Behandeln, Krankheiten mit Stadien, Krankenversicherung und die Medizinische Datenbank. Ränge, Rechte, Dienst und Kasse kommen aus `core_factions` (Organisation `ems`).
+
+## Update von 1.0.0
+
+1. Den Ordner `core_ems` ersetzen und neu starten. Keine Migration.
+2. Mediziner brauchen keinen Verbandskasten mehr, weder zum Hochholen noch zum Versorgen. "Verbandskasten anwenden" heißt jetzt **Versorgen** (Recht `ems.heal` statt `ems.medkit`). Wer das Recht im Organisationsmenü angepasst hatte, stellt es einmal neu ein.
+3. Der Verbandskasten ist jetzt für alle anderen: Unter **Person, Hochholen** holt man mit ihm eine bewusstlose Person hoch (Skillcheck mit Z). Er wird nur verbraucht, wenn es klappt. Kaufen kann man ihn beim Rettungsdienst. Ohne Kasten sagt das Spiel, wo es einen gibt.
+4. Nach einem Zusammenbruch durch Krankheit hilft auch der Verbandskasten nicht, dann geht nur das Krankenhaus.
 
 ## Installation
 
@@ -14,13 +21,15 @@ Alles geht nur im Dienst (Umkleide am Krankenhaus, `E`) und nur mit dem passende
 
 | G-Menü, Rettungsdienst | Was passiert |
 |---|---|
-| Hochholen | Nur bei bewusstlosen Personen. Skillcheck mit `Z` (drei Runden). Geht nicht, wenn jemand an einer Krankheit zusammengebrochen ist |
-| Verbandskasten anwenden | Minigame, dann volle Gesundheit. Der Kasten wird erst verbraucht, wenn das Minigame klappt |
+| Hochholen | Nur bei bewusstlosen Personen. Skillcheck mit `Z` (drei Runden), ohne Verbandskasten. Geht nicht, wenn jemand an einer Krankheit zusammengebrochen ist |
+| Versorgen | Minigame mit `E`, dann volle Gesundheit. Ohne Verbandskasten |
 | Untersuchen und behandeln | Zeigt Krankheiten, Stadium, Behandlungen und Preis. Behandeln nach einem Fortschrittsbalken und Zustimmung der Person |
 | Verkaufen | Verbände, Verbandskästen, Tabletten zu festen Preisen |
 | Krankenversicherung | Verkaufen oder verlängern (30 Tage) |
 | Ausweis verlangen | Die Person entscheidet mit Y oder N, ob sie ihren Personalausweis zeigt |
 | Medizinische Datenbank | Jede Person suchen (Name oder ID), Krankenakte, Versicherung, Verlauf, eigene Einträge |
+
+**Alle anderen** holen eine bewusstlose Person über das G-Menü (Person, Hochholen) mit einem Verbandskasten hoch, den sie beim Rettungsdienst gekauft haben. Skillcheck mit `Z`, der Kasten wird nur bei Erfolg verbraucht. Selbst benutzt (Inventar) heilt er ein Stück.
 
 Die Person stimmt jedem Kauf und jeder Behandlung zu (Y/N). Sie zahlt bar, sonst vom Konto. Alles Geld geht in die Kasse des EMS, nicht an den Mediziner. Preise stehen fest in `config.lua`, ein Preis vom Client wird nie angenommen.
 
@@ -68,7 +77,7 @@ exports.core_ems:CureDisease(characterId, 'cold')
 exports.core_ems:GetDiseases()                          -- eigene Krankheiten (nur Anzeige, z. B. HUD)
 ```
 
-Fehlercodes: `not_medic`, `not_on_duty`, `no_permission`, `too_far`, `not_dead`, `is_dead`, `hospital_only`, `target_busy`, `no_medkit`, `not_diagnosed`, `too_fast`, `too_soon`, `not_sick`, `not_enough_money`, `target_full`, `consent_declined`, `consent_timeout`, `no_id_card`, `not_found`, `invalid_input`.
+Fehlercodes: `not_medic`, `not_on_duty`, `no_permission`, `too_far`, `not_dead`, `is_dead`, `hospital_only`, `target_busy`, `no_medkit` (nur beim Hochholen mit Verbandskasten), `not_diagnosed`, `too_fast`, `too_soon`, `not_sick`, `not_enough_money`, `target_full`, `consent_declined`, `consent_timeout`, `no_id_card`, `not_found`, `invalid_input`.
 
 ## Testen
 

@@ -16,7 +16,7 @@ Config.Ems = {
     -- Rechte, die core_ems bei core_factions anmeldet. minRank: ab diesem Rang, bis die Leitung es im Menue aendert.
     Permissions = {
         { key = 'ems.revive',       group = 'Rettungsdienst', label = 'Hochholen',                                minRank = 1 },
-        { key = 'ems.medkit',       group = 'Rettungsdienst', label = 'Verbandskasten anwenden',                  minRank = 1 },
+        { key = 'ems.heal',         group = 'Rettungsdienst', label = 'Versorgen (heilen)',                       minRank = 1 },
         { key = 'ems.sell',         group = 'Rettungsdienst', label = 'Verbände, Kästen und Tabletten verkaufen', minRank = 2 },
         { key = 'ems.treat',        group = 'Rettungsdienst', label = 'Untersuchen und behandeln',                minRank = 3 },
         { key = 'ems.insurance',    group = 'Rettungsdienst', label = 'Krankenversicherung verkaufen',            minRank = 5 },
@@ -27,19 +27,28 @@ Config.Ems = {
     -- Abstand zur Person, den der Server prueft (Meter)
     TargetDistance = 3.0,
 
-    -- Hochholen: schneller Skillcheck mit Taste Z (QWERTZ). Mehrere Runden = mehrere Eintraege.
+    -- Hochholen durch Mediziner: schneller Skillcheck mit Taste Z (QWERTZ), braucht keinen Verbandskasten.
+    -- Mehrere Runden = mehrere Eintraege.
     Revive = {
         Difficulty = { 'medium', 'medium', 'hard' },
         Keys = { 'Z' },
         Price = 0,                  -- kostet nichts, die Person ist bewusstlos und kann nicht zustimmen
     },
 
-    -- Verbandskasten: Minigame vor dem Heilen. Abgezogen wird er erst, wenn es geklappt hat.
-    Medkit = {
+    -- Versorgen durch Mediziner (G-Menue): Minigame, dann heilen. Braucht keinen Verbandskasten.
+    Heal = {
         Difficulty = { 'medium', 'medium' },
         Keys = { 'E' },
-        HealByMedic = 100,          -- Gesundheit (GTA: 100 = von leer bis voll), wenn ein Mediziner ihn anwendet
-        HealSelf = 50,              -- wenn man ihn selbst benutzt (Inventar)
+        Amount = 100,               -- Gesundheit (GTA: 100 = von leer bis voll)
+    },
+
+    -- Verbandskasten fuer alle, die keine Mediziner sind: Damit kann man eine bewusstlose Person hochholen
+    -- (G-Menue, Person, Hochholen). Kaufen kann man ihn beim Rettungsdienst. Verbraucht wird er erst, wenn das
+    -- Minigame klappt. Selbst benutzt (Inventar) heilt er HealSelf.
+    Medkit = {
+        Difficulty = { 'medium', 'hard' },
+        Keys = { 'Z' },
+        HealSelf = 50,
     },
 
     -- Verkauf ueber das G-Menue zu festen Preisen. Die Person stimmt zu und zahlt bar, sonst vom Konto.

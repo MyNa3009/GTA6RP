@@ -1,7 +1,8 @@
 -- Eintraege im G-Menue unter Rettungsdienst. Nur im Dienst und nur mit Recht sichtbar (Stand von core_factions).
 -- Ziel ist immer die Person, die man anschaut.
 --   Rettungsdienst/Hochholen                    bewusstlose Person, Skillcheck mit Z
---   Rettungsdienst/Verbandskasten anwenden      wache Person, Minigame, kostet einen Verbandskasten
+--   Rettungsdienst/Versorgen                    wache Person, Minigame, heilt (ohne Verbandskasten)
+--   Person/Hochholen                            fuer alle anderen: bewusstlose Person, verbraucht einen Verbandskasten
 --   Rettungsdienst/Untersuchen und behandeln    zeigt die Krankheiten, Behandlung nach Zustimmung
 --   Rettungsdienst/Verkaufen                    Verbände, Kästen, Tabletten
 --   Rettungsdienst/Krankenversicherung          verkaufen oder verlängern
@@ -55,16 +56,34 @@ lib.addInteraction({
 })
 
 lib.addInteraction({
-    id = 'medkit',
+    id = 'heal',
     path = CATEGORY,
-    label = 'Verbandskasten anwenden',
-    description = 'Braucht einen Verbandskasten',
+    label = 'Versorgen',
+    description = 'Heilt Verletzungen, Taste E im markierten Bereich',
     icon = 'package',
     order = 20,
     target = 'player',
-    canShow = canWithTarget('ems.medkit', false),
+    canShow = canWithTarget('ems.heal', false),
     onSelect = function(ctx)
-        EmsClient.Call('ems_medkit', { serverId = ctx.player.serverId })
+        EmsClient.Call('ems_heal', { serverId = ctx.player.serverId })
+    end,
+})
+
+-- Fuer alle, die nicht als Mediziner hochholen koennen. Ob ein Verbandskasten da ist, prueft der Server
+-- und sagt sonst, wo es einen gibt.
+lib.addInteraction({
+    id = 'medkit_revive',
+    path = 'Person',
+    label = 'Hochholen',
+    description = 'Verbraucht einen Verbandskasten, Taste Z',
+    icon = 'heart-pulse',
+    order = 5,
+    target = 'player',
+    canShow = function(ctx)
+        return targetDead(ctx) and not EmsClient.Can('ems.revive')
+    end,
+    onSelect = function(ctx)
+        EmsClient.Call('ems_medkit_revive', { serverId = ctx.player.serverId })
     end,
 })
 

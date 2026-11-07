@@ -1,5 +1,6 @@
--- Aktionen der Mediziner aus dem G-Menue: Hochholen, Verbandskasten, Verkaufen, Untersuchen und Behandeln,
--- Krankenversicherung, Ausweis verlangen. Dazu der Verbandskasten aus dem eigenen Inventar.
+-- Aktionen der Mediziner aus dem G-Menue: Hochholen, Versorgen, Verkaufen, Untersuchen und Behandeln,
+-- Krankenversicherung, Ausweis verlangen. Mediziner brauchen dafuer keinen Verbandskasten.
+-- Dazu fuer alle anderen: mit einem gekauften Verbandskasten hochholen, oder ihn selbst benutzen.
 -- Jede Aktion prueft: Mediziner im Dienst mit Recht, Ziel online und in Reichweite, Zustand (bewusstlos oder nicht).
 -- Geld zahlt die Person nach ihrer Zustimmung, alles geht in die Kasse des Rettungsdiensts.
 
@@ -68,7 +69,7 @@ local FAIL_TEXT = {
     too_far = 'Die Person ist zu weit weg.',
     not_dead = 'Die Person ist nicht bewusstlos.',
     hospital_only = 'Die Person muss ins Krankenhaus, vor Ort geht das nicht.',
-    no_medkit = 'Du hast keinen Verbandskasten dabei.',
+    no_medkit = 'Du brauchst einen Verbandskasten. Den verkauft der Rettungsdienst.',
     is_dead = 'Die Person ist bewusstlos. Erst hochholen.',
 }
 
@@ -115,33 +116,10 @@ register('ems_revive', 'ems.revive', function(source, data)
 end)
 
 ------------------------------------------------------------------------
--- Verbandskasten
+-- Versorgen (Mediziner, ohne Verbandskasten)
 ------------------------------------------------------------------------
 
-local function useMedkit(source, target, heal, actorName)
-    local characterId = Ems.CharacterOf(source)
-    if (tonumber(Ems.Inventory('GetItemCount', characterId, 'medkit')) or 0) < 1 then
-        return false, 'no_medkit'
-    end
-    local success = lib.minigame(source, 'skillcheck', { difficulty = CFG.Medkit.Difficulty, keys = CFG.Medkit.Keys })
-    if not success then
-        return false, 'minigame_failed'
-    end
-    if target ~= source and (not Ems.CharacterOf(target) or not Ems.Near(source, target, CFG.TargetDistance)) then
-        return false, 'too_far'
-    end
-    if Ems.Core('IsDead', target) then
-        return false, 'is_dead'
-    end
-    if not Ems.Inventory('RemoveItem', characterId, 'medkit', 1) then
-        return false, 'no_medkit'
-    end
-    Ems.Core('Heal', target, heal)
-    Ems.Record(Ems.CharacterOf(target), 'medkit', 'Verbandskasten angewendet', actorName)
-    return true
-end
-
-register('ems_medkit', 'ems.medkit', function(source, data)
+register('ems_heal', 'ems.heal', function(source, data)
     local target, err = Ems.Target(source, data)
     if not target then
         return { ok = false, error = err }
@@ -149,25 +127,105 @@ register('ems_medkit', 'ems.medkit', function(source, data)
     if Ems.Core('IsDead', target) then
         return { ok = false, error = 'is_dead' }
     end
-    if (tonumber(Ems.Inventory('GetItemCount', Ems.CharacterOf(source), 'medkit')) or 0) < 1 then
+    if not Ems.Lock(target) then
+        return { ok = false, error = 'target_busy' }
+    end
+    Platform.Async(function()
+        local success = lib.minigame(source, 'skillcheck', { difficulty = CFG.Heal.Difficulty, keys = CFG.Heal.Keys })
+        Ems.Unlock(target)
+        if not success then
+            return fail(source, 'minigame_failed')
+        end
+        if not Ems.CharacterOf(target) or not Ems.Near(source, target, CFG.TargetDistance) then
+            return fail(source, 'too_far')
+        end
+        if Ems.Core('IsDead', target) then
+            return fail(source, 'is_dead')
+        end
+        Ems.Core('Heal', target, CFG.Heal.Amount)
+        Ems.Record(Ems.CharacterOf(target), 'heal', 'Verletzungen versorgt', medicName(source))
+        Ems.Log({ actor_account_id = accountOf(source), character_id = Ems.CharacterOf(target), action = 'heal', data = { medic = Ems.CharacterOf(source) } })
+        Platform.Notify(target, 'Der Rettungsdienst hat dich versorgt.', 'success')
+        Platform.Notify(source, 'Person versorgt.', 'success')
+    end)
+    return { ok = true }
+end)
+
+------------------------------------------------------------------------
+-- Verbandskasten (alle, die keine Mediziner sind)
+------------------------------------------------------------------------
+
+local function medkitCount(source)
+    return tonumber(Ems.Inventory('GetItemCount', Ems.CharacterOf(source), 'medkit')) or 0
+end
+
+-- Mit einem Verbandskasten eine bewusstlose Person hochholen. Kein Recht noetig, aber ein Verbandskasten.
+-- Nach einem Zusammenbruch durch Krankheit geht das nicht (nur Krankenhaus).
+register('ems_medkit_revive', nil, function(source, data)
+    local target, err = Ems.Target(source, data)
+    if not target then
+        return { ok = false, error = err }
+    end
+    local dead, hospitalOnly = Ems.Core('IsDead', target)
+    if not dead then
+        return { ok = false, error = 'not_dead' }
+    end
+    if hospitalOnly then
+        return { ok = false, error = 'hospital_only' }
+    end
+    if medkitCount(source) < 1 then
         return { ok = false, error = 'no_medkit' }
     end
     if not Ems.Lock(target) then
         return { ok = false, error = 'target_busy' }
     end
     Platform.Async(function()
-        local ok, useError = useMedkit(source, target, CFG.Medkit.HealByMedic, medicName(source))
+        local success = lib.minigame(source, 'skillcheck', { difficulty = CFG.Medkit.Difficulty, keys = CFG.Medkit.Keys })
         Ems.Unlock(target)
-        if not ok then
-            return fail(source, useError)
+        if not success then
+            return Platform.Notify(source, 'Das hat nicht geklappt. Der Verbandskasten ist noch da.', 'error')
         end
-        Platform.Notify(target, 'Der Rettungsdienst hat dich versorgt.', 'success')
-        Platform.Notify(source, 'Verbandskasten angewendet.', 'success')
+        if not Ems.CharacterOf(target) or not Ems.Near(source, target, CFG.TargetDistance) then
+            return fail(source, 'too_far')
+        end
+        if not Ems.Inventory('RemoveItem', Ems.CharacterOf(source), 'medkit', 1) then
+            return fail(source, 'no_medkit')
+        end
+        local ok, reviveError = Ems.Core('Revive', target, accountOf(source), 'Verbandskasten')
+        if not ok then
+            -- Kasten zurueck, wenn das Hochholen doch nicht ging (z. B. inzwischen im Krankenhaus)
+            Ems.Inventory('AddItem', Ems.CharacterOf(source), 'medkit', 1)
+            return fail(source, reviveError or 'not_dead')
+        end
+        local helper = Ems.NameOf(source)
+        Ems.Record(Ems.CharacterOf(target), 'revive', 'Mit Verbandskasten hochgeholt', helper)
+        Ems.Log({ actor_account_id = accountOf(source), character_id = Ems.CharacterOf(target), action = 'medkit_revive',
+            data = { helper = Ems.CharacterOf(source) } })
+        Platform.Notify(target, 'Jemand hat dich mit einem Verbandskasten hochgeholt.', 'success')
+        Platform.Notify(source, 'Person hochgeholt. Der Verbandskasten ist verbraucht.', 'success')
     end)
     return { ok = true }
 end)
 
 -- Selbst benutzt (Inventar): Minigame, dann heilen. Ohne Erfolg bleibt der Kasten im Inventar.
+local function useMedkitSelf(source)
+    if medkitCount(source) < 1 then
+        return false, 'no_medkit'
+    end
+    if not lib.minigame(source, 'skillcheck', { difficulty = CFG.Medkit.Difficulty, keys = CFG.Medkit.Keys }) then
+        return false, 'minigame_failed'
+    end
+    if Ems.Core('IsDead', source) then
+        return false, 'is_dead'
+    end
+    if not Ems.Inventory('RemoveItem', Ems.CharacterOf(source), 'medkit', 1) then
+        return false, 'no_medkit'
+    end
+    Ems.Core('Heal', source, CFG.Medkit.HealSelf)
+    Ems.Record(Ems.CharacterOf(source), 'medkit', 'Verbandskasten selbst angewendet')
+    return true
+end
+
 local selfBusy = {}
 Platform.OnEvent('core_inventory:itemUsed', function(source, characterId, item)
     if item ~= 'medkit' or selfBusy[source] then
@@ -175,7 +233,7 @@ Platform.OnEvent('core_inventory:itemUsed', function(source, characterId, item)
     end
     selfBusy[source] = true
     Platform.Async(function()
-        local ok, err = useMedkit(source, source, CFG.Medkit.HealSelf, nil)
+        local ok, err = useMedkitSelf(source)
         selfBusy[source] = nil
         if ok then
             Platform.Notify(source, 'Du hast dich verarztet.', 'success')
