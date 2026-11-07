@@ -1,10 +1,23 @@
-# Core 1.8.0 (Testserver)
+# Core 1.8.1 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.8.0
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration. Danach `core_inventory` und `core_lib` neu starten (sie nutzen dieselbe Bridge).
+2. **Noclip neu, 1 zu 1 wie bei txAdmin:** eine freie Kamera, der Ped fliegt unsichtbar mit und wird alle 100 Frames nachgezogen. Nachgebaut nach dem Code von txAdmin (MIT) und der Freecam von Deltanic (MIT).
+   - Tasten: W A S D fliegen dahin, wohin die Kamera schaut, Q hoch, E runter, Shift 6x schneller, Alt 6x langsamer. Mit Controller RT schneller, LT langsamer.
+   - Grundtempo 0,85 m pro Frame bei 60 FPS (etwa 51 m/s), Sichtfeld 50, weicher Übergang 250 ms, Tastenhinweise unten rechts.
+   - Im Fahrzeug fliegt das Fahrzeug mit und steht danach auf dem Boden, man sitzt wieder am Steuer.
+   - Ausschalten in der Luft: Man fällt schnell nach unten, ohne Ragdoll und ohne Schaden, bis man gelandet ist.
+   - Versetzt dich ein Befehl im Noclip (`/tp`, `/goto`), springt die Kamera mit.
+   - A-Jail, Beobachten, Einfrieren und `/kill` schalten den Noclip sofort ab, der Teleport danach bleibt bestehen.
+3. `Config.Noclip` ist neu: `BaseSpeed`, `FastMultiplier`, `SlowMultiplier`, `LookSensitivity`, `GamepadLookSensitivity`, `Fov`, `Easing`, `EasingMs`, `ShowKeys`. Die alten Werte (`Speed`, `FastSpeed`, `SlowSpeed`, `FollowCameraPitch`, `Invisible`, `VisibleForSelf`, `GroundOnExit`) gibt es nicht mehr. Wer `config.lua` angepasst hat, übernimmt den Block `Config.Noclip` neu.
+4. Bridge: `Platform.SetNoclip(an, einstellungen, texte)` und `Platform.IsNoclipActive()`. `NoclipMove`, `NoclipHold`, `ShowNoclipLocallyThisFrame` und `DisableNoclipControlsThisFrame` sind entfallen.
 
 ## Update von 1.7.10
 
@@ -330,7 +343,7 @@ ensure core
 | Login gebannt, neuer Rockstar-Account am selben PC | Verbindung abgelehnt (`Config.Bans.BlockHardware`) |
 | Akte, Übersicht | Bekannte PCs, IP-Adressen nur mit Recht `data.private`, IPs werden nach 30 Tagen gelöscht |
 | Überweisung zwischen eigenen Charakteren | Geht durch, landet blau unter "Twink-Interaktionen" in der Akte und im Reiter Twinks (`Config.Twinks`, auf `block` stellen zum Sperren) |
-| `Z` (deutsche Tastatur) oder `/nc` im Admin-Dienst | Noclip: W fliegt dahin, wohin man schaut, auch nach oben und unten. A S D, Leertaste hoch, Strg runter, Shift sehr schnell, Alt langsam. Unsichtbar für alle, auch für einen selbst. Beim Ausschalten auf dem Boden darunter. Recht `admin.noclip` (ab Junior) |
+| `Z` (deutsche Tastatur) oder `/nc` im Admin-Dienst | Noclip wie bei txAdmin: freie Kamera, W A S D fliegen dahin, wohin man schaut, Q hoch, E runter, Shift 6x schneller, Alt 6x langsamer. Unsichtbar für alle. Aus der Luft fällt man danach ohne Schaden. Recht `admin.noclip` (ab Junior) |
 | `/car adder` | Fahrzeug spawnt, man sitzt am Steuer, Kennzeichen `ADMIN`. Recht `vehicle.spawn` (ab Server Administrator), nur im Dienst |
 | `/dv` | Löscht das Fahrzeug, in dem man sitzt, sonst das nächste in 6 m. Recht `vehicle.delete` (ab Junior), auch ohne Dienst |
 | `/boost 300` am Steuer | Fahrzeug bis zu 300 % schneller, bis 500 km/h. `/boost 0` schaltet ab. Recht `vehicle.boost` (ab Senior Administrator) |
@@ -429,7 +442,7 @@ Passt alles: Server in txAdmin stoppen, dann dieselbe Datei in `fivem` einspiele
   - `Config.Notify`: wie viele Meldungen gleichzeitig, wie lange je Art
   - `Config.Warns`: wie lange Verwarnungen zählen, ab wie vielen Admins gewarnt werden
   - `Config.Network.MaxRequestsPerSecond`: Spam-Schutz
-  - `Config.Noclip`: Geschwindigkeiten, Unsichtbarkeit (auch für sich selbst), Landen auf dem Boden, Standardtaste
+  - `Config.Noclip`: Standardtaste, Tempo und Faktoren für Shift und Alt, Mausempfindlichkeit, Sichtfeld, Übergang, Tastenhinweise (Werte wie bei txAdmin)
   - `Config.Devices`: Erkennung neuer PCs, Multi-Account über den PC, IP speichern und wie lange
   - `Config.Twinks`: welche Interaktionen zwischen eigenen Charakteren erlaubt (`warn`) oder gesperrt (`block`) sind
   - `Config.Vehicles`: Kennzeichen, Löschradius, höchster Boost, Höchstgeschwindigkeit

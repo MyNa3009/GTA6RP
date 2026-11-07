@@ -161,15 +161,16 @@ Config.Noclip = {
     -- Standardtaste (deutsche Tastatur, siehe Config.Keyboard). Jeder kann sie im Spiel aendern:
     -- Einstellungen > Tastenbelegung > FiveM > "Noclip an oder aus"
     Key = 'Z',
-    Speed = 30.0,
-    FastSpeed = 350.0,          -- mit Shift
-    SlowSpeed = 6.0,            -- mit Alt
-    -- true: W fliegt dahin, wohin die Kamera schaut. Maus nach unten = nach unten fliegen, nach oben = nach oben.
-    -- false: W und S fliegen immer waagerecht, hoch und runter nur mit Leertaste und Strg.
-    FollowCameraPitch = true,
-    Invisible = true,        -- fuer alle anderen unsichtbar
-    VisibleForSelf = false,  -- true: man sieht sich selbst trotzdem
-    GroundOnExit = true,     -- beim Ausschalten auf den Boden darunter, auch aus der Luft
+    -- Werte wie bei txAdmin. Tasten: W A S D, Q hoch, E runter, Shift schneller, Alt langsamer.
+    BaseSpeed = 0.85,            -- Meter pro Frame bei 60 FPS (also etwa 51 m/s)
+    FastMultiplier = 6,          -- Shift (Controller: RT)
+    SlowMultiplier = 6,          -- Alt teilt durch diesen Wert (Controller: LT)
+    LookSensitivity = 5,         -- Maus
+    GamepadLookSensitivity = 2,  -- Controller
+    Fov = 50.0,                  -- Sichtfeld der Noclip-Kamera
+    Easing = true,               -- weicher Uebergang beim An- und Ausschalten
+    EasingMs = 250,
+    ShowKeys = true,             -- Tastenhinweise unten rechts
 }
 
 -- Admin-Fahrzeuge

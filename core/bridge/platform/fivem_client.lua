@@ -200,20 +200,10 @@ end
 
 local ACTIONS = {
     respawn       = { control = 38, label = 'E' },      -- INPUT_PICKUP
-    noclipForward = { control = 32, label = 'W' },      -- INPUT_MOVE_UP_ONLY
-    noclipBack    = { control = 33, label = 'S' },      -- INPUT_MOVE_DOWN_ONLY
-    noclipLeft    = { control = 34, label = 'A' },      -- INPUT_MOVE_LEFT_ONLY
-    noclipRight   = { control = 35, label = 'D' },      -- INPUT_MOVE_RIGHT_ONLY
-    noclipUp      = { control = 22, label = 'Leertaste' }, -- INPUT_JUMP
-    noclipDown    = { control = 36, label = 'Strg' },   -- INPUT_DUCK
-    noclipFast    = { control = 21, label = 'Shift' },  -- INPUT_SPRINT
-    noclipSlow    = { control = 19, label = 'Alt' },    -- INPUT_CHARACTER_WHEEL
     cancel        = { control = 73, label = 'X' },      -- INPUT_VEH_DUCK, Abbrechen (z. B. Fortschrittsbalken der core_lib)
 }
 local CONTROL_GROUP = 0
 
--- Im Noclip gesperrt, damit der Ped nicht springt, rennt oder in Deckung geht
-local NOCLIP_BLOCKED_CONTROLS = { 19, 21, 22, 23, 30, 31, 32, 33, 34, 35, 36, 44, 71, 72, 75 }
 -- Im A-Jail gesperrt: schiessen, zielen, schlagen, Waffenrad
 local COMBAT_CONTROLS = { 24, 25, 37, 45, 47, 58, 140, 141, 142, 143, 257, 263, 264 }
 
@@ -237,173 +227,363 @@ function Platform.DisableCombatThisFrame()
 end
 
 ------------------------------------------------------------------------
--- Noclip
+-- Noclip wie bei txAdmin (seit Core 1.8.1)
+-- Freie Kamera, der Ped (und das Fahrzeug) wird alle 100 Frames hinterhergezogen. Nachgebaut nach txAdmin
+-- (resource/menu/client/cl_player_mode.lua und vendor/freecam, MIT, Copyright 2019-2025 Take-Two Interactive
+-- Software, Inc. und Copyright 2021 Deltanic, https://github.com/Deltanic/fivem-freecam).
+-- Tasten wie dort: W A S D, Q hoch, E runter, Shift 6x schneller, Alt 6x langsamer, Maus schaut.
 ------------------------------------------------------------------------
 
-local noclipEntity = nil
-local LOOK_UP_DOWN_CONTROL = 2 -- INPUT_LOOK_UD (Maus hoch und runter)
-local NOCLIP_TELEPORT_DISTANCE = 3.0 -- weiter weg gilt als Teleport, nicht als Abdriften
-local noclipPosition = nil
-local noclipCamPitch = nil -- gemerkte Kamera-Neigung, solange die Maus nicht bewegt wird -- gemerkte Position im Noclip, damit nichts den Spieler wegtreibt
+local NOCLIP_CONTROLS = {
+    LOOK_X = 1,                 -- INPUT_LOOK_LR
+    LOOK_Y = 2,                 -- INPUT_LOOK_UD
+    MOVE_X = 30,                -- INPUT_MOVE_LR (A D)
+    MOVE_Y = 31,                -- INPUT_MOVE_UD (W S)
+    MOVE_Z = { 152, 153 },      -- INPUT_PARACHUTE_BRAKE_LEFT (Q hoch), INPUT_PARACHUTE_BRAKE_RIGHT (E runter)
+    MOVE_FAST = 21,             -- INPUT_SPRINT (Shift)
+    MOVE_SLOW = 19,             -- INPUT_CHARACTER_WHEEL (Alt)
+}
+-- Mit Controller: RT schneller, LT langsamer (wie bei txAdmin)
+local NOCLIP_GAMEPAD_FAST = 71  -- INPUT_VEH_ACCELERATE
+local NOCLIP_GAMEPAD_SLOW = 72  -- INPUT_VEH_BRAKE
+local NOCLIP_PED_SYNC_FRAMES = 100        -- so oft wird der Ped zur Kamera gezogen
+local NOCLIP_TELEPORT_DISTANCE = 3.0      -- weiter weg gesetzt (z. B. /tp im Noclip): Kamera springt mit
+local NOCLIP_PITCH_LIMIT = 90.0
+local NOCLIP_FALL_MIN_HEIGHT = 4.0        -- darunter kein Fall-Schutz
+local NOCLIP_FALL_DISTANCE = 9000.0
+local NOCLIP_FALL_AWAIT_MS = 1000
+local NOCLIP_FALL_STEP_MS = 25
+local NOCLIP_FALL_POLL_MS = 50
+local NOCLIP_FALL_SETTLE_MS = 750
+local NOCLIP_VEHICLE_ALPHA = 125
+local NOCLIP_VEHICLE_ALPHA_MS = 2000
+-- Aus txAdmin (lineare Regression ueber zwei Messpunkte): Kraft nach unten, damit hohe Faelle nicht ewig dauern
+local NOCLIP_FALL_COEFFICIENT = 1.6428571428571428
+local NOCLIP_FALL_INTERCEPT = 3.5714285714285836
+local NOCLIP_SCALEFORM_CLEAR_SPACE = 200
+local NOCLIP_SCALEFORM_BACKGROUND_ALPHA = 80
 
--- Fliegt mit dem Fahrzeug, wenn man am Steuer sitzt, sonst mit dem Ped
-local function noclipTarget()
-    local ped = PlayerPedId()
-    local vehicle = GetVehiclePedIsIn(ped, false)
-    if vehicle ~= 0 and GetPedInVehicleSeat(vehicle, DRIVER_SEAT) == ped then
-        return vehicle, true
-    end
-    return ped, false
+local noclip = {
+    active = false,
+    camera = nil,
+    pos = nil, rot = nil, vecX = nil, vecY = nil,
+    vehicle = 0,
+    settings = nil,
+    labels = nil,
+}
+
+local function clamp(x, low, high)
+    return math.min(math.max(x, low), high)
 end
 
--- Von hier aus wird beim Verlassen des Noclips der Boden gesucht: erst direkt unter einem,
--- dann von weiter oben (falls man unter der Karte steckt)
-local NOCLIP_GROUND_PROBES = { 1.0, 50.0 }
-local NOCLIP_GROUND_TOP = 1000.0
+local function eulerToMatrix(rotX, rotY, rotZ)
+    local radX, radY, radZ = math.rad(rotX), math.rad(rotY), math.rad(rotZ)
+    local sinX, sinY, sinZ = math.sin(radX), math.sin(radY), math.sin(radZ)
+    local cosX, cosY, cosZ = math.cos(radX), math.cos(radY), math.cos(radZ)
+    local vecX = vector3(cosY * cosZ, cosY * sinZ, -sinY)
+    local vecY = vector3(cosZ * sinX * sinY - cosX * sinZ, cosX * cosZ - sinX * sinY * sinZ, cosY * sinX)
+    return vecX, vecY
+end
 
-local function noclipGround(x, y, z)
-    for _, offset in ipairs(NOCLIP_GROUND_PROBES) do
-        local found, groundZ = GetGroundZFor_3dCoord(x, y, z + offset, false)
-        if found then
-            return groundZ
+local function isGamepad()
+    return not IsUsingKeyboard(2)
+end
+
+local function controlNormal(control)
+    if type(control) == 'table' then
+        return GetDisabledControlNormal(CONTROL_GROUP, control[1]) - GetDisabledControlNormal(CONTROL_GROUP, control[2])
+    end
+    return GetDisabledControlNormal(CONTROL_GROUP, control)
+end
+
+local function setCamPosition(x, y, z)
+    SetFocusPosAndVel(x, y, z, 0.0, 0.0, 0.0)
+    SetCamCoord(noclip.camera, x, y, z)
+    LockMinimapPosition(x, y)
+    noclip.pos = vector3(x, y, z)
+end
+
+local function setCamRotation(x, y, z)
+    local rotX = clamp(x, -NOCLIP_PITCH_LIMIT, NOCLIP_PITCH_LIMIT)
+    local rotY = y % 360
+    local rotZ = z % 360
+    noclip.vecX, noclip.vecY = eulerToMatrix(rotX, rotY, rotZ)
+    LockMinimapAngle(math.floor(rotZ))
+    SetCamRot(noclip.camera, rotX, rotY, rotZ, 2)
+    noclip.rot = vector3(rotX, rotY, rotZ)
+end
+
+local function speedMultiplier()
+    local s = noclip.settings
+    local gamepad = isGamepad()
+    local fastNormal = controlNormal(gamepad and NOCLIP_GAMEPAD_FAST or NOCLIP_CONTROLS.MOVE_FAST)
+    local slowNormal = controlNormal(gamepad and NOCLIP_GAMEPAD_SLOW or NOCLIP_CONTROLS.MOVE_SLOW)
+    local fast = 1 + ((s.FastMultiplier - 1) * fastNormal)
+    local slow = 1 + ((s.SlowMultiplier - 1) * slowNormal)
+    return s.BaseSpeed * fast / slow * (GetFrameTime() * 60)
+end
+
+-- Ein Frame Kamera, Rechnung wie bei txAdmin. Gibt Position und Blickrichtung zurueck.
+local function updateCamera()
+    if IsPauseMenuActive() then
+        return nil
+    end
+    local s = noclip.settings
+    local sensitivity = isGamepad() and s.GamepadLookSensitivity or s.LookSensitivity
+    local speed = speedMultiplier()
+    local lookX = controlNormal(NOCLIP_CONTROLS.LOOK_X)
+    local lookY = controlNormal(NOCLIP_CONTROLS.LOOK_Y)
+    local moveX = controlNormal(NOCLIP_CONTROLS.MOVE_X)
+    local moveY = controlNormal(NOCLIP_CONTROLS.MOVE_Y)
+    local moveZ = controlNormal(NOCLIP_CONTROLS.MOVE_Z)
+
+    local rot = noclip.rot
+    local rotX = rot.x + (-lookY * sensitivity)
+    local rotZ = rot.z + (-lookX * sensitivity)
+
+    local pos = noclip.pos
+    pos = pos + (noclip.vecX * moveX * speed)
+    pos = pos + (noclip.vecY * -moveY * speed)
+    pos = pos + (vector3(0.0, 0.0, 1.0) * moveZ * speed)
+
+    setCamPosition(pos.x, pos.y, pos.z)
+    setCamRotation(rotX, rot.y, rotZ)
+    return noclip.pos, noclip.rot.z
+end
+
+local function makeInstructionalScaleform(keys)
+    local scaleform = RequestScaleformMovie('instructional_buttons')
+    while not HasScaleformMovieLoaded(scaleform) do
+        Wait(10)
+    end
+    BeginScaleformMovieMethod(scaleform, 'CLEAR_ALL')
+    EndScaleformMovieMethod()
+    BeginScaleformMovieMethod(scaleform, 'SET_CLEAR_SPACE')
+    ScaleformMovieMethodAddParamInt(NOCLIP_SCALEFORM_CLEAR_SPACE)
+    EndScaleformMovieMethod()
+    for index, key in ipairs(keys) do
+        BeginScaleformMovieMethod(scaleform, 'SET_DATA_SLOT')
+        ScaleformMovieMethodAddParamInt(index - 1)
+        ScaleformMovieMethodAddParamPlayerNameString(GetControlInstructionalButton(CONTROL_GROUP, key[2], true))
+        BeginTextCommandScaleformString('STRING')
+        AddTextComponentSubstringKeyboardDisplay(key[1])
+        EndTextCommandScaleformString()
+        EndScaleformMovieMethod()
+    end
+    BeginScaleformMovieMethod(scaleform, 'DRAW_INSTRUCTIONAL_BUTTONS')
+    EndScaleformMovieMethod()
+    BeginScaleformMovieMethod(scaleform, 'SET_BACKGROUND_COLOUR')
+    ScaleformMovieMethodAddParamInt(0)
+    ScaleformMovieMethodAddParamInt(0)
+    ScaleformMovieMethodAddParamInt(0)
+    ScaleformMovieMethodAddParamInt(NOCLIP_SCALEFORM_BACKGROUND_ALPHA)
+    EndScaleformMovieMethod()
+    return scaleform
+end
+
+-- Nach dem Noclip in der Luft: schnell nach unten, ohne Ragdoll und ohne Schaden bis zur Landung (wie txAdmin)
+local function protectFall()
+    CreateThread(function()
+        local ped = PlayerPedId()
+        local height = GetEntityHeightAboveGround(ped)
+        if height == nil or height < NOCLIP_FALL_MIN_HEIGHT then
+            return
         end
-    end
-    local found, groundZ = GetGroundZFor_3dCoord(x, y, NOCLIP_GROUND_TOP, false)
-    return found and groundZ or nil
+        local player = PlayerId()
+        SetEntityInvincible(ped, true)
+        SetPlayerFallDistance(player, NOCLIP_FALL_DISTANCE)
+        local force = NOCLIP_FALL_COEFFICIENT * height + NOCLIP_FALL_INTERCEPT
+        ApplyForceToEntity(ped, 3, 0.0, 0.0, -force, 0.0, 0.0, 0.0, 0, true, true, true, false, true)
+
+        local waited = 0
+        while not IsPedFalling(ped) do
+            if waited >= NOCLIP_FALL_AWAIT_MS then
+                SetEntityInvincible(ped, false)
+                SetPlayerFallDistance(player, -1)
+                return
+            end
+            waited = waited + NOCLIP_FALL_STEP_MS
+            Wait(NOCLIP_FALL_STEP_MS)
+        end
+        repeat
+            Wait(NOCLIP_FALL_POLL_MS)
+        until not IsPedFalling(ped)
+        Wait(NOCLIP_FALL_SETTLE_MS)
+        SetEntityInvincible(ped, false)
+        SetPlayerFallDistance(player, -1)
+    end)
 end
 
--- invisible = true: fuer alle anderen unsichtbar (Ped und Fahrzeug)
--- toGround = true: beim Ausschalten auf den Boden darunter setzen, auch aus der Luft
-function Platform.SetNoclip(enabled, invisible, toGround)
-    local entity, isVehicle
-    if enabled then
-        entity, isVehicle = noclipTarget()
-        noclipEntity = entity
-    else
-        entity = noclipEntity or PlayerPedId()
-        isVehicle = IsEntityAVehicle(entity)
-        noclipEntity = nil
-    end
-    if not DoesEntityExist(entity) then
+local function startNoclipThreads()
+    local ped = PlayerPedId()
+
+    -- Kamera und Ped
+    CreateThread(function()
+        local start = GetEntityCoords(ped)
+        setCamPosition(start.x, start.y, start.z)
+        local lastSet = start
+        local frame = 0
+        local loopPos, loopRotZ
+
+        local function updatePed(pos, rotZ)
+            if pos == nil or rotZ == nil then
+                return
+            end
+            SetEntityCoords(ped, pos.x, pos.y, pos.z, false, false, false, false)
+            SetEntityHeading(ped, rotZ)
+            local vehicle = noclip.vehicle
+            if vehicle ~= 0 and DoesEntityExist(vehicle) then
+                SetEntityCoords(vehicle, pos.x, pos.y, pos.z, false, false, false, false)
+                SetEntityHeading(vehicle, rotZ)
+            end
+            lastSet = pos
+        end
+
+        while noclip.active do
+            -- Hat ein anderes Script den Ped versetzt (/tp, /goto), springt die Kamera mit
+            local coords = GetEntityCoords(ped)
+            if #(coords - lastSet) > NOCLIP_TELEPORT_DISTANCE then
+                setCamPosition(coords.x, coords.y, coords.z)
+                lastSet = coords
+            end
+            local pos, rotZ = updateCamera()
+            if pos then
+                loopPos, loopRotZ = pos, rotZ
+            end
+            frame = frame + 1
+            if frame > NOCLIP_PED_SYNC_FRAMES then
+                frame = 0
+                updatePed(loopPos, loopRotZ)
+            end
+            Wait(0)
+        end
+        -- Den letzten Stand setzt Platform.SetNoclip(false) sofort selbst, damit ein Teleport danach gilt
+    end)
+
+    -- Sich selbst nicht sehen (die Kamera steckt im Ped) und Tastenhinweise unten rechts
+    CreateThread(function()
+        local labels = noclip.labels
+        local scaleform = noclip.settings.ShowKeys and makeInstructionalScaleform({
+            { labels.slower, NOCLIP_CONTROLS.MOVE_SLOW },
+            { labels.faster, NOCLIP_CONTROLS.MOVE_FAST },
+            { labels.down, NOCLIP_CONTROLS.MOVE_Z[2] },
+            { labels.up, NOCLIP_CONTROLS.MOVE_Z[1] },
+            { labels.leftRight, NOCLIP_CONTROLS.MOVE_X },
+            { labels.forwardBack, NOCLIP_CONTROLS.MOVE_Y },
+        })
+        while noclip.active do
+            SetEntityLocallyInvisible(ped)
+            local vehicle = noclip.vehicle
+            if vehicle ~= 0 then
+                if DoesEntityExist(vehicle) then
+                    SetEntityLocallyInvisible(vehicle)
+                else
+                    noclip.vehicle = 0
+                end
+            end
+            if scaleform then
+                DrawScaleformMovieFullscreen(scaleform, 255, 255, 255, 255, 0)
+            end
+            Wait(0)
+        end
+        if scaleform then
+            SetScaleformMovieAsNoLongerNeeded(scaleform)
+        end
+    end)
+end
+
+-- enabled: an oder aus. Wirkt sofort, ohne Warten.
+-- Einschalten: settings = Config.Noclip, labels = Texte der Tastenhinweise { slower, faster, down, up, leftRight, forwardBack }
+-- Ausschalten: settings = { protectFall = true } fuer den Fallschutz aus der Luft (wie txAdmin). Ohne ihn,
+-- wenn danach sowieso teleportiert wird (A-Jail, Beobachten).
+function Platform.SetNoclip(enabled, settings, labels)
+    enabled = enabled == true
+    if enabled == noclip.active then
         return
     end
-    FreezeEntityPosition(entity, enabled)
-    SetEntityCollision(entity, not enabled, not enabled)
-    -- Ohne Schwerkraft und ohne Restgeschwindigkeit kann nichts nach unten ziehen
-    SetEntityHasGravity(entity, not enabled)
-    noclipCamPitch = nil
+    local ped = PlayerPedId()
+
     if enabled then
-        SetEntityVelocity(entity, 0.0, 0.0, 0.0)
-        noclipPosition = GetEntityCoords(entity)
-    else
-        noclipPosition = nil
-    end
-    if isVehicle then
-        SetEntityInvincible(entity, enabled)
-    end
-    if invisible or not enabled then
-        local visible = not (enabled and invisible)
-        SetEntityVisible(entity, visible, false)
-        if isVehicle then
-            SetEntityVisible(PlayerPedId(), visible, false)
+        noclip.settings = settings
+        noclip.labels = labels
+        SetEntityVisible(ped, false, false)
+        SetEntityInvincible(ped, true)
+        FreezeEntityPosition(ped, true)
+        noclip.vehicle = GetVehiclePedIsIn(ped, false)
+        local vehicle = noclip.vehicle
+        if vehicle ~= 0 then
+            NetworkSetEntityInvisibleToNetwork(vehicle, true)
+            SetEntityCollision(vehicle, false, false)
+            SetEntityVisible(vehicle, false, false)
+            FreezeEntityPosition(vehicle, true)
+            SetVehicleCanBreak(vehicle, false)
+            SetVehicleWheelsCanBreak(vehicle, false)
         end
+
+        local pos = GetGameplayCamCoord()
+        local rot = GetGameplayCamRot(2)
+        noclip.camera = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
+        SetCamFov(noclip.camera, clamp(settings.Fov, 0.0, 90.0))
+        setCamPosition(pos.x, pos.y, pos.z)
+        setCamRotation(rot.x, 0.0, rot.z)
+        RenderScriptCams(true, settings.Easing, settings.EasingMs, true, true)
+        noclip.active = true
+        startNoclipThreads()
+        return
     end
-    if not enabled and toGround then
-        local coords = GetEntityCoords(entity)
-        local groundZ = noclipGround(coords.x, coords.y, coords.z)
-        if groundZ then
-            SetEntityCoordsNoOffset(entity, coords.x, coords.y, groundZ, false, false, false)
-            if isVehicle then
-                SetVehicleOnGroundProperly(entity)
-            end
-        end
+
+    -- Aus: Ped an die Kamera, Kamera weg, Ped wieder sichtbar und beweglich
+    noclip.active = false
+    local hadVehicle = noclip.vehicle ~= 0 and DoesEntityExist(noclip.vehicle)
+    local easing = noclip.settings and noclip.settings.Easing or false
+    local easingMs = noclip.settings and noclip.settings.EasingMs or 0
+    if noclip.pos and noclip.rot then
+        SetEntityCoords(ped, noclip.pos.x, noclip.pos.y, noclip.pos.z, false, false, false, false)
+        SetEntityHeading(ped, noclip.rot.z)
     end
-    if not enabled then
-        -- Ohne diesen Anstoss bleibt ein Fahrzeug manchmal in der Luft stehen
-        ActivatePhysics(entity)
+    if noclip.camera then
+        DestroyCam(noclip.camera, false)
+        noclip.camera = nil
     end
+    ClearFocus()
+    UnlockMinimapAngle()
+    UnlockMinimapPosition()
+    RenderScriptCams(false, easing, easingMs, true, true)
+    SetGameplayCamRelativeHeading(0.0)
+
+    SetEntityVisible(ped, true, false)
+    SetEntityInvincible(ped, false)
+    FreezeEntityPosition(ped, false)
+
+    if hadVehicle then
+        local vehicle = noclip.vehicle
+        local coords = GetEntityCoords(ped)
+        NetworkSetEntityInvisibleToNetwork(vehicle, false)
+        SetEntityCoords(vehicle, coords.x, coords.y, coords.z, false, false, false, false)
+        SetVehicleOnGroundProperly(vehicle)
+        SetEntityCollision(vehicle, true, true)
+        SetEntityVisible(vehicle, true, false)
+        FreezeEntityPosition(vehicle, false)
+        SetEntityAlpha(vehicle, NOCLIP_VEHICLE_ALPHA, false)
+        SetPedIntoVehicle(ped, vehicle, DRIVER_SEAT)
+        CreateThread(function()
+            Wait(NOCLIP_VEHICLE_ALPHA_MS)
+            ResetEntityAlpha(vehicle)
+            SetVehicleCanBreak(vehicle, true)
+            SetVehicleWheelsCanBreak(vehicle, true)
+        end)
+    elseif settings and settings.protectFall then
+        protectFall()
+    end
+    noclip.vehicle = 0
 end
 
--- Jeden Frame: sich selbst trotz Unsichtbarkeit sehen
-function Platform.ShowNoclipLocallyThisFrame()
-    if noclipEntity and DoesEntityExist(noclipEntity) then
-        SetEntityLocallyVisible(noclipEntity)
-        if noclipEntity ~= PlayerPedId() then
-            SetEntityLocallyVisible(PlayerPedId())
-        end
-    end
-end
-
-function Platform.DisableNoclipControlsThisFrame()
-    for _, control in ipairs(NOCLIP_BLOCKED_CONTROLS) do
-        DisableControlAction(CONTROL_GROUP, control, true)
-    end
+function Platform.IsNoclipActive()
+    return noclip.active
 end
 
 function Platform.GetFrameTime()
     return GetFrameTime()
-end
-
--- forward, right, up: -1, 0 oder 1. distance: Meter in diesem Frame. Richtung kommt von der Kamera.
--- followPitch = false: W und S fliegen waagerecht, egal wohin die Kamera nach oben oder unten schaut
-function Platform.NoclipMove(forward, right, up, distance, followPitch)
-    local entity = noclipEntity
-    if not entity or not DoesEntityExist(entity) then
-        return
-    end
-    local rotation = GetGameplayCamRot(2)
-    local heading = math.rad(rotation.z)
-    local pitch = followPitch and math.rad(rotation.x) or 0.0
-
-    local dirX = -math.sin(heading) * math.cos(pitch)
-    local dirY = math.cos(heading) * math.cos(pitch)
-    local dirZ = math.sin(pitch)
-    local rightX, rightY = math.cos(heading), math.sin(heading)
-
-    local coords = noclipPosition or GetEntityCoords(entity)
-    local x = coords.x + (dirX * forward + rightX * right) * distance
-    local y = coords.y + (dirY * forward + rightY * right) * distance
-    local z = coords.z + (dirZ * forward + up) * distance
-
-    SetEntityCoordsNoOffset(entity, x, y, z, true, true, true)
-    SetEntityHeading(entity, rotation.z)
-    noclipPosition = vector3(x, y, z)
-end
-
--- Jeden Frame im Noclip: Der Spieler bleibt genau da, wo er ist.
--- Andere Scripts, Ragdoll oder das Spiel selbst koennen das Einfrieren aufheben (dann faellt man langsam nach unten).
-function Platform.NoclipHold()
-    local entity = noclipEntity
-    if not entity or not DoesEntityExist(entity) then
-        return
-    end
-    if not IsEntityPositionFrozen(entity) then
-        FreezeEntityPosition(entity, true)
-    end
-    SetEntityCollision(entity, false, false)
-    SetEntityHasGravity(entity, false)
-    SetEntityVelocity(entity, 0.0, 0.0, 0.0)
-
-    -- GTA kippt die Kamera von selbst langsam nach unten, sobald man die Maus nicht bewegt.
-    -- Mit W fliegt man dahin, wohin die Kamera zeigt, also ging es dann von allein abwaerts.
-    -- Darum bleibt die Neigung genau so, wie du sie mit der Maus zuletzt eingestellt hast.
-    local lookUpDown = GetDisabledControlNormal(CONTROL_GROUP, LOOK_UP_DOWN_CONTROL)
-    if noclipCamPitch == nil or lookUpDown ~= 0.0 then
-        noclipCamPitch = GetGameplayCamRelativePitch()
-    else
-        SetGameplayCamRelativePitch(noclipCamPitch, 1.0)
-    end
-
-    if noclipPosition then
-        local coords = GetEntityCoords(entity)
-        local drift = #(coords - noclipPosition)
-        if drift > NOCLIP_TELEPORT_DISTANCE then
-            -- Versetzt (z. B. /tp im Noclip): neue Position uebernehmen
-            noclipPosition = coords
-        elseif drift > 0.05 then
-            SetEntityCoordsNoOffset(entity, noclipPosition.x, noclipPosition.y, noclipPosition.z, true, true, true)
-        end
-    end
 end
 
 ------------------------------------------------------------------------

@@ -52,3 +52,5 @@ python3 tests/syntax.py core core_inventory core_lib
 ## Was die Tests nicht abdecken
 
 Alles, was nur im Spiel sichtbar ist: Animationen, Positionen (Kofferraum, Spawn), Kleidung am Charakter, Tastenbelegung. Das wird auf dem Testserver geprüft.
+
+`test_noclip.py` braucht keine Datenbank. Er lädt die Client-Bridge mit nachgebauten FiveM-Natives und prüft den Noclip (Richtung, Q und E, Shift und Alt, Nachziehen des Peds, Teleport, Ausschalten mit Fallschutz).

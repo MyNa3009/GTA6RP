@@ -1,4 +1,4 @@
--- Noclip (/nc): frei fliegen, durch Waende, mit Kamera-Richtung.
+-- Noclip (/nc): frei fliegen wie bei txAdmin (freie Kamera, der Ped fliegt unsichtbar mit).
 -- Der Server erlaubt es nur mit Recht admin.noclip und im Admin-Dienst und loggt An und Aus.
 
 Noclip = {}
@@ -16,63 +16,38 @@ local ERROR_TEXT = {
     timeout = 'Der Server antwortet nicht.',
 }
 
-local function axis(positive, negative)
-    local value = 0
-    if Platform.IsActionPressed(positive) then value = value + 1 end
-    if Platform.IsActionPressed(negative) then value = value - 1 end
-    return value
-end
-
-local function speed()
-    if Platform.IsActionPressed('noclipFast') then
-        return Config.Noclip.FastSpeed
-    end
-    if Platform.IsActionPressed('noclipSlow') then
-        return Config.Noclip.SlowSpeed
-    end
-    return Config.Noclip.Speed
-end
-
-local function run()
-    Platform.SetNoclip(true, Config.Noclip.Invisible)
-    while active do
-        Platform.Wait(0)
-        Platform.DisableNoclipControlsThisFrame()
-        Platform.NoclipHold()
-        if Config.Noclip.Invisible and Config.Noclip.VisibleForSelf then
-            Platform.ShowNoclipLocallyThisFrame()
-        end
-        local forward = axis('noclipForward', 'noclipBack')
-        local right = axis('noclipRight', 'noclipLeft')
-        local up = axis('noclipUp', 'noclipDown')
-        if forward ~= 0 or right ~= 0 or up ~= 0 then
-            Platform.NoclipMove(forward, right, up, speed() * Platform.GetFrameTime(), Config.Noclip.FollowCameraPitch)
-        end
-    end
-    Platform.SetNoclip(false, Config.Noclip.Invisible, Config.Noclip.GroundOnExit)
-end
+-- Texte der Tastenhinweise unten rechts (wie bei txAdmin)
+local KEY_LABELS = {
+    slower = 'Langsamer',
+    faster = 'Schneller',
+    down = 'Runter',
+    up = 'Hoch',
+    leftRight = 'Links/Rechts',
+    forwardBack = 'Vor/Zurück',
+}
 
 function Noclip.IsActive()
     return active
 end
 
+-- Fliegen macht die Bridge (freie Kamera wie bei txAdmin). An und Aus wirken sofort.
 function Noclip.Start()
     if active then
         return
     end
     active = true
-    Platform.Async(run)
-    local start = Config.Noclip.Invisible and 'Noclip an, du bist unsichtbar.' or 'Noclip an.'
-    local move = Config.Noclip.FollowCameraPitch and 'W fliegt, wohin du schaust.' or 'W A S D fliegen waagerecht.'
-    Notify.Show(('%s %s Leertaste hoch, Strg runter, Shift schnell, Alt langsam.'):format(start, move), 'success')
+    Platform.SetNoclip(true, Config.Noclip, KEY_LABELS)
+    Notify.Show('Noclip an, du bist unsichtbar. W A S D fliegen, Q hoch, E runter, Shift schneller, Alt langsamer.', 'success')
 end
 
--- Lokal beenden, z. B. beim Ausloggen oder wenn der Server es beendet hat
+-- Lokal beenden. silent = true: von A-Jail, Beobachten, Einfrieren, /kill oder Ausloggen,
+-- dann ohne Meldung und ohne Fallschutz, weil gleich danach versetzt wird.
 function Noclip.Stop(silent)
     if not active then
         return
     end
     active = false
+    Platform.SetNoclip(false, { protectFall = not silent })
     if not silent then
         Notify.Show('Noclip aus.', 'info')
     end
