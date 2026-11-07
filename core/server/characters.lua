@@ -395,6 +395,7 @@ function Characters.Unload(player, reason)
     })
 
     Network.SetPlayerPublic(player.source, 'coreId', nil)
+    Network.SetPlayerPublic(player.source, 'down', nil)
     player.characterId = nil
     player.character = nil
     player.rank = Permissions.DefaultId()

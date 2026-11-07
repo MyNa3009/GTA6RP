@@ -21,11 +21,29 @@ local function can(key)
     end
 end
 
--- Ist die angeschaute Person bewusstlos? (nur Anzeige)
-local function targetDead(ctx)
-    local ped = ctx.player and Platform.GetPlayerPedByServerId(ctx.player.serverId)
+-- Ist die angeschaute Person bewusstlos? (nur Anzeige, der Server prueft beim Ausfuehren selbst)
+-- Den Zustand setzt der Server fuer alle ('down': true oder 'hospital'), das Spielmodell ist nur der Rueckfall.
+local function downState(ctx)
+    if not ctx.player then
+        return nil
+    end
+    local down = Network.GetPlayerPublic(ctx.player.serverId, 'down')
+    if down ~= nil then
+        return down
+    end
+    local ped = Platform.GetPlayerPedByServerId(ctx.player.serverId)
     local status = ped and Platform.GetPedStatus(ped)
-    return status ~= nil and status.dead == true
+    return status ~= nil and status.dead == true or nil
+end
+
+local function targetDead(ctx)
+    return downState(ctx) ~= nil
+end
+
+-- Hochholen vor Ort moeglich? (bewusstlos, aber nicht "nur Krankenhaus")
+local function canRevive(ctx)
+    local down = downState(ctx)
+    return down ~= nil and down ~= 'hospital'
 end
 
 local function canWithTarget(key, wantDead)
@@ -49,7 +67,9 @@ lib.addInteraction({
     icon = 'heart-pulse',
     order = 10,
     target = 'player',
-    canShow = canWithTarget('ems.revive', true),
+    canShow = function(ctx)
+        return EmsClient.Can('ems.revive') and canRevive(ctx)
+    end,
     onSelect = function(ctx)
         EmsClient.Call('ems_revive', { serverId = ctx.player.serverId })
     end,
@@ -80,7 +100,7 @@ lib.addInteraction({
     order = 5,
     target = 'player',
     canShow = function(ctx)
-        return targetDead(ctx) and not EmsClient.Can('ems.revive')
+        return canRevive(ctx) and not EmsClient.Can('ems.revive')
     end,
     onSelect = function(ctx)
         EmsClient.Call('ems_medkit_revive', { serverId = ctx.player.serverId })

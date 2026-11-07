@@ -653,6 +653,45 @@ end
 -- Ueber den Winkel statt per Strahl, weil ein duenner Strahl Personen oft verfehlt (seit Core 1.8.0).
 -- onFootOnly (seit Core 1.9.0): Personen in einem Fahrzeug zaehlen nicht, dann gilt das Fahrzeug als Ziel.
 local SIGHT_AIM_HEIGHT = 0.3   -- Brusthoehe ueber dem Mittelpunkt des Peds
+-- Liegende Personen (bewusstlos, Ragdoll): Mittelpunkt liegt am Boden, darum mehrere Punkte am Koerper pruefen
+local SIGHT_DOWN_HEIGHTS = { 0.3, 0.0, -0.4 }
+local SIGHT_MAP_ONLY = 1                -- Strahl: nur Karte
+local SIGHT_IGNORE_SEE_THROUGH = 7      -- Strahl: Glas und Aehnliches ignorieren
+local SIGHT_BODY_HEIGHT = 0.2
+
+local function isDown(ped)
+    return IsEntityDead(ped) or IsPedFatallyInjured(ped) or IsPedRagdoll(ped)
+end
+
+-- Bester Winkel (Kosinus) zwischen Blickrichtung und einem der Zielpunkte am Koerper
+local function aimDot(coords, heights, camera, forward)
+    local best = -1
+    for _, height in ipairs(heights) do
+        local toPed = coords + vector3(0.0, 0.0, height) - camera
+        local length = #toPed
+        if length > 0 then
+            local dot = (toPed.x * forward.x + toPed.y * forward.y + toPed.z * forward.z) / length
+            if dot > best then
+                best = dot
+            end
+        end
+    end
+    return best
+end
+
+-- Freie Sicht? Bei liegenden Personen zusaetzlich ein Strahl zum Koerper, weil die Pruefung zum Modell dort oft fehlschlaegt.
+local function canSee(myPed, ped, coords, camera, down)
+    if HasEntityClearLosToEntity(myPed, ped, LOS_FLAGS) then
+        return true
+    end
+    if not down then
+        return false
+    end
+    local handle = StartExpensiveSynchronousShapeTestLosProbe(camera.x, camera.y, camera.z, coords.x, coords.y, coords.z + SIGHT_BODY_HEIGHT,
+        SIGHT_MAP_ONLY, myPed, SIGHT_IGNORE_SEE_THROUGH)
+    local _, hit = GetShapeTestResult(handle)
+    return hit ~= 1
+end
 
 function Platform.GetPlayerInSight(maxDistance, maxAngle, onFootOnly)
     local me = PlayerId()
@@ -672,11 +711,10 @@ function Platform.GetPlayerInSight(maxDistance, maxAngle, onFootOnly)
                 local coords = GetEntityCoords(ped)
                 local distance = #(coords - myCoords)
                 if distance <= maxDistance then
-                    local toPed = coords + vector3(0.0, 0.0, SIGHT_AIM_HEIGHT) - camera
-                    local length = #toPed
-                    local dot = length > 0 and (toPed.x * forward.x + toPed.y * forward.y + toPed.z * forward.z) / length or -1
-                    if dot > bestDot and HasEntityClearLosToEntity(myPed, ped, LOS_FLAGS) then
-                        best = { serverId = GetPlayerServerId(player), ped = ped, distance = distance }
+                    local down = isDown(ped)
+                    local dot = aimDot(coords, down and SIGHT_DOWN_HEIGHTS or { SIGHT_AIM_HEIGHT }, camera, forward)
+                    if dot > bestDot and canSee(myPed, ped, coords, camera, down) then
+                        best = { serverId = GetPlayerServerId(player), ped = ped, distance = distance, down = down }
                         bestDot = dot
                     end
                 end

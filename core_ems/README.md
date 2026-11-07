@@ -1,6 +1,11 @@
-# core_ems 1.1.0
+# core_ems 1.1.1
 
 Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskasten, Verkauf von Verbänden, Verbandskästen und Tabletten, Untersuchen und Behandeln, Krankheiten mit Stadien, Krankenversicherung und die Medizinische Datenbank. Ränge, Rechte, Dienst und Kasse kommen aus `core_factions` (Organisation `ems`).
+
+## Update von 1.1.0
+
+1. Erst Core 1.10.2, dann den Ordner `core_ems` ersetzen und neu starten.
+2. Fehler behoben: "Hochholen" fehlte im G-Menü, weil `core_ems` "bewusstlos" nur am Spielmodell erkannt hat. Jetzt gilt der Zustand vom Server. Nach einem Zusammenbruch durch Krankheit (nur Krankenhaus) erscheint "Hochholen" gar nicht erst.
 
 ## Update von 1.0.0
 

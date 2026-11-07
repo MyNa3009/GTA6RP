@@ -138,6 +138,32 @@ lua.execute('Vehicles[50].lock = 2')
 check('abgeschlossen', P.EnterVehicleSeat(50, 0, 6.0) == (False, 'locked'))
 check('kein Fahrzeug', P.EnterVehicleSeat(404, 0, 6.0) == (False, 'not_found'))
 
+print('Liegende Person im Blick')
+lua.execute('''
+Hit = nil
+PedPos = vector3(0, 0, 1); CamPos = vector3(0, -3, 2); CamRot = vector3(-30, 0, 0)
+Other = { pos = vector3(0, 2, 0.1), dead = true, los = false }
+function PlayerId() return 0 end
+function GetActivePlayers() return { 0, 1 } end
+function GetPlayerPed(p) if p == 0 then return 1 end return 77 end
+function GetPlayerServerId(p) return p == 1 and 2 or 1 end
+function IsEntityVisible() return true end
+function IsPedInAnyVehicle() return false end
+local baseCoords = GetEntityCoords
+function GetEntityCoords(e) if e == 77 then return Other.pos end return baseCoords(e) end
+function IsEntityDead(e) return e == 77 and Other.dead end
+function IsPedFatallyInjured(e) return e == 77 and Other.dead end
+function IsPedRagdoll(e) return false end
+function HasEntityClearLosToEntity(a, b) return Other.los end
+''')
+seen = P.GetPlayerInSight(3.0, 12, True)
+check('bewusstlos am Boden, Blick auf den Körper: gefunden', seen is not None and seen.serverId == 2 and seen.down is True, seen)
+lua.execute('Other.dead = false; Other.los = true')
+check('stehend an derselben Stelle (Ziel auf Brusthöhe): nicht getroffen', P.GetPlayerInSight(3.0, 12, True) is None)
+lua.execute('Other.dead = true; Hit = { coords = vector3(0, 0, 1), entity = 0 }; Other.los = false')
+check('Wand dazwischen: nicht gefunden', P.GetPlayerInSight(3.0, 12, True) is None)
+lua.execute('Hit = nil')
+
 print('Lokale Ereignisse')
 lua.execute('Emitted = nil; function TriggerEvent(...) Emitted = table.pack(...) end')
 lua.execute("Platform.Emit('core_lib:select', 'core_ems:i:medkit', { player = { serverId = 2 } })")

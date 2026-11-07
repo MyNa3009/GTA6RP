@@ -138,6 +138,7 @@ local function putIn(player)
     character.diedAt = nil
     character.deathKillerId = nil
     if wasDead then
+        Core.SetDownState(player.source, character)
         Needs.AfterRespawn(player.source)
     end
     player.jail.graceUntil = os.time() + GRACE_SECONDS

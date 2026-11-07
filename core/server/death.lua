@@ -5,6 +5,18 @@
 -- darf vor Ort niemand hochholen ausser einem Admin. Es gilt bis zum naechsten Krankenhaus.
 
 local REVIVE_EVENT = 'core:death:revive'
+-- Oeffentlicher Wert fuer alle Clients (z. B. G-Menue "Hochholen"): true = bewusstlos, 'hospital' = nur Krankenhaus.
+-- Der Server setzt ihn, weil der Zustand des Spielmodells bei anderen Spielern nicht immer zuverlaessig ankommt.
+local DOWN_KEY = 'down'
+
+local function setDown(source, character)
+    if character and character.diedAt then
+        Network.SetPlayerPublic(source, DOWN_KEY, character.hospitalOnly and 'hospital' or true)
+    else
+        Network.SetPlayerPublic(source, DOWN_KEY, nil)
+    end
+end
+Core.SetDownState = setDown
 local COLLAPSE_EVENT = 'core:death:collapse'
 local HEAL_EVENT = 'core:heal'
 local COLLAPSE_REPORT_SECONDS = 30   -- so lange nach dem Zusammenbruch zaehlt eine Todesmeldung noch dazu
@@ -36,6 +48,7 @@ Core.RegisterCallback('death_report', function(source, data)
         character.hospitalOnly = collapse.hospitalOnly or nil
         character.collapseReason = collapse.reason
     end
+    setDown(source, character)
 
     local killerId = tonumber(data.killer)
     local killer = killerId and killerId ~= source and Core.GetPlayer(killerId) or nil
@@ -86,6 +99,7 @@ Core.RegisterCallback('death_respawn', function(source)
     character.deathKillerId = nil
     character.hospitalOnly = nil
     character.collapseReason = nil
+    setDown(source, character)
     Needs.AfterRespawn(source)
     local position = Jail.RespawnPosition(player) or SpawnData.respawn
     Core.Log({
@@ -120,6 +134,7 @@ function Core.Revive(source, actorAccountId, reason, options)
     character.hospitalOnly = nil
     character.collapseReason = nil
     character.pendingCollapse = nil
+    setDown(source, character)
     Needs.AfterRespawn(source)
     Network.SendToClient(source, REVIVE_EVENT, {})
 
@@ -149,6 +164,7 @@ function Core.Collapse(source, reason, hospitalOnly)
         if hospitalOnly then
             character.hospitalOnly = true
             character.collapseReason = reason
+            setDown(source, character)
         end
         return true
     end
