@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<!--
+  UI: Anfrage (Zustimmung)
+  CONTRACT_VERSION: 1
+  Reine Anzeige oben oder unten in der Mitte, ohne Maus- und Tastaturfokus. Die Tasten (Y und N) liest Lua.
+
+  EINGEHEND (Lua -> UI)
+  consent_open   {
+    colors: { base: string, ink: string, accent: string, signal: string },  // RGB-Kanaele
+    title: string,          // "Willst du den Personalausweis nehmen?"
+    text?: string,          // "ID 17 möchte ihn dir zeigen."
+    timeoutMs: number,      // so lange bleibt die Anfrage offen
+    position: "top" | "bottom",
+    yesKey: string, noKey: string
+  }
+  consent_answer { accept: boolean }   // Taste gedrueckt, Antwort ist unterwegs
+  consent_close  {}
+
+  AUSGEHEND (UI -> Lua)
+  ui_ready       { ui: "consent", version: 1 }
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anfrage</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Monitor (mit zwei Tasten). Dichte 7, Bewegung 2, Varianz 2.
+  Kurze Frage in der Mitte oben oder unten, die Spielsicht bleibt frei. Highlight: die zwei Tasten als Keycaps.
+  Der Zeitbalken unten zeigt, wie lange die Anfrage noch offen ist.
+*/
+:root {
+  --rgb-base:   14 15 18;
+  --rgb-ink:    232 234 237;
+  --rgb-accent: 214 164 72;
+  --rgb-signal: 220 82 72;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.94);
+  --c-surface:     rgb(var(--rgb-ink) / 0.06);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-border-hi:   rgb(var(--rgb-ink) / 0.20);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-on-accent:   rgb(var(--rgb-base));
+  --shadow:        0 8px 24px rgb(var(--rgb-base) / 0.5);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-lg: 14px;
+
+  --fs-xs: clamp(11px, 0.58vw, 13px);
+  --fs-sm: clamp(12px, 0.68vw, 15px);
+  --fs-lg: clamp(16px, 0.9vw, 20px);
+
+  --card-w: clamp(320px, 24vw, 520px);
+  --edge-top: clamp(24px, 4vh, 56px);
+  --edge-bottom: clamp(104px, 15vh, 200px);
+  --keycap: clamp(24px, 1.4vw, 32px);
+  --timer-h: 3px;
+
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --z-card: 10;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  position: fixed;
+  left: 50%;
+  z-index: var(--z-card);
+  width: var(--card-w);
+  transform: translateX(-50%);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: var(--c-bg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+}
+.card[hidden] { display: none; }
+.card.is-top { top: var(--edge-top); }
+.card.is-bottom { bottom: var(--edge-bottom); }
+.card.is-entering.is-top { opacity: 0; transform: translate(-50%, -8px); }
+.card.is-entering.is-bottom { opacity: 0; transform: translate(-50%, 8px); }
+
+.body {
+  padding: var(--space-4) var(--space-5) var(--space-4);
+  display: grid;
+  gap: var(--space-1);
+}
+.title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.text {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.text:empty { display: none; }
+
+.keys {
+  display: flex;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  border-top: 1px solid var(--c-border);
+}
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text-2);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.key kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--keycap);
+  height: var(--keycap);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--c-border-hi);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface);
+  color: var(--c-text);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.key.is-yes kbd { border-color: rgb(var(--rgb-accent) / 0.6); color: var(--c-accent); }
+.key.is-chosen.is-yes { color: var(--c-accent); }
+.key.is-chosen.is-yes kbd { background: var(--c-accent); border-color: var(--c-accent); color: var(--c-on-accent); }
+.key.is-chosen.is-no { color: var(--c-signal); }
+.key.is-chosen.is-no kbd { background: var(--c-signal); border-color: var(--c-signal); color: rgb(var(--rgb-ink)); }
+
+.timer { height: var(--timer-h); background: var(--c-surface); }
+.timer span { display: block; height: 100%; background: var(--c-text-muted); transform-origin: left center; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<section class="card is-top" id="card" role="alertdialog" aria-live="assertive" aria-labelledby="title" aria-describedby="text" hidden>
+  <div class="body">
+    <h1 class="title" id="title"></h1>
+    <p class="text" id="text"></p>
+  </div>
+  <div class="keys">
+    <span class="key is-yes" id="yes"><kbd id="yes-key">Y</kbd><span id="yes-label"></span></span>
+    <span class="key is-no" id="no"><kbd id="no-key">N</kbd><span id="no-label"></span></span>
+  </div>
+  <div class="timer"><span id="timer"></span></div>
+</section>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();
+
+const Mock = {
+  async handle(event, data) {
+    console.info(`[mock] ${event}`, data);
+    return { ok: true };
+  },
+  push(event, data) {
+    Bridge.emit(event, data);
+  },
+};
+</script>
+
+<script id="app">
+const TEXT = {
+  yes: 'Ja',
+  no: 'Nein',
+};
+
+const UI = 'consent';
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const POSITIONS = ['top', 'bottom'];
+const MAX_KEY_LENGTH = 6;
+
+const state = { open: false, position: 'top' };
+
+const el = {
+  card: document.getElementById('card'),
+  title: document.getElementById('title'),
+  text: document.getElementById('text'),
+  yes: document.getElementById('yes'),
+  no: document.getElementById('no'),
+  yesKey: document.getElementById('yes-key'),
+  noKey: document.getElementById('no-key'),
+  timer: document.getElementById('timer'),
+};
+document.getElementById('yes-label').textContent = TEXT.yes;
+document.getElementById('no-label').textContent = TEXT.no;
+
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  COLOR_KEYS.forEach((key) => {
+    const value = colors[key];
+    if (typeof value === 'string' && COLOR_PATTERN.test(value.trim())) {
+      document.documentElement.style.setProperty(`--rgb-${key}`, value.trim());
+    }
+  });
+}
+
+function keyText(value, fallback) {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_KEY_LENGTH ? value.toUpperCase() : fallback;
+}
+
+function open(data) {
+  applyColors(data.colors);
+  state.open = true;
+  state.position = POSITIONS.includes(data.position) ? data.position : 'top';
+  el.title.textContent = typeof data.title === 'string' ? data.title : '';
+  el.text.textContent = typeof data.text === 'string' ? data.text : '';
+  el.yesKey.textContent = keyText(data.yesKey, 'Y');
+  el.noKey.textContent = keyText(data.noKey, 'N');
+  el.yes.classList.remove('is-chosen');
+  el.no.classList.remove('is-chosen');
+  POSITIONS.forEach((pos) => el.card.classList.toggle(`is-${pos}`, pos === state.position));
+
+  // Zeitbalken laeuft per CSS ab, kein Timer im Script
+  const duration = Math.max(0, Number(data.timeoutMs) || 0);
+  el.timer.style.transition = 'none';
+  el.timer.style.transform = 'scaleX(1)';
+  el.card.classList.add('is-entering');
+  el.card.hidden = false;
+  void el.card.offsetWidth;
+  el.card.classList.remove('is-entering');
+  el.timer.style.transition = `transform ${duration}ms linear`;
+  el.timer.style.transform = 'scaleX(0)';
+}
+
+function close() {
+  state.open = false;
+  el.card.hidden = true;
+}
+
+Bridge.on('consent_open', open);
+Bridge.on('consent_answer', (data) => {
+  if (!state.open) return;
+  (data.accept === true ? el.yes : el.no).classList.add('is-chosen');
+});
+Bridge.on('consent_close', close);
+
+(async () => {
+  await Bridge.send('ui_ready', { ui: UI, version: CONTRACT_VERSION });
+  if (Bridge.platform === 'mock') {
+    const params = new URLSearchParams(location.search);
+    Mock.push('consent_open', {
+      title: params.get('money') ? 'Willst du 250 $ nehmen?' : 'Willst du den Personalausweis nehmen?',
+      text: params.get('money') ? 'ID 17 möchte dir Bargeld geben.' : 'ID 17 möchte ihn dir zeigen.',
+      timeoutMs: 8000,
+      position: params.get('pos') || 'top',
+      yesKey: 'Y',
+      noKey: 'N',
+    });
+    if (params.get('answer')) Mock.push('consent_answer', { accept: params.get('answer') === 'yes' });
+  }
+})();
+</script>
+</body>
+</html>

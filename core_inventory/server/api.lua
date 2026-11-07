@@ -1,7 +1,7 @@
 -- Anbindung an die Core: wer spielt gerade, Anfragen vom Client, Admin-Befehle, Exports.
 
 -- Braucht Core 1.6.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
-local REQUIRED_CORE = '1.6.0'
+local REQUIRED_CORE = '1.8.2'
 local missingBridge = {}
 for _, name in ipairs({ 'Async', 'CallExport', 'Emit', 'Export', 'GetPlayerDimension', 'GetVehicleInfo', 'GetPlayerPosition', 'Notify', 'OnEvent', 'OnResourceStop', 'Print', 'RegisterCommand', 'SetInterval', 'Wait' }) do
     if type(Platform[name]) ~= 'function' then
@@ -605,24 +605,71 @@ register('inv_use', function(source, inv, data)
 end)
 
 -- Geben an einen Spieler in der Naehe
--- Gibt count Stueck aus dem Platz from an die Person target (Server-ID). Gemeinsam fuer inv_give und inv_give_item.
-local function give(source, inv, target, from, count)
-    target = tonumber(target)
-    local targetCharacter = target and active[target]
-    if not targetCharacter or target == source then
-        return reply(false, 'target_offline', source, inv)
+-- Online, gleiche Dimension und nah genug? Gibt nil oder einen Fehlercode zurueck.
+local function giveRangeError(source, target)
+    if not active[target] then
+        return 'target_offline'
     end
     local a, b = position(source), position(target)
     if not a or not b or dimension(source) ~= dimension(target) then
-        return reply(false, 'too_far', source, inv)
+        return 'too_far'
     end
     local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
     if math.sqrt(dx * dx + dy * dy + dz * dz) > CFG.GiveDistance then
-        return reply(false, 'too_far', source, inv)
+        return 'too_far'
     end
+    return nil
+end
+
+local function formatThousands(value)
+    local text = tostring(math.floor(value))
+    local result = text:reverse():gsub('(%d%d%d)', '%1.'):reverse()
+    return (result:gsub('^%.', ''))
+end
+
+-- Frage an die andere Person, z. B. "Willst du 250 $ nehmen?" oder "Willst du 2x Wasserflasche nehmen?"
+local function giveQuestion(name, count, characterId)
+    local def = ItemDef(name)
+    if name == 'cash' then
+        return ('Willst du %s $ nehmen?'):format(formatThousands(count)), ('ID %d möchte dir Bargeld geben.'):format(characterId)
+    end
+    return ('Willst du %dx %s nehmen?'):format(count, def and def.label or name), ('ID %d möchte dir etwas geben.'):format(characterId)
+end
+
+-- Gibt count Stueck aus dem Platz from an die Person target (Server-ID). Gemeinsam fuer inv_give und inv_give_item.
+-- Die andere Person muss vorher zustimmen. Genommen wird erst danach, mit frischem Stand.
+local function give(source, inv, target, from, count)
+    target = tonumber(target)
+    if not target or target == source then
+        return reply(false, 'target_offline', source, inv)
+    end
+    local rangeError = giveRangeError(source, target)
+    if rangeError then
+        return reply(false, rangeError, source, inv)
+    end
+    local preview, previewError = Inventory.Take(inv, from, count)
+    if not preview then
+        return reply(false, previewError, source, inv)
+    end
+    local itemName, itemCount = preview.entry.name, preview.count
+    local title, text = giveQuestion(itemName, itemCount, active[source])
+    local accepted, consentError = InventoryConsent(source, target, title, text)
+    if not accepted then
+        return reply(false, consentError, source, inv)
+    end
+
+    -- Waehrend der Frage kann sich viel geaendert haben: alles noch einmal pruefen
+    rangeError = giveRangeError(source, target)
+    if rangeError then
+        return reply(false, rangeError, source, inv)
+    end
+    local targetCharacter = active[target]
     local taken, err = Inventory.Take(inv, from, count)
     if not taken then
         return reply(false, err, source, inv)
+    end
+    if taken.entry.name ~= itemName or taken.count ~= itemCount then
+        return reply(false, 'item_changed', source, inv)
     end
     local def = ItemDef(taken.entry.name)
     local characterId = active[source]

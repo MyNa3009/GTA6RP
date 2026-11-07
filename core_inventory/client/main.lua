@@ -2,7 +2,7 @@
 -- Was erlaubt ist, entscheidet der Server. Der Client zeigt an und leitet weiter.
 
 -- Braucht Core 1.6.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
-local REQUIRED_CORE = '1.6.0'
+local REQUIRED_CORE = '1.8.2'
 local missingBridge = {}
 for _, name in ipairs({ 'AddHealth', 'Async', 'BlockWeaponWheelThisFrame', 'CreateLocalProp', 'DeleteLocalProp', 'ClearOwnProp', 'DrawWorldText', 'Emit', 'EquipWeapon', 'GetOwnModel', 'Export', 'GetPlayerHeadshot', 'RegisterClientCommand', 'ReleaseHeadshot', 'OnSpawned', 'SetOwnComponent', 'SetOwnProp', 'GetWeaponAmmo', 'HasWeapon', 'UnequipWeapon', 'GetNearbyPlayers', 'GetOwnPosition', 'IsOwnPedDead', 'BlockCombatThisFrame', 'GetDistanceToEntity', 'GetNearestVehicleTrunk', 'GetPlayerPedByServerId', 'IsHandsUpPlaying', 'IsOwnPedInVehicle', 'SetHandsUp', 'SetVehicleTrunkOpen', 'VehicleFromNetId', 'PrepareWorldText', 'RegisterKeyCommand', 'UiFocus', 'UiOn', 'UiSend', 'Wait' }) do
     if type(Platform[name]) ~= 'function' then
@@ -485,7 +485,9 @@ local DOC_COMMAND_TYPES = { ausweis = 'id', personalausweis = 'id', fuehrerschei
 local function showDocument(docType, target)
     local result = Network.Call('doc_show', { type = docType, target = target })
     if result and not result.ok then
-        local texts = { too_far = 'Die Person steht zu weit weg.', no_document = 'Das Dokument hast du nicht.', target_offline = 'Die Person ist nicht mehr da.' }
+        local texts = { too_far = 'Die Person steht zu weit weg.', no_document = 'Das Dokument hast du nicht.', target_offline = 'Die Person ist nicht mehr da.',
+            consent_declined = 'Die Person hat abgelehnt.', consent_timeout = 'Die Person hat nicht reagiert.',
+            target_busy = 'Die Person hat gerade schon eine Anfrage offen.' }
         notify(texts[result.error] or 'Das hat nicht geklappt.', 'error')
     end
     return result
@@ -503,6 +505,10 @@ local GIVE_ERROR_TEXT = {
     target_full = 'Die Person hat keinen Platz mehr.',
     target_too_heavy = 'Das ist der Person zu schwer.',
     twink_blocked = 'An eigene Charaktere kann man nichts geben.',
+    consent_declined = 'Die Person hat abgelehnt.',
+    consent_timeout = 'Die Person hat nicht reagiert.',
+    target_busy = 'Die Person hat gerade schon eine Anfrage offen.',
+    item_changed = 'Das Item hat sich in der Zwischenzeit verändert.',
     no_character = 'Das geht nur mit einem Charakter.',
     timeout = 'Der Server antwortet nicht.',
 }

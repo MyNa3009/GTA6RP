@@ -1,4 +1,4 @@
-# core_inventory 1.2.0
+# core_inventory 1.3.0
 
 Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in der Hand, Rucksack mit eigenem Inhalt, Schnellzugriff, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`. Eigene Resource, damit man sie neu starten kann, ohne dass alle aus dem Spiel fliegen.
 
@@ -21,6 +21,8 @@ Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in 
 Die Core muss mindestens 1.6.0 sein. Ist sie älter, meldet sich das Inventar beim Start mit "Core ist zu alt" und macht nichts.
 
 **Update von älteren Versionen:** Beide Ordner (`core` und `core_inventory`) ersetzen, Server neu starten. Die neuen Tabellen entstehen beim Start von selbst.
+
+Ab 1.3.0 (braucht Core 1.8.2): **Geben und Ausweis zeigen nur mit Zustimmung.** Die andere Person sieht "Willst du 2x Brot nehmen?", "Willst du 250 $ nehmen?" oder "Willst du den Personalausweis nehmen?" und drückt Ja (Y) oder Nein (N). Erst danach nimmt der Server das Item und prüft Abstand und Inventar noch einmal mit frischem Stand. Durchsuchen braucht keine Zustimmung. Neue Fehlercodes: `consent_declined`, `consent_timeout`, `target_busy`, `item_changed`. Der Server-Export `ShowDocument` wartet jetzt auf die Antwort, also nur aus einem Thread aufrufen.
 
 Ab 1.2.0: Neuer Client-Export `GiveItem(serverId, item, menge)` und die Anfrage `inv_give_item`: ein Item ohne Platzangabe geben, für "Geld geben" im G-Menü der `core_lib`. Genommen wird der erste Stapel mit genug Stück (Taschen vor Rucksack). Distanz, Twinks, Platz und Gewicht prüft der Server wie beim Geben im Fenster, es steht genauso im Log. Neue Fehlercodes: `not_enough_own` (so viel hat man nicht) und `split_stacks` (genug da, aber auf mehrere Plätze verteilt).
 

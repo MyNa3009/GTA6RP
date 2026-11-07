@@ -398,6 +398,7 @@ function Documents.Card(characterId, licenseType)
 end
 
 -- source zeigt sein Dokument der Person targetSource. Pruefungen: hat es, steht nah genug, gleiche Dimension.
+-- Danach muss targetSource zustimmen (wartet bis zu Config.Consent.TimeoutMs, also nur aus einem Thread aufrufen).
 function Documents.Show(source, licenseType, targetSource)
     local characterId = InventoryApi_ActiveCharacter(source)
     local targetCharacter = InventoryApi_ActiveCharacter(targetSource)
@@ -423,6 +424,15 @@ function Documents.Show(source, licenseType, targetSource)
     local card = Documents.Card(characterId, licenseType)
     if not card then
         return false, 'no_document'
+    end
+    -- Erst zeigen, wenn die andere Person annimmt
+    local accepted, consentError = InventoryConsent(source, targetSource,
+        ('Willst du den %s nehmen?'):format(info.label), ('ID %d möchte ihn dir zeigen.'):format(characterId))
+    if not accepted then
+        return false, consentError
+    end
+    if not InventoryApi_ActiveCharacter(targetSource) then
+        return false, 'target_offline'
     end
     Network.SendToClient(targetSource, 'core_inventory:document', { card = card, from = source, seconds = CFG.ShowSeconds })
     Platform.Notify(source, ('Du zeigst ID %d deinen %s.'):format(targetCharacter, info.label), 'info')

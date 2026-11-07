@@ -26,14 +26,14 @@ SERVER_FILES = [
     'shared/config.lua', 'data/spawn_gta5.lua', 'data/models_gta5.lua', 'data/weapons_gta5.lua', 'data/jail_gta5.lua',
     'bridge/platform/fivem_server.lua', 'bridge/database/oxmysql.lua', 'bridge/identity/fivem.lua', 'bridge/network/fivem_server.lua',
     'server/log.lua', 'server/log_archive.lua', 'server/accounts.lua', 'server/main.lua', 'server/permissions.lua', 'server/multiaccount.lua', 'server/devices.lua', 'server/twinks.lua',
-    'server/characters.lua', 'server/death.lua', 'server/money.lua', 'server/needs.lua', 'server/admin.lua', 'server/punishments.lua',
+    'server/characters.lua', 'server/death.lua', 'server/money.lua', 'server/consent.lua', 'server/needs.lua', 'server/admin.lua', 'server/punishments.lua',
     'server/bans.lua', 'server/jail.lua', 'server/moderation.lua', 'server/vehicles.lua', 'server/admin_tools.lua', 'server/spectate.lua', 'server/tickets.lua', 'server/admin_help.lua', 'server/admin_keys.lua', 'server/auth.lua',
 ]
 
 INVENTORY_FILES = [
     (CORE, 'shared/config.lua'), (INVENTORY, 'config.lua'), (INVENTORY, 'data/items.lua'), (INVENTORY, 'data/clothing_catalog_gta5.lua'), (INVENTORY, 'data/clothing_gta5.lua'), (INVENTORY, 'data/trunks_gta5.lua'),
     (CORE, 'bridge/platform/fivem_server.lua'), (CORE, 'bridge/database/oxmysql.lua'), (CORE, 'bridge/network/fivem_server.lua'),
-    (INVENTORY, 'server/inventory.lua'), (INVENTORY, 'server/drops.lua'), (INVENTORY, 'server/registry.lua'), (INVENTORY, 'server/api.lua'), (INVENTORY, 'server/documents.lua'), (INVENTORY, 'server/views.lua'),
+    (INVENTORY, 'server/inventory.lua'), (INVENTORY, 'server/consent.lua'), (INVENTORY, 'server/drops.lua'), (INVENTORY, 'server/registry.lua'), (INVENTORY, 'server/api.lua'), (INVENTORY, 'server/documents.lua'), (INVENTORY, 'server/views.lua'),
 ]
 
 
@@ -61,6 +61,10 @@ class Env:
         self.db = connect()
         self.lua = lupa.LuaRuntime(unpack_returned_tuples=True)
         self.events = []      # (source, event, data)
+        # Zustimmung beim Geben: wie antwortet wer? 'yes' (Standard), 'no' oder 'ignore' (gar nicht, laeuft ab)
+        self.consent = {}
+        self._consent_answered = set()
+        self._rid = 0          # eigene Nummer je Anfrage, damit keine alte Antwort gelesen wird
         self.dropped = []     # (source, reason)
         self.notes = []       # (source, text)
         self.state = {}       # (source, key) -> value
@@ -386,12 +390,42 @@ class Env:
         self.tick(10)
         return None
 
+    # Offene Fragen nach Zustimmung beantworten, wie in self.consent eingestellt
+    def _answer_consents(self):
+        answered = False
+        for target, name, data in list(self.events):
+            if name != 'core:consent' or data['id'] in self._consent_answered:
+                continue
+            mode = self.consent.get(target, 'yes')
+            if mode == 'ignore':
+                continue
+            self._consent_answered.add(data['id'])
+            self.call(target, 'consent_answer', {'id': data['id'], 'accept': mode == 'yes'})
+            answered = True
+        return answered
+
+    # Warten, bis die Antwort da ist (Callbacks koennen auf eine Zustimmung warten)
+    CONSENT_BUDGET_MS = 10000
+    CONSENT_STEP_MS = 100
+
+    def _settle(self, lua, rid):
+        waited = 0
+        while lua.globals().RESPONSES[rid] is None and waited < self.CONSENT_BUDGET_MS:
+            if not self._answer_consents():
+                self.tick(self.CONSENT_STEP_MS)
+                waited += self.CONSENT_STEP_MS
+            else:
+                self.tick(10)
+
     def call(self, src, name, data=None):
         lua = self.lua
-        rid = len(self.events) + 100000 + len(self.sql_log)
+        self._rid += 1
+        rid = 100000 + self._rid
         lua.execute('function hcall(src, n, id, d) source = src; NET["core:cb:request"](n, id, d) end')
         lua.globals().hcall(src, name, rid, self.to_lua(data or {}))
         self.tick(10)
+        if name != 'consent_answer':
+            self._settle(lua, rid)
         return self.to_py(lua.globals().RESPONSES[rid])
 
     def command(self, src, line):
@@ -406,10 +440,12 @@ class Env:
 
     def icall(self, src, name, data=None):
         lua = self.inv
-        rid = len(self.events) + 200000 + len(self.sql_log)
+        self._rid += 1
+        rid = 200000 + self._rid
         lua.execute('function hcall(src, n, id, d) source = src; NET["core_inventory:cb:request"](n, id, d) end')
         lua.globals().hcall(src, name, rid, self.to_lua(data or {}, lua))
         self.tick(10)
+        self._settle(lua, rid)
         return self.to_py(lua.globals().RESPONSES[rid])
 
     def events_for(self, src, name):

@@ -8,7 +8,7 @@ local missingBridge = {}
 for _, name in ipairs({ 'Async', 'AttachPropToOwnPed', 'ClearOwnTasks', 'CloseAllVehicleDoors', 'DeleteLocalProp',
     'DisableActionsThisFrame', 'Emit', 'Export', 'GetActionLabel', 'GetCallingResource', 'GetNearbyPlayers',
     'DrawPlayerRing', 'GetOwnServerId', 'GetOwnVehicleState', 'GetPlayerInSight', 'GetTime', 'GetVehicleInSight', 'HasVehicleDoor', 'HasVehicleWindow',
-    'GetResourceName', 'IsActionPressed', 'IsOwnPedDead', 'IsOwnVehicle', 'IsResourceStarted', 'IsVehicleDoorOpen', 'IsVehicleWindowDown',
+    'GetResourceName', 'IsActionPressed', 'IsOwnPedDead', 'IsPauseMenuOpen', 'IsOwnVehicle', 'IsResourceStarted', 'IsVehicleDoorOpen', 'IsVehicleWindowDown',
     'MoveToSeat', 'OnEvent', 'OnResourceStop', 'PlayOwnAnim', 'PlayOwnScenario', 'Print', 'CallExport',
     'RegisterKeyCommand', 'SetVehicleDoor', 'SetVehicleEngine', 'SetVehicleLights', 'SetVehicleWindow', 'StopOwnAnim',
     'UiFocus', 'UiOn', 'UiSend', 'Wait' }) do
@@ -185,5 +185,5 @@ Platform.Export('GetResult', function(id)
 end)
 
 Platform.Export('GetVersion', function()
-    return '1.2.0'
+    return '1.3.0'
 end)

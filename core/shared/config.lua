@@ -345,6 +345,24 @@ Config.Network = {
 ------------------------------------------------------------------------
 -- Benachrichtigungen (oben rechts unter der Geldanzeige)
 ------------------------------------------------------------------------
+-- Zustimmung, bevor man jemandem etwas gibt oder zeigt (Items, Geld, Ausweise). Nicht beim Durchsuchen.
+Config.Consent = {
+    -- Standardtasten (deutsche Tastatur). Jeder kann sie im Spiel aendern:
+    -- Einstellungen > Tastenbelegung > FiveM > "Anfrage annehmen" und "Anfrage ablehnen"
+    YesKey = 'Y',
+    NoKey = 'N',            -- Achtung: N ist in FiveM auch die Standardtaste fuer Push-to-Talk
+    TimeoutMs = 8000,       -- so lange hat die Person Zeit, danach gilt es als abgelehnt (unter Config.Network.CallbackTimeoutMs)
+    Position = 'top',       -- 'top' oder 'bottom'
+    WaitingText = 'Warte, bis die Person zustimmt…',
+    DeclinedText = {
+        declined = 'Die Person hat abgelehnt.',
+        timeout = 'Die Person hat nicht reagiert.',
+        target_busy = 'Die Person hat gerade schon eine Anfrage offen.',
+        target_offline = 'Die Person ist nicht mehr da.',
+        cancelled = 'Abgebrochen.',
+    },
+}
+
 Config.Notify = {
     MaxVisible = 4,                 -- aeltere verschwinden, wenn mehr kommen
     DurationMs = { info = 5000, success = 4000, error = 6000, warning = 9000, message = 12000 }, -- message: /dm vom Team

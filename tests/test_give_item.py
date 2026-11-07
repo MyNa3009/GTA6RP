@@ -62,4 +62,64 @@ check('jetzt 400 und 300 auf zwei Plaetzen', sorted(cash_slots(1).values()) == [
 check('600 $ liegen nicht auf einem Platz', give(1, 'cash', 600, 2)['error'] == 'split_stacks')
 r = give(1, 'cash', 350, 2)
 check('350 $ vom groesseren Stapel', r['ok'] and money(1) == 350 and money(2) == 650, (money(1), money(2)))
+print('Zustimmung')
+asks = lambda: [d for t, n, d in env.events if t == 2 and n == 'core:consent']
+before = (money(1), money(2))
+n = len(asks())
+r = give(1, 'cash', 50, 2)
+check('Mira wird gefragt, mit Betrag und Absender', len(asks()) == n + 1 and asks()[-1]['title'] == 'Willst du 50 $ nehmen?' and 'ID %d' % fab in asks()[-1]['text'], asks()[-1:])
+check('Ja: gegeben', r['ok'] and money(1) == before[0] - 50 and money(2) == before[1] + 50)
+env.consent[2] = 'no'
+r = give(1, 'cash', 50, 2)
+check('Nein: nichts gegeben', r['error'] == 'consent_declined' and money(1) == before[0] - 50, r.get('error'))
+env.consent[2] = 'ignore'
+r = give(1, 'cash', 50, 2)
+check('Keine Reaktion: nach Ablauf nichts gegeben', r['error'] == 'consent_timeout' and money(1) == before[0] - 50, r.get('error'))
+env.consent[2] = 'yes'
+
+print('Zustimmung: Sonderfaelle')
+# Zwei Anfragen an dieselbe Person: die zweite wird abgelehnt
+env.consent[2] = 'ignore'
+lua = env.lua
+cid, err = env.to_py(lua.eval('function() return Consent.Start(%d, 2, { title = "Erste Frage" }) end' % 1)()), None
+second = lua.eval('function() return select(2, Consent.Start(1, 2, { title = "Zweite Frage" })) end')()
+check('zweite Anfrage an dieselbe Person: target_busy', second == 'target_busy', second)
+wrong = env.call(1, 'consent_answer', {'id': cid, 'accept': True})
+check('Fabian kann nicht fuer Mira antworten', wrong['ok'] is False and wrong['error'] == 'not_active')
+env.tick(9000)
+check('nach Ablauf: abgelehnt mit timeout', env.to_py(lua.eval('function() return { Consent.Result(%d) } end' % cid)()) == [False, 'timeout'])
+closes = [d for t, n, d in env.events if t == 2 and n == 'core:consent:close' and d['id'] == cid]
+check('Anzeige bei Mira wird geschlossen', closes and closes[-1]['accepted'] is False)
+env.consent[2] = 'yes'
+
+# Waehrend der Frage weggegangen: nichts gegeben
+env.consent[2] = 'ignore'
+env.tick(100)
+lua_inv = env.inv
+rid = 999001
+lua_inv.execute('function hcall(src, n, id, d) source = src; NET["core_inventory:cb:request"](n, id, d) end')
+lua_inv.globals().hcall(1, 'inv_give_item', rid, env.to_lua({'item': 'cash', 'count': 20, 'target': 2}, lua_inv))
+env.tick(200)
+pending = [d for t, n, d in env.events if t == 2 and n == 'core:consent'][-1]
+env.positions[2] = [140.0, 100.0, 30.0]
+env.call(2, 'consent_answer', {'id': pending['id'], 'accept': True})
+env.tick(300)
+resp = env.to_py(lua_inv.globals().RESPONSES[rid])
+check('angenommen, aber inzwischen zu weit weg: nichts gegeben', resp and resp['error'] == 'too_far' and money(1) == before[0] - 50, resp)
+env.positions[2] = [101.0, 100.0, 30.0]
+env.consent[2] = 'yes'
+
+print('Ausweis zeigen')
+cards = lambda: [d for t, n, d in env.events if t == 2 and n == 'core_inventory:document']
+k = len(cards())
+env.consent[2] = 'no'
+env.tick(100)
+r = env.icall(1, 'doc_show', {'type': 'id', 'target': 2})
+check('abgelehnt: keine Karte', r['error'] == 'consent_declined' and len(cards()) == k, r)
+check('Frage lautet "Willst du den Personalausweis nehmen?"', asks()[-1]['title'] == 'Willst du den Personalausweis nehmen?', asks()[-1]['title'])
+env.consent[2] = 'yes'
+env.tick(100)
+r = env.icall(1, 'doc_show', {'type': 'id', 'target': 2})
+check('angenommen: Karte kommt an', r['ok'] and len(cards()) == k + 1, r)
+
 print(f'\n{ok} ok, {fail} Fehler')

@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core'
 description 'Eigene Core: Login, Charaktere, permanente IDs, Geld, Tod, Teamraenge, Admin-Menue, Tickets, Logging'
-version '1.8.1'
+version '1.8.2'
 
 dependencies {
     'oxmysql',
@@ -38,6 +38,7 @@ server_scripts {
     'server/characters.lua',
     'server/death.lua',
     'server/money.lua',
+    'server/consent.lua',
     'server/needs.lua',
     'server/admin.lua',
     'server/punishments.lua',
@@ -58,6 +59,7 @@ client_scripts {
     'bridge/network/fivem_client.lua',
     'data/effects_gta5.lua',
     'client/notify.lua',
+    'client/consent.lua',
     'client/main.lua',
     'client/death.lua',
     'client/jail.lua',
@@ -88,4 +90,5 @@ files {
     'html/adminkey.html',
     'html/tickets.html',
     'html/notify.html',
+    'html/consent.html',
 }

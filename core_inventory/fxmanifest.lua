@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_inventory'
 description 'Inventar fuer die eigene Core: Plaetze, Gewicht, Kleidung, Rucksack, Schnellzugriff'
-version '1.2.0'
+version '1.3.0'
 
 -- Startet nach der Core und nutzt deren Config und Bridge (es gibt nur eine Stelle mit FiveM-Natives)
 dependencies {
@@ -27,6 +27,7 @@ server_scripts {
     '@core/bridge/database/oxmysql.lua',
     '@core/bridge/network/fivem_server.lua',
     'server/inventory.lua',
+    'server/consent.lua',
     'server/drops.lua',
     'server/registry.lua',
     'server/api.lua',

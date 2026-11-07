@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_lib'
 description 'Bibliothek fuer die eigene Core: G-Menue, Kontextmenues, Fortschritt, Minigames, Dialoge, TextUI, Zonen'
-version '1.2.0'
+version '1.3.0'
 
 -- Startet nach der Core und nutzt deren Config und Bridge (es gibt nur eine Stelle mit FiveM-Natives)
 dependencies {

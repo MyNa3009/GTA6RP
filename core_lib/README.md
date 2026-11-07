@@ -1,8 +1,15 @@
-# core_lib 1.2.0
+# core_lib 1.3.0
 
 Bibliothek für alle Scripts des Servers, ähnlich wie ox_lib, aber im Design des Servers und mit mehr Minigames. Dazu das **G-Menü**: ein Interaktionsmenü, über das später fast alles läuft, immer in Kategorien geteilt (`Person`, `Fahrzeug`, `Organisation > Leader > Entlassen`).
 
 Alles, was die Core schon kann, bleibt in der Core und wird nicht doppelt gebaut: Callbacks (`Network.Call`), Tasten (`Platform.RegisterKeyCommand`), Meldungen (`core:notify`), Logging (`exports.core:Log`).
+
+## Update von 1.2.0
+
+1. Den Ordner `core_lib` ersetzen und neu starten.
+2. Im Pausemenü von GTA geht das G-Menü nicht mehr auf.
+3. Aus dem Fahrzeug heraus gibt es keine Interaktion mit Personen: kein Kreis am Boden, keine Kategorie Person. Die Fahrzeug-Einträge bleiben.
+4. Geld geben und Ausweis zeigen fragen jetzt die andere Person (Zustimmung aus Core 1.8.2 und Inventar 1.3.0).
 
 ## Update von 1.1.0
 

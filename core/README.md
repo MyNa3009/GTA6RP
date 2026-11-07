@@ -1,10 +1,18 @@
-# Core 1.8.1 (Testserver)
+# Core 1.8.2 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.8.1
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration. Danach `core_inventory` und `core_lib` neu starten.
+2. **Neu: Zustimmung.** Bevor jemandem etwas gegeben oder gezeigt wird, fragt der Server die Person. Oben in der Mitte erscheint z. B. "Willst du den Personalausweis nehmen?" mit "Ja (Y)" und "Nein (N)" und einem Zeitbalken. Erst nach Ja wird gegeben. Keine Antwort nach 8 Sekunden gilt als Nein. Wer gibt, sieht "Warte, bis die Person zustimmt…" und bei Nein "Die Person hat abgelehnt.".
+3. Gilt fürs Geben (Inventar und G-Menü) und Ausweis zeigen. Nicht fürs Durchsuchen und nicht für den Testbefehl `/geben`.
+4. Einstellungen in `Config.Consent`: Tasten (`YesKey`, `NoKey`), Zeit (`TimeoutMs`), Ort (`Position = 'top'` oder `'bottom'`) und Texte. Die Tasten kann jeder im Spiel ändern unter Einstellungen > Tastenbelegung > FiveM > "Anfrage annehmen" und "Anfrage ablehnen". Achtung: N ist in FiveM auch die Standardtaste für Push-to-Talk.
+5. Für andere Scripts: `Core.AskConsent(source, ziel, { title, text })` in der Core, in Addons `exports.core:StartConsent(...)` und `exports.core:GetConsentResult(nummer)` (siehe "Für andere Resources").
 
 ## Update von 1.8.0
 
@@ -477,6 +485,8 @@ Exports (`exports.core:...`):
 | `AuthorizeCommand(source, name, recht, args, requireDuty)` | true und Login, sonst false. Prüft, meldet und loggt wie die Admin-Befehle der Core |
 | `AddCommandHelp({ title, entries })` | Eigene Gruppe in der Befehlsliste des Admin-Menüs |
 | `Log(eintrag)` | Eintrag ins zentrale Log |
+| `StartConsent(source, ziel, { title, text })` | Fragt `ziel`, ob es annimmt (Ja Y, Nein N). Nummer oder nil und `target_busy`, `target_offline`, `no_character`, `invalid_input` |
+| `GetConsentResult(nummer)` | nil, solange offen. Dann einmal `true` oder `false` und der Grund (`declined`, `timeout`, `target_offline`, `cancelled`). In der eigenen Resource mit `Platform.Wait` abfragen, bis es nicht mehr nil ist |
 
 Ereignisse auf dem Server: `core:characterLoaded (source, info)` und `core:characterUnloaded (source, characterId, grund)`.
 

@@ -177,9 +177,10 @@ local RING_STYLE = {
     alpha = TARGET.Alpha,
 }
 
--- Wen schaut man gerade an? Nur Spieler mit Charakter (permanente ID).
+-- Wen schaut man gerade an? Nur Spieler mit Charakter (permanente ID), nur zu Fuss.
+-- Aus dem Fahrzeug heraus gibt es keine Interaktion mit Personen.
 local function findTarget()
-    if Platform.IsOwnPedDead() then
+    if Platform.IsOwnPedDead() or Platform.GetOwnVehicleState() then
         return nil
     end
     local seen = Platform.GetPlayerInSight(CFG.PlayerDistance, TARGET.MaxAngle)
@@ -397,6 +398,10 @@ end
 function Interact.Open()
     if Menu.IsOpen('interact') then
         Menu.Close('interact')
+        return
+    end
+    -- Im Pausemenue von GTA geht das G-Menue nicht auf
+    if Platform.IsPauseMenuOpen() then
         return
     end
     if Platform.IsOwnPedDead() then

@@ -81,6 +81,8 @@ Pressed = {}
 function Platform.IsActionPressed(a) return Pressed[a] == true end
 Dead = false
 function Platform.IsOwnPedDead() return Dead end
+Paused = false
+function Platform.IsPauseMenuOpen() return Paused end
 for _, name in ipairs({ 'DisableActionsThisFrame', 'ClearOwnTasks', 'StopOwnAnim', 'DeleteLocalProp' }) do
     Platform[name] = function(...) record(name, ...) end
 end
@@ -378,6 +380,23 @@ g.Menu.Close()
 for fn in g.StopHandlers.values():
     fn('org2')
 check('Menue holt eigene Farben', ui(lua, 'ui_ready', {'ui': 'menu'}).data.colors.mark == '236 88 140')
+
+print('G-Menue: Pausemenue und Fahrzeug')
+lua.execute("Nearby = { { serverId = 4, distance = 1.0 } }; Sight = { serverId = 4, distance = 1.0 }; Paused = true")
+clear(lua)
+g.Interact.Open()
+check('im Pausemenue geht das G-Menue nicht auf', last_ui(lua, 'menu_open') is None and g.Menu.IsOpen() is False)
+lua.execute("Paused = false; Vehicle = { vehicle = 501, seat = -1, isDriver = true, engine = true, lights = false, speedKmh = 0, freeSeats = {} }")
+lua.globals().Tick(300)
+check('im Fahrzeug: kein Blickziel, kein Kreis', g.Exports['GetInteractionTarget']() is None)
+clear(lua)
+g.Interact.Open()
+payload = last_ui(lua, 'menu_open')
+check('im Fahrzeug: keine Kategorie Person, Fahrzeug schon', 'Person' not in tabs_of(payload) and 'Fahrzeug' in tabs_of(payload), tabs_of(payload))
+check('im Fahrzeug: keine Person in der Mitte', payload.subtitle is None)
+g.Menu.Close()
+lua.execute("Vehicle = nil; Sight = nil; Nearby = {}")
+lua.globals().Tick(300)
 
 print('G-Menue: bewusstlos')
 lua.execute('Dead = true')
