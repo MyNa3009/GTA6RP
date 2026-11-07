@@ -189,5 +189,5 @@ Platform.Export('GetResult', function(id)
 end)
 
 Platform.Export('GetVersion', function()
-    return '1.4.1'
+    return '1.4.2'
 end)

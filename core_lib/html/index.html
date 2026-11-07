@@ -8,6 +8,11 @@
   Eventnamen beginnen mit dem UI-Namen: menu_open -> menu, game_open -> game.
   <ui>_open blendet die UI ein, <ui>_close blendet sie aus.
   data-passive bei reinen Anzeigen, damit sie keine Klicks abfangen.
+
+  TASTEN
+  Ohne Mauszeiger (Skillcheck, Schloss knacken) klickt niemand in die UI, der Fokus kann dann in der Shell
+  haengen bleiben statt im iframe. Die Shell gibt Tasten, die bei ihr ankommen, darum an die zuletzt geoeffnete
+  bedienbare UI weiter und setzt den Fokus nach dem Oeffnen und wenn das Fenster Fokus bekommt neu.
 -->
 <html lang="de">
 <head>
@@ -48,7 +53,9 @@ const OPEN_SUFFIX = '_open';
 const CLOSE_SUFFIX = '_close';
 
 const PASSIVE_HIDE_FALLBACK_MS = 1500;
+const REFOCUS_DELAYS_MS = [0, 50, 200];   // SetNuiFocus kommt aus Lua oft erst kurz nach der Nachricht
 const hideTimers = {};
+const openStack = [];                     // bedienbare UIs, zuletzt geoeffnete am Ende
 const frames = {};
 document.querySelectorAll('.ui-frame').forEach((frame) => {
   frames[frame.dataset.ui] = frame;
@@ -70,8 +77,13 @@ window.addEventListener('message', (e) => {
 
   frame.contentWindow.postMessage(msg, '*');
 
-  if (opening && !frame.hasAttribute('data-passive')) frame.contentWindow.focus();
+  if (opening && !frame.hasAttribute('data-passive')) {
+    removeFromStack(ui);
+    openStack.push(ui);
+    REFOCUS_DELAYS_MS.forEach((ms) => setTimeout(focusTop, ms));
+  }
   if (msg.action.endsWith(CLOSE_SUFFIX)) {
+    removeFromStack(ui);
     if (frame.hasAttribute('data-passive')) {
       // Anzeigen zeigen kurz ihren Abschluss (z. B. "Abgebrochen") und melden sich dann mit shell_hide.
       // Falls die Meldung ausbleibt, trotzdem ausblenden.
@@ -86,6 +98,42 @@ window.addEventListener('message', (e) => {
   }
 });
 
+function removeFromStack(ui) {
+  const index = openStack.indexOf(ui);
+  if (index !== -1) openStack.splice(index, 1);
+}
+
+// Oberste bedienbare UI, die gerade sichtbar ist
+function topFrame() {
+  for (let i = openStack.length - 1; i >= 0; i -= 1) {
+    const frame = frames[openStack[i]];
+    if (frame && !frame.hidden) return frame;
+  }
+  return null;
+}
+
+function focusTop() {
+  const frame = topFrame();
+  if (frame && frame.contentWindow) frame.contentWindow.focus();
+}
+
+// Tasten, die in der Shell statt im iframe ankommen, an die oberste UI weitergeben
+function forwardKey(e) {
+  const frame = topFrame();
+  let doc = null;
+  try { doc = frame && frame.contentDocument; } catch (err) { doc = null; }
+  if (!doc) return;
+  e.preventDefault();
+  doc.dispatchEvent(new KeyboardEvent(e.type, {
+    key: e.key, code: e.code, repeat: e.repeat, bubbles: true, cancelable: true,
+    shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey,
+  }));
+  focusTop();
+}
+window.addEventListener('keydown', forwardKey);
+window.addEventListener('keyup', forwardKey);
+window.addEventListener('focus', focusTop);
+
 // Eine UI meldet, dass sie fertig ausgeblendet ist
 window.addEventListener('message', (e) => {
   const msg = e.data;
@@ -94,6 +142,7 @@ window.addEventListener('message', (e) => {
   if (frame) {
     clearTimeout(hideTimers[msg.ui]);
     frame.hidden = true;
+    removeFromStack(msg.ui);
   }
 });
 </script>

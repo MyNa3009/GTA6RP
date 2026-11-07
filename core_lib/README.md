@@ -1,8 +1,13 @@
-# core_lib 1.4.1
+# core_lib 1.4.2
 
 Bibliothek für alle Scripts des Servers, ähnlich wie ox_lib, aber im Design des Servers und mit mehr Minigames. Dazu das **G-Menü**: ein Interaktionsmenü, über das später fast alles läuft, immer in Kategorien geteilt (`Person`, `Fahrzeug`, `Organisation > Leader > Entlassen`).
 
 Alles, was die Core schon kann, bleibt in der Core und wird nicht doppelt gebaut: Callbacks (`Network.Call`), Tasten (`Platform.RegisterKeyCommand`), Meldungen (`core:notify`), Logging (`exports.core:Log`).
+
+## Update von 1.4.1
+
+1. Den Ordner `core_lib` ersetzen und neu starten. Für G-Menü-Einträge aus anderen Resources zusätzlich Core 1.10.1.
+2. Fehler behoben: Bei Minigames ohne Mauszeiger (Skillcheck, Schloss knacken) kam die Taste oft nicht an, vor allem direkt nach dem G-Menü. Der Fokus blieb im Hauptfenster der Lib statt im Minigame. Das Hauptfenster gibt Tasten jetzt an das oberste offene Fenster weiter und setzt den Fokus nach dem Öffnen mehrmals neu.
 
 ## Update von 1.4.0
 

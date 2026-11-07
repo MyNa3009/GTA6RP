@@ -6,7 +6,7 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 |---|---|---|
 | [`core/`](core/README.md) | 1.10.1 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
 | [`core_inventory/`](core_inventory/README.md) | 1.4.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
-| [`core_lib/`](core_lib/README.md) | 1.4.1 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
+| [`core_lib/`](core_lib/README.md) | 1.4.2 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
 | [`core_factions/`](core_factions/README.md) | 1.0.0 | Organisationen: 30 Ränge, Rechte pro Rang, Abteilungen, Prüfungen, Leitstelle, Archiv, Kasse, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Organisationsmenü mit 5 Tabs |
 | [`core_ems/`](core_ems/README.md) | 1.0.0 | Rettungsdienst: Hochholen, Verbandskasten, Verkauf, Behandlung, Krankheiten mit Stadien und Ansteckung, Krankenversicherung, Medizinische Datenbank |
 | [`tests/`](tests/README.md) | | Tests für die Serverlogik aller Resources |
