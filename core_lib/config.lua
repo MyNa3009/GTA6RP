@@ -21,7 +21,8 @@ Config.Lib = {
         MaxEntries = 500,
         MaxDepth = 4,
 
-        -- Feste Kategorien (Reihenfolge der Reiter). Andere Scripts koennen weitere anlegen.
+        -- Feste Kategorien im Kreis, im Uhrzeigersinn ab oben. Andere Scripts koennen weitere anlegen.
+        -- Platz ist fuer bis zu 8 Kategorien.
         Categories = {
             { name = 'Person',       icon = 'user',     order = 10 },
             { name = 'Fahrzeug',     icon = 'car',      order = 20 },
@@ -41,6 +42,17 @@ Config.Lib = {
 
         -- Geld geben: Grenzen nur fuer das Eingabefeld, pruefen tut das Inventar
         GiveCash = { Min = 1, Max = 1000000 },
+    },
+
+    ------------------------------------------------------------------------
+    -- Aussehen des Menues (G-Menue und Kontextmenues). Werte als 'R G B'.
+    -- Hintergrund und Schrift kommen aus Config.UI.Colors der Core.
+    ------------------------------------------------------------------------
+    Menu = {
+        Colors = {
+            accent = '45 212 191',   -- gewaehlte Kategorie im Kreis
+            mark   = '236 88 140',   -- Ueberschrift der Liste, Icons, Fehler
+        },
     },
 
     ------------------------------------------------------------------------

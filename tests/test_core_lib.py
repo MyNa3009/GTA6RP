@@ -346,6 +346,33 @@ check('Eintraege gestoppter Resource weg', payload is None or 'Organisation' not
 check('ohne Eintraege kein Menue, sondern Hinweis', payload is None and any(a[0] == 'core:notify' for a in calls(lua, 'Emit')), tabs_of(payload))
 g.Menu.Close()
 
+print('G-Menue: gesperrte Eintraege (canUse)')
+g.Calling = 'org2'
+add(lua.table_from({'id': 'lead_hire', 'path': 'Leader', 'label': 'Einstellen', 'event': 'x',
+                    'canUse': lua.eval("function() return false, 'Nur für Leader' end")}))
+add(lua.table_from({'id': 'lead_fire', 'path': 'Leader', 'label': 'Entlassen', 'event': 'x',
+                    'canUse': lua.eval("function() error('kaputt') end")}))
+add(lua.table_from({'id': 'org_radio', 'path': 'Organisation', 'label': 'Funk', 'event': 'x', 'canUse': lua.eval('function() return true end')}))
+add(lua.table_from({'id': 'org_steal', 'path': 'Organisation', 'label': 'Kasse leeren', 'event': 'x', 'canUse': lua.eval('function() return false end')}))
+g.Calling = None
+clear(lua)
+g.Interact.Open()
+payload = last_ui(lua, 'menu_open')
+tabs = {t.label: t for t in to_list(payload.tabs)}
+check('Kategorie Leader gesperrt, weil alles darin gesperrt ist', tabs['Leader'].locked is True, tabs.get('Leader'))
+check('Organisation nicht gesperrt (Funk geht)', tabs['Organisation'].locked is None)
+hire = find(tabs['Leader']['items'], 'Einstellen')
+check('Grund steht als Beschreibung', hire.locked is True and hire.description == 'Nur für Leader')
+check('Fehler in canUse: gesperrt und gemeldet', find(tabs['Leader']['items'], 'Entlassen').locked is True and any('canUse' in str(a[1]) for a in calls(lua, 'Print')))
+reply = ui(lua, 'menu_select', {'id': 'e:org_steal'})
+check('gesperrter Eintrag laesst sich nicht ausfuehren', reply.ok is False and reply.error == 'locked')
+reply = ui(lua, 'menu_select', {'id': 'e:org_radio'})
+check('freier Eintrag geht', reply.ok is True)
+g.Menu.Close()
+for fn in g.StopHandlers.values():
+    fn('org2')
+check('Menue holt eigene Farben', ui(lua, 'ui_ready', {'ui': 'menu'}).data.colors.mark == '236 88 140')
+
 print('G-Menue: bewusstlos')
 lua.execute('Dead = true')
 clear(lua)

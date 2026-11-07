@@ -1,8 +1,16 @@
-# core_lib 1.0.0
+# core_lib 1.1.0
 
 Bibliothek für alle Scripts des Servers, ähnlich wie ox_lib, aber im Design des Servers und mit mehr Minigames. Dazu das **G-Menü**: ein Interaktionsmenü, über das später fast alles läuft, immer in Kategorien geteilt (`Person`, `Fahrzeug`, `Organisation > Leader > Entlassen`).
 
 Alles, was die Core schon kann, bleibt in der Core und wird nicht doppelt gebaut: Callbacks (`Network.Call`), Tasten (`Platform.RegisterKeyCommand`), Meldungen (`core:notify`), Logging (`exports.core:Log`).
+
+## Update von 1.0.0
+
+1. Den Ordner `core_lib` ersetzen und neu starten. Core und Inventar bleiben gleich.
+2. Neues G-Menü: Kategorien im Kreis in der Bildmitte, rechts daneben die Liste der gewählten Kategorie. Unten links stehen die Tasten.
+3. Neu: `canUse` an Einträgen. Gibt es `false` zurück, steht der Eintrag mit Schloss da und lässt sich nicht wählen. Sind alle Einträge einer Kategorie gesperrt, bekommt die Kategorie im Kreis ein Schloss.
+4. Eigene Farben für das Menü in `Config.Lib.Menu.Colors`: `accent` (gewählte Kategorie, Standard Türkis) und `mark` (Überschrift, Icons, Fehler, Standard Pink). Hintergrund und Schrift kommen weiter aus der Core.
+5. Die Suche im Menü ist weg, dafür gibt es die Schnellauswahl 1 bis 9 im Kreis und in der Liste.
 
 ## Installation
 
@@ -16,7 +24,7 @@ Braucht Core 1.8.0. Ist die Core älter, meldet sich die `core_lib` mit "Core is
 
 | Bereich | Funktionen | Bei ox_lib |
 |---|---|---|
-| G-Menü | `lib.addInteraction`, `lib.removeInteraction`, `lib.setInteractionCategory`, `lib.openInteractionMenu` | Radialmenü |
+| G-Menü | `lib.addInteraction`, `lib.removeInteraction`, `lib.setInteractionCategory`, `lib.openInteractionMenu` (Kreis mit Liste) | Radialmenü |
 | Kontextmenüs | `lib.registerContext`, `lib.showContext`, `lib.hideContext`, `lib.getOpenContextMenu` | gleich |
 | Fortschritt | `lib.progressBar`, `lib.progressCircle`, `lib.cancelProgress`, `lib.progressActive` | gleich |
 | Minigames | `lib.skillCheck`, `lib.lockpick`, `lib.hack`, `lib.wires`, `lib.cancelMinigame`, auf dem Server `lib.minigame` | nur Skillcheck |
@@ -54,14 +62,15 @@ Danach gibt es die Tabelle `lib`. Alles mit Ergebnis (`lib.progressBar`, `lib.sk
 
 ## G-Menü
 
-**Bedienung:** Taste `G` (im Spiel änderbar unter Einstellungen > Tastenbelegung > FiveM > "Interaktionsmenü öffnen") oder `/interaktion`. Links erscheint das Menü:
+**Bedienung:** Taste `G` (im Spiel änderbar unter Einstellungen > Tastenbelegung > FiveM > "Interaktionsmenü öffnen") oder `/interaktion`.
 
-- Oben die Kategorien als Reiter, mit Pfeil links und rechts oder per Klick wechseln.
-- Zahlen `1` bis `9` führen die Zeile sofort aus, Pfeil hoch und runter wählt, `Enter` führt aus.
-- Unterkategorien öffnen sich mit `Enter` oder Pfeil rechts, zurück geht es mit `Esc`, `Backspace` oder Pfeil links.
-- `/` springt in die Suche. Sie durchsucht die ganze Kategorie mit allen Unterkategorien und zeigt den Pfad dazu.
-- `G` oder `Esc` auf der obersten Ebene schließt.
-- Oben steht die nächste Person ("Nächste Person: ID 17 · 1,2 m"). Stehen mehrere Personen in der Nähe, fragt das Menü bei Aktionen mit einer Person "Wen meinst du?".
+- In der Bildmitte stehen die Kategorien im Kreis, im Uhrzeigersinn ab oben. Rechts daneben steht die Liste der gewählten Kategorie.
+- **Im Kreis:** Klick oder `1` bis `9` öffnet die Kategorie. Mit den Pfeiltasten wechselt man die Kategorie, `Enter` oder Pfeil rechts geht in die Liste.
+- **In der Liste:** Klick oder `1` bis `9` führt aus oder öffnet die Unterkategorie. Pfeil hoch und runter wählt, `Enter` oder Pfeil rechts führt aus.
+- **Zurück:** Rechte Maustaste, Pfeil links, `Backspace` oder der Pfeil neben der Überschrift. Das geht von der Unterkategorie zur Liste, von der Liste zum Kreis und vom Kreis aus schließt es.
+- `Esc` oder `G` schließt sofort.
+- In der Mitte des Kreises steht die nächste Person ("ID 17 · 1,2 m"). Stehen mehrere Personen in der Nähe, fragt das Menü bei Aktionen mit einer Person "Wen meinst du?".
+- Gesperrte Einträge stehen mit Schloss da. Wer sie wählt, sieht "Dafür fehlt dir die Berechtigung." oder den Grund aus `canUse`.
 
 Angezeigt wird nur, was gerade passt. Ohne Fahrzeug gibt es keinen Reiter Fahrzeug, ohne Person in der Nähe keine Einträge, die eine Person brauchen. Ist nichts zu tun, kommt die Meldung "Hier gibt es gerade nichts zu tun."
 
@@ -89,7 +98,8 @@ lib.addInteraction({
     description = 'Entlässt die Person aus deiner Organisation.',
     icon = 'user-minus',
     target = 'player',                     -- nur mit Person in der Nähe
-    canShow = function(ctx) return MyOrg ~= nil and MyOrg.isLeader end,
+    canShow = function(ctx) return MyOrg ~= nil end,                       -- ohne Organisation gar nicht da
+    canUse = function(ctx) return MyOrg.isLeader, 'Nur für Leader' end,  -- sonst mit Schloss
     onSelect = function(ctx)
         local answer = lib.alertDialog({
             header = ('ID %d entlassen?'):format(ctx.player.characterId),
@@ -115,7 +125,8 @@ lib.addInteraction({
 | `order` | | Reihenfolge, kleiner = weiter oben (Standard 100) |
 | `target` | | `'player'`: nur mit Person in der Nähe, `ctx.player` ist gesetzt |
 | `vehicle` | | `'inside'` (im Fahrzeug), `'driver'` (am Steuer), `'outside'` (zu Fuß neben einem Fahrzeug) |
-| `canShow` | | `function(ctx) return true end`, schnell und ohne Warten |
+| `canShow` | | `function(ctx) return true end`, schnell und ohne Warten. `false`: Eintrag fehlt ganz |
+| `canUse` | | `function(ctx) return false, 'Grund' end`: Eintrag mit Schloss, der Grund steht darunter. Schnell und ohne Warten |
 | `state` | | `function(ctx) return 'an' end`, kurzer Zustand rechts in der Zeile |
 | `keepOpen` | | Menü bleibt nach der Aktion offen und wird neu aufgebaut (z. B. Türen auf und zu) |
 
@@ -127,7 +138,7 @@ lib.addInteraction({
 | `ctx.players` | alle Personen in der Nähe, nächste zuerst |
 | `ctx.vehicle` | `{ handle, inside, seat, isDriver, engine, lights, speedKmh, freeSeats }` im Fahrzeug, `{ handle, inside = false }` zu Fuß daneben |
 
-`lib.setInteractionCategory(pfad, { icon, order })` legt Icon und Reihenfolge einer Kategorie oder Unterkategorie fest. Die Reiter Person (10), Fahrzeug (20) und Organisation (30) stehen fest in der Config. Unterkategorien stehen vor den einzelnen Einträgen. Einträge einer Resource verschwinden, wenn sie stoppt.
+`lib.setInteractionCategory(pfad, { icon, order })` legt Icon und Reihenfolge einer Kategorie oder Unterkategorie fest. Die Kategorien Person (10), Fahrzeug (20) und Organisation (30) stehen fest in der Config. Im Kreis ist Platz für bis zu 8 Kategorien. Unterkategorien stehen vor den einzelnen Einträgen. Einträge einer Resource verschwinden, wenn sie stoppt.
 
 **Wichtig:** Das Menü zeigt nur an. Jede Aktion mit Folgen (entlassen, Geld, Items) prüft der Server selbst: Rechte, Distanz mit der Position vom Server, Zustand.
 
@@ -275,15 +286,15 @@ Wer `init.lua` nicht nutzen will, ruft die Exports direkt. Die Start-Exports war
 | `GetMinigameResult(nummer)` | nil (läuft), dann einmal true oder false |
 | `Notify(source, text, typ)` | |
 
-**Fehlercodes:** `busy` (läuft schon etwas), `invalid_input`, `dead`, `no_character`, `not_found`, `id_taken` (ID gehört einer anderen Resource), `invalid_target`, `invalid_vehicle`, `no_action`, `too_many`.
+**Fehlercodes:** `locked` (Eintrag gesperrt), `busy` (läuft schon etwas), `invalid_input`, `dead`, `no_character`, `not_found`, `id_taken` (ID gehört einer anderen Resource), `invalid_target`, `invalid_vehicle`, `no_action`, `too_many`.
 
 ## Icons
 
-`user`, `users`, `id-card`, `search`, `banknote`, `car`, `power`, `light`, `door`, `window`, `seat`, `package`, `close`, `building`, `crown`, `user-minus`, `user-plus`, `arrow-up`, `arrow-down`, `shield`, `wrench`, `phone`, `file`, `lock`, `unlock`, `key`, `settings`, `list`, `map-pin`, `hand`, `check`. Ein unbekannter Name zeigt einfach kein Icon. Neue Icons kommen als `<g id="i-name">` in `html/menu.html` (Strichstärke 1.5, 24er Raster).
+`user`, `users`, `id-card`, `search`, `banknote`, `car`, `power`, `light`, `door`, `window`, `seat`, `package`, `close`, `building`, `crown`, `user-minus`, `user-plus`, `arrow-up`, `arrow-down`, `shield`, `wrench`, `phone`, `file`, `lock`, `unlock`, `key`, `settings`, `list`, `map-pin`, `hand`, `check`, `home`, `volume`, `landmark`, `heart-pulse`, `handshake`, `alert`, `wallet`, `tag`. Ein unbekannter Name zeigt einfach kein Icon. Neue Icons kommen als `<g id="i-name">` in `html/menu.html` (Strichstärke 1.5, 24er Raster).
 
 ## Config
 
-Alles in `config.lua` unter `Config.Lib`: Taste und Befehl des G-Menüs, Abstand für Personen und Fahrzeuge, feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Die Farben aller UIs kommen aus `Config.UI.Colors` der Core.
+Alles in `config.lua` unter `Config.Lib`: Farben des Menüs (`Menu.Colors`), Taste und Befehl des G-Menüs, Abstand für Personen und Fahrzeuge, feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Hintergrund und Schrift aller UIs kommen aus `Config.UI.Colors` der Core, das Menü hat dazu eigene Akzentfarben.
 
 ## Aufbau
 
@@ -299,7 +310,7 @@ core_lib/
   html/                 index (Shell), menu, progress, game, dialog, textui
 ```
 
-FiveM-Natives stehen nur in der Bridge der Core. Jede UI läuft im Browser mit Beispieldaten: `html/menu.html`, `html/dialog.html?kind=alert`, `html/game.html?kind=skillcheck` (oder `lockpick`, `hack`, `wires`), `html/progress.html?style=circle`, `html/textui.html?pos=right`.
+FiveM-Natives stehen nur in der Bridge der Core. Jede UI läuft im Browser mit Beispieldaten: `html/menu.html` (mit `?tab=2` direkt in einer Kategorie, `?mode=context` als Kontextmenü), `html/dialog.html?kind=alert`, `html/game.html?kind=skillcheck` (oder `lockpick`, `hack`, `wires`), `html/progress.html?style=circle`, `html/textui.html?pos=right`.
 
 ## Noch nicht drin
 
@@ -308,7 +319,7 @@ Von ox_lib fehlen noch: Radialmenü (das G-Menü ersetzt es), Listenmenü mit Se
 ## Testen
 
 ```bash
-python3 tests/test_core_lib.py      # ohne Datenbank, 123 Prüfungen
+python3 tests/test_core_lib.py      # ohne Datenbank, 130 Prüfungen
 python3 tests/test_give_item.py     # Geld geben im Inventar, braucht die Test-Datenbank
 ```
 

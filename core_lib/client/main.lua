@@ -158,7 +158,13 @@ Platform.UiOn('ui_ready', function(data)
             end
         end)
     end
-    return { ok = true, data = { colors = Config.UI.Colors } }
+    -- Das Menue (G-Menue, Kontextmenues) hat eigene Akzentfarben, Grund und Schrift kommen von der Core
+    local colors = Config.UI.Colors
+    if ui == 'menu' then
+        colors = { base = Config.UI.Colors.base, ink = Config.UI.Colors.ink,
+            accent = Config.Lib.Menu.Colors.accent, mark = Config.Lib.Menu.Colors.mark }
+    end
+    return { ok = true, data = { colors = colors } }
 end)
 
 ------------------------------------------------------------------------
@@ -179,5 +185,5 @@ Platform.Export('GetResult', function(id)
 end)
 
 Platform.Export('GetVersion', function()
-    return '1.0.0'
+    return '1.1.0'
 end)

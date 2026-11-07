@@ -58,7 +58,8 @@ end
 --   description, icon, order,             optional
 --   target = 'none' | 'player',           'player': nur mit Person in der Naehe, ctx.player ist gesetzt
 --   vehicle = 'inside' | 'driver' | 'outside',  nur im Fahrzeug, nur am Steuer, nur zu Fuss neben einem Fahrzeug
---   canShow = function(ctx) return true end,     schnell, ohne Warten
+--   canShow = function(ctx) return true end,     schnell, ohne Warten. false: Eintrag fehlt ganz
+--   canUse = function(ctx) return false, 'Nur fuer Leader' end,  false: Eintrag mit Schloss, nicht waehlbar
 --   state = function(ctx) return 'an' end,      kurzer Text rechts im Eintrag
 --   keepOpen = false,                     Menue bleibt nach der Aktion offen und wird neu aufgebaut
 --   onSelect = function(ctx) end | event = 'resource:event',
@@ -102,6 +103,7 @@ function Interact.Add(def, owner)
         target = def.target or 'none',
         vehicle = def.vehicle,
         canShow = def.canShow,
+        canUse = def.canUse,
         state = def.state,
         keepOpen = def.keepOpen == true,
         action = action,
@@ -226,6 +228,37 @@ end
 -- Baum fuer die UI
 ------------------------------------------------------------------------
 
+-- Eintrag sichtbar, aber gesperrt? Gibt gesperrt und optional einen Grund zurueck.
+local function lockState(entry, ctx)
+    if not entry.canUse then
+        return false
+    end
+    local ok, usable, reason = pcall(entry.canUse, ctx)
+    if not ok then
+        Platform.Print('error', ('core_lib: canUse von "%s" (%s) ist fehlerhaft: %s'):format(entry.id, entry.owner, tostring(usable)))
+        return true
+    end
+    if usable == true then
+        return false
+    end
+    return true, Lib.Text(reason, DESCRIPTION_LENGTH)
+end
+
+-- Gruppe gesperrt, wenn alles darin gesperrt ist
+local function markLockedGroups(list)
+    local allLocked = #list > 0
+    for _, node in ipairs(list) do
+        local children = node.children or node.items
+        if children then
+            node.locked = markLockedGroups(children) or nil
+        end
+        if not node.locked then
+            allLocked = false
+        end
+    end
+    return allLocked
+end
+
 local function categoryInfo(key)
     return categories[key] or {}
 end
@@ -253,6 +286,7 @@ end
 
 local function buildTree(ctx)
     local nodes = {}
+    local locked = {}         -- [nodeId] = true fuer gesperrte Eintraege
     local roots = {}          -- [name] = Reiter
     local groups = {}         -- [pfad] = Knoten
     local tabs = {}
@@ -290,11 +324,14 @@ local function buildTree(ctx)
             end
             local nodeId = 'e:' .. id
             nodes[nodeId] = entry
+            local isLocked, reason = lockState(entry, ctx)
+            locked[nodeId] = isLocked or nil
             local list = groupFor(entry.path)
             list[#list + 1] = {
                 id = nodeId,
                 label = entry.label,
-                description = entry.description,
+                description = isLocked and reason or entry.description,
+                locked = isLocked or nil,
                 icon = entry.icon,
                 badge = badge,
                 target = entry.target == 'player' and 'player' or nil,
@@ -305,7 +342,8 @@ local function buildTree(ctx)
 
     -- Leere Unterkategorien gibt es nicht, weil Gruppen nur fuer sichtbare Eintraege entstehen
     sortNodes(tabs)
-    return tabs, nodes
+    markLockedGroups(tabs)
+    return tabs, nodes, locked
 end
 
 local function payload(ctx, tabs)
@@ -333,8 +371,8 @@ local function refresh()
         return
     end
     local ctx = buildContext()
-    local tabs, nodes = buildTree(ctx)
-    session.ctx, session.nodes = ctx, nodes
+    local tabs, nodes, locked = buildTree(ctx)
+    session.ctx, session.nodes, session.locked = ctx, nodes, locked
     if #tabs == 0 then
         Menu.Close('interact')
         return
@@ -352,12 +390,12 @@ function Interact.Open()
         return
     end
     local ctx = buildContext()
-    local tabs, nodes = buildTree(ctx)
+    local tabs, nodes, locked = buildTree(ctx)
     if #tabs == 0 then
         Lib.Notify('Hier gibt es gerade nichts zu tun.', 'info')
         return
     end
-    session = { ctx = ctx, nodes = nodes }
+    session = { ctx = ctx, nodes = nodes, locked = locked }
     Menu.Open('interact', payload(ctx, tabs), {
         select = onSelectNode,
         closed = function()
@@ -388,6 +426,9 @@ onSelectNode = function(data)
     local entry = session.nodes[data.id]
     if not entry or not entries[entry.id] then
         return { ok = false, error = 'not_found' }
+    end
+    if session.locked[data.id] then
+        return { ok = false, error = 'locked' }
     end
     local ctx = session.ctx
     local player = ctx.player

@@ -1,35 +1,36 @@
 <!DOCTYPE html>
 <!--
   UI: Menue (G-Menue und Kontextmenues der core_lib)
-  CONTRACT_VERSION: 1
-  Links angedockt, mit Maus, Pfeiltasten, Zahlen 1 bis 9 und Suche bedienbar.
-  Im G-Menue sind die obersten Kategorien Reiter, alles darunter sind Unterkategorien (Organisation > Leader > Entlassen).
+  CONTRACT_VERSION: 2
+  G-Menue: Kategorien im Kreis, rechts daneben die Liste der gewaehlten Kategorie mit Unterkategorien.
+  Kontextmenue: nur die Liste in der Bildmitte.
 
   EINGEHEND (Lua -> UI)
   menu_open {
     mode: "interact" | "context",
     title: string,
     subtitle?: string,                  // z. B. "Nächste Person: ID 17 · 1,2 m"
-    tabs?: Tab[],                       // nur interact
+    tabs?: Tab[],                       // nur interact: die Kategorien im Kreis
     items?: Node[],                     // nur context
     players?: { serverId: number, label: string }[]   // fuer "Wen meinst du?"
   }
-  menu_update  wie menu_open, die UI bleibt an derselben Stelle (Reiter, Unterkategorie, Auswahl)
+  menu_update  wie menu_open, die UI bleibt an derselben Stelle (Kategorie, Unterkategorie, Auswahl)
   menu_close   {}
 
-  Tab  { id: string, label: string, icon?: string, items: Node[] }
+  Tab  { id: string, label: string, icon?: string, locked?: boolean, items: Node[] }
   Node {
     id: string, label: string, description?: string, icon?: string,
     badge?: string,                     // kurzer Zustand rechts, z. B. "an", "offen"
     title?: string, children?: Node[],  // Unterkategorie
     target?: "player",                  // braucht eine Person
+    locked?: boolean,                   // sichtbar mit Schloss, nicht waehlbar
     disabled?: boolean, readOnly?: boolean,
     progress?: number,                  // 0 bis 100
     metadata?: { label: string, value: string }[]
   }
 
   AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
-  ui_ready     { ui: "menu", version: 1 }        -> data.colors { base, ink, accent, signal }
+  ui_ready     { ui: "menu", version: 2 }        -> data.colors { base, ink, accent, mark }
   menu_select  { id: string, player?: number }   -> data { choose?: true, close?: boolean }
   menu_close   {}
 -->
@@ -45,54 +46,63 @@
 
 <style>
 /*
-  Oberflaechentyp: Command. Dichte 7, Bewegung 1, Varianz 2.
-  Angedockt links ueber der Minimap, die Bildmitte bleibt frei. Keine Animation beim Oeffnen, das Menue kommt oft.
-  Highlight: Ziel-Chip mit der naechsten Person. Signatur: Keycaps 1 bis 9 vor den Zeilen.
+  Oberflaechentyp: Command. Dichte 7, Bewegung 1, Varianz 3.
+  Kreis in der Bildmitte fuer die Kategorien, Liste rechts daneben. Kommt oft, darum keine Animation beim Oeffnen.
+  Highlight: die gewaehlte Kategorie, voll in der Akzentfarbe. Signatur: Nummern 1 bis 9 an Kreis und Liste.
+  Farben: base und ink aus der Core, accent (Kreis) und mark (Liste, Icons, Fehler) aus Config.Lib.Menu.Colors.
 */
 :root {
   --rgb-base:   14 15 18;
   --rgb-ink:    232 234 237;
-  --rgb-accent: 214 164 72;
-  --rgb-signal: 220 82 72;
+  --rgb-accent: 45 212 191;
+  --rgb-mark:   236 88 140;
 
-  --c-bg:          rgb(var(--rgb-base) / 0.94);
-  --c-surface:     rgb(var(--rgb-ink) / 0.05);
-  --c-surface-hi:  rgb(var(--rgb-ink) / 0.10);
-  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-dim-in:      rgb(var(--rgb-base) / 0.55);
+  --c-dim-out:     rgb(var(--rgb-base) / 0.82);
+  --c-orb:         rgb(var(--rgb-base) / 0.96);
+  --c-row:         rgb(var(--rgb-base) / 0.88);
+  --c-surface:     rgb(var(--rgb-ink) / 0.04);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.09);
+  --c-border:      rgb(var(--rgb-ink) / 0.07);
+  --c-border-hi:   rgb(var(--rgb-ink) / 0.18);
+  --c-ring:        rgb(var(--rgb-ink) / 0.10);
   --c-text:        rgb(var(--rgb-ink) / 0.94);
   --c-text-2:      rgb(var(--rgb-ink) / 0.72);
   --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
   --c-accent:      rgb(var(--rgb-accent));
-  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
-  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
-  --c-signal:      rgb(var(--rgb-signal));
+  --c-accent-line: rgb(var(--rgb-accent) / 0.55);
+  --c-mark:        rgb(var(--rgb-mark));
   --c-on-accent:   rgb(var(--rgb-base));
-  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.10);
   --shadow:        0 8px 24px rgb(var(--rgb-base) / 0.5);
 
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px;
-  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px;
 
-  --fs-xs: clamp(11px, 0.55vw, 13px);
-  --fs-sm: clamp(12px, 0.65vw, 14px);
-  --fs-md: clamp(14px, 0.75vw, 16px);
-  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-2xs: clamp(10px, 0.5vw, 12px);
+  --fs-xs: clamp(11px, 0.58vw, 13px);
+  --fs-sm: clamp(12px, 0.68vw, 15px);
 
-  --row-h: 44px;
-  --tab-h: 36px;
-  --input-h: 36px;
-  --keycap: 22px;
-  --icon: 18px;
+  /* Kreis */
+  --ring-r: clamp(150px, 10.25vw, 270px);
+  --orb: clamp(60px, 4.1vw, 104px);
+  --orb-icon: calc(var(--orb) * 0.38);
+  --lock-badge: clamp(18px, 1.05vw, 26px);
+  --center-dot: 4px;
+
+  /* Liste */
+  --panel-gap: clamp(24px, 2.4vw, 60px);
+  --panel-w: clamp(300px, 17.5vw, 440px);
+  --row-min-h: clamp(36px, 2vw, 48px);
+  --row-num: clamp(18px, 1.05vw, 24px);
+  --row-icon: clamp(14px, 0.85vw, 18px);
   --bar-h: 4px;
 
-  --panel-left: clamp(16px, 2vw, 40px);
-  --panel-top: clamp(80px, 16vh, 220px);
-  --panel-w: clamp(320px, 22vw, 440px);
-  --panel-max-h: min(60dvh, 760px);
-
+  --edge: clamp(16px, 1.2vw, 32px);
   --dur-fast: 120ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --z-panel: 10;
+  --z-dim: 1;
+  --z-ring: 2;
+  --z-panel: 3;
 }
 
 * { box-sizing: border-box; }
@@ -105,232 +115,241 @@ html, body {
   font-family: 'Montserrat', sans-serif;
   color: var(--c-text);
   -webkit-font-smoothing: antialiased;
+  user-select: none;
 }
 
 button { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
 
-.panel {
+/* Abdunkeln: Mitte etwas heller, damit der Kreis im Fokus steht */
+.dim {
   position: fixed;
-  left: var(--panel-left);
-  top: var(--panel-top);
-  z-index: var(--z-panel);
-  width: var(--panel-w);
-  max-height: var(--panel-max-h);
-  display: flex;
-  flex-direction: column;
-  background: var(--c-bg);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-  overflow: hidden;
+  inset: 0;
+  z-index: var(--z-dim);
+  background: radial-gradient(circle at 50% 50%, var(--c-dim-in) 0, var(--c-dim-out) 75%);
 }
-.panel[hidden] { display: none; }
 
-/* Kopf */
-.head {
-  padding: var(--space-4) var(--space-4) var(--space-3);
-  display: grid;
-  gap: var(--space-2);
-}
-.title {
-  margin: 0;
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  text-wrap: balance;
-}
-.target {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  justify-self: start;
-  max-width: 100%;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--c-accent-soft);
-  color: var(--c-accent);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.target[hidden] { display: none; }
-.target svg { flex: none; width: 14px; height: 14px; }
-
-/* Reiter */
-.tabs {
-  display: flex;
-  gap: var(--space-1);
-  padding: 0 var(--space-3);
-  overflow-x: auto;
-  scrollbar-width: none;
-  border-bottom: 1px solid var(--c-border);
-}
-.tabs::-webkit-scrollbar { display: none; }
-.tabs[hidden] { display: none; }
-.tab {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: var(--tab-h);
-  padding: 0 var(--space-3);
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--c-text-muted);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  cursor: pointer;
-  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
-}
-.tab:hover { color: var(--c-text-2); }
-.tab[aria-selected="true"] { color: var(--c-text); border-bottom-color: var(--c-accent); }
-.tab:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: -2px; border-radius: var(--radius-sm); }
-.tab svg { width: 16px; height: 16px; }
-
-/* Pfad und Suche */
-.bar {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-3) var(--space-2);
-}
-.crumb {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.crumb[hidden] { display: none; }
-.back {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-sm);
-  background: var(--c-surface);
-  cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-out);
-}
-.back:hover { background: var(--c-surface-hi); }
-.back:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 2px; }
-.back svg { width: 16px; height: 16px; }
-.path {
-  min-width: 0;
-  font-size: var(--fs-sm);
-  color: var(--c-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.path strong { color: var(--c-text); font-weight: 600; }
-
-.search {
-  position: relative;
-}
-.search svg {
-  position: absolute;
-  left: var(--space-3);
+/* ---------- Kreis ---------- */
+.ring {
+  position: fixed;
+  left: 50%;
   top: 50%;
-  width: 16px;
-  height: 16px;
-  transform: translateY(-50%);
-  color: var(--c-text-muted);
+  z-index: var(--z-ring);
+  width: calc(var(--ring-r) * 2);
+  height: calc(var(--ring-r) * 2);
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--c-ring);
+  border-radius: 50%;
+}
+
+.center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  max-width: calc(var(--ring-r) * 1.1);
+  text-align: center;
   pointer-events: none;
 }
-.search input {
-  width: 100%;
-  height: var(--input-h);
-  padding: 0 var(--space-3) 0 36px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-md);
-  background: var(--c-surface);
-  color: var(--c-text);
-  font: inherit;
-  font-size: var(--fs-sm);
+.center .dot {
+  width: var(--center-dot);
+  height: var(--center-dot);
+  border-radius: 50%;
+  background: var(--c-text-muted);
 }
-.search input::placeholder { color: var(--c-text-muted); }
-.search input:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 0; }
+.center .who { display: grid; gap: 2px; }
+.center .who-label { font-size: var(--fs-2xs); color: var(--c-text-muted); }
+.center .who-value { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); font-variant-numeric: tabular-nums; }
 
-/* Liste */
+.orb {
+  position: absolute;
+  left: calc(50% + var(--fx) * var(--ring-r) - var(--orb) / 2);
+  top: calc(50% + var(--fy) * var(--ring-r) - var(--orb) / 2);
+  width: var(--orb);
+  height: var(--orb);
+  padding: 0;
+  border: 1px solid var(--c-border);
+  border-radius: 50%;
+  background: var(--c-orb);
+  box-shadow: var(--shadow);
+  color: var(--c-text);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.orb > svg { width: var(--orb-icon); height: var(--orb-icon); }
+.orb:hover { border-color: var(--c-border-hi); background: rgb(var(--rgb-base)); }
+.orb:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 4px; }
+.orb:active { transform: scale(0.97); }
+.orb[aria-pressed="true"] { background: var(--c-accent); border-color: var(--c-accent); color: var(--c-on-accent); }
+.ring.is-ring-level .orb[aria-pressed="true"] { box-shadow: var(--shadow), 0 0 0 4px rgb(var(--rgb-accent) / 0.22); }
+
+.orb-label {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + var(--space-2));
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text);
+  pointer-events: none;
+}
+.orb-label .n { font-size: var(--fs-2xs); font-weight: 500; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+.orb[aria-pressed="true"] .orb-label { color: var(--c-accent); }
+
+.lock-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: var(--lock-badge);
+  height: var(--lock-badge);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--c-border-hi);
+  border-radius: 50%;
+  background: rgb(var(--rgb-base));
+  color: var(--c-text-2);
+}
+.lock-badge svg { width: 55%; height: 55%; }
+
+/* ---------- Liste ---------- */
+.panel {
+  position: fixed;
+  z-index: var(--z-panel);
+  left: calc(50% + var(--ring-r) + var(--orb) / 2 + var(--panel-gap));
+  top: calc(50% - var(--ring-r) - var(--space-4));
+  width: var(--panel-w);
+  max-height: calc(var(--ring-r) * 2 + var(--orb));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.panel.is-context {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-height: min(70dvh, 760px);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 28px;
+}
+.back {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.back:hover { color: var(--c-text); background: var(--c-surface); }
+.back:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 2px; }
+.back svg { width: 16px; height: 16px; }
+.title {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--c-mark);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .list {
   flex: 1 1 auto;
   min-height: 0;
   margin: 0;
-  padding: 0 var(--space-2) var(--space-2);
+  padding: 0;
   list-style: none;
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--c-surface-hi) transparent;
 }
 .list:focus-visible { outline: none; }
-.list li + li { margin-top: 2px; }
 
 .row {
   width: 100%;
-  min-height: var(--row-h);
+  min-height: var(--row-min-h);
   display: grid;
-  grid-template-columns: var(--keycap) var(--icon) minmax(0, 1fr) auto;
+  grid-template-columns: var(--row-num) var(--row-icon) minmax(0, 1fr) auto;
   align-items: center;
   column-gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  border: 0;
+  border: 1px solid var(--c-border);
   border-radius: var(--radius-md);
-  background: none;
+  background: var(--c-row);
   text-align: left;
   cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
-.row.is-active { background: var(--c-surface-hi); box-shadow: var(--edge-light); }
+.row.is-active { background: rgb(var(--rgb-base)); border-color: var(--c-accent-line); }
 .row:active { transform: scale(0.99); }
-.row[aria-disabled="true"] { cursor: default; color: var(--c-text-muted); }
+.row.is-locked { cursor: not-allowed; }
+.row.is-locked .num, .row.is-locked .icon, .row.is-locked .text { opacity: 0.45; }
+.row[aria-disabled="true"]:not(.is-locked) { cursor: default; color: var(--c-text-muted); }
 .row[aria-disabled="true"]:active { transform: none; }
 
-.key {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--keycap);
-  height: var(--keycap);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-xs);
+.num {
+  display: grid;
+  place-items: center;
+  width: var(--row-num);
+  height: var(--row-num);
+  border-radius: 50%;
+  background: var(--c-surface-hi);
   color: var(--c-text-2);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.key:empty { border-color: transparent; }
-.row.is-active .key:not(:empty) { background: var(--c-accent); border-color: var(--c-accent); color: var(--c-on-accent); }
+.num:empty { background: none; }
+.row.is-active .num:not(:empty) { background: var(--c-accent); color: var(--c-on-accent); }
 
-.icon { width: var(--icon); height: var(--icon); color: var(--c-text-2); }
-.row.is-active .icon { color: var(--c-text); }
+.icon { width: var(--row-icon); height: var(--row-icon); color: var(--c-mark); }
 
 .text { min-width: 0; display: grid; gap: 2px; }
 .label {
-  font-size: var(--fs-md);
-  font-weight: 500;
-  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 .desc {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-2xs);
   color: var(--c-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.meter {
-  height: var(--bar-h);
-  margin-top: var(--space-1);
-  border-radius: var(--radius-xs);
-  background: var(--c-surface-hi);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.meter { height: var(--bar-h); margin-top: var(--space-1); border-radius: var(--radius-xs); background: var(--c-surface-hi); overflow: hidden; }
 .meter span { display: block; height: 100%; background: var(--c-text-2); border-radius: var(--radius-xs); }
 
 .side {
@@ -338,66 +357,65 @@ button { font: inherit; color: inherit; }
   align-items: center;
   gap: var(--space-2);
   color: var(--c-text-2);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-2xs);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.side svg { width: 16px; height: 16px; color: var(--c-text-muted); }
+.side svg { width: 14px; height: 14px; color: var(--c-text-muted); }
 
 .empty {
-  padding: var(--space-5) var(--space-4);
+  padding: var(--space-4) var(--space-3);
+  border: 1px dashed var(--c-border-hi);
+  border-radius: var(--radius-md);
   color: var(--c-text-muted);
-  font-size: var(--fs-sm);
-  text-align: center;
+  font-size: var(--fs-xs);
 }
 
-/* Details der aktiven Zeile (Kontextmenues mit metadata) */
 .details {
   margin: 0;
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--c-border);
+  padding: var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-row);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--space-1) var(--space-4);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-2xs);
 }
-.details[hidden] { display: none; }
 .details dt { color: var(--c-text-muted); }
 .details dd { margin: 0; color: var(--c-text); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
-/* Fuss */
-.foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
-  padding: var(--space-2) var(--space-4) var(--space-3);
-  border-top: 1px solid var(--c-border);
+.status { margin: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--c-mark); }
+.status:empty { display: none; }
+.panel[aria-busy="true"] .list { opacity: 0.6; pointer-events: none; }
+
+/* ---------- Tasten unten links ---------- */
+.keys {
+  position: fixed;
+  left: var(--edge);
+  bottom: var(--edge);
+  z-index: var(--z-panel);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--fs-2xs);
   color: var(--c-text-muted);
-  font-size: var(--fs-xs);
 }
-.foot .k {
-  display: inline-flex;
-  align-items: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 var(--space-1);
-  justify-content: center;
-  border: 1px solid var(--c-border);
+.keys li { display: flex; align-items: center; gap: var(--space-2); }
+.keys kbd {
+  min-width: 28px;
+  padding: 2px var(--space-1);
+  border: 1px solid var(--c-border-hi);
   border-radius: var(--radius-xs);
+  background: var(--c-surface);
   color: var(--c-text-2);
   font-family: inherit;
-  font-weight: 600;
+  font-size: 9px;
+  font-weight: 700;
+  text-align: center;
 }
-.foot span { display: inline-flex; align-items: center; gap: var(--space-1); }
-.status {
-  padding: 0 var(--space-4) var(--space-3);
-  color: var(--c-signal);
-  font-size: var(--fs-sm);
-}
-.status:empty { display: none; }
-
-.panel[aria-busy="true"] .list { opacity: 0.6; pointer-events: none; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
@@ -441,33 +459,41 @@ button { font: inherit; color: inherit; }
     <g id="i-check" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></g>
     <g id="i-chevron-right" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></g>
     <g id="i-chevron-left" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></g>
+    <g id="i-home" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></g>
+    <g id="i-volume" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></g>
+    <g id="i-landmark" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 18h14M12 3 3 8h18z"/><path d="M6 11v7M10 11v7M14 11v7M18 11v7"/></g>
+    <g id="i-heart-pulse" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 12 5a5.5 5.5 0 0 0-10 3.5c0 2.3 1.5 4 3 5.5l7 7z"/><path d="M3.2 12H8l1.5-3 3 6 1.5-3h6.8"/></g>
+    <g id="i-handshake" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17 2 2a1 1 0 1 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.9-3.9a2 2 0 0 0-2.8 0l-.9.9a1 1 0 1 1-3-3l2.8-2.8a5.8 5.8 0 0 1 7 .9L21 7"/><path d="m21 3 1 11h-2M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3M3 4h8"/></g>
+    <g id="i-alert" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></g>
+    <g id="i-wallet" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V5a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2"/><path d="M3 6v12a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-3"/></g>
+    <g id="i-arrow-left" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></g>
+    <g id="i-tag" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.5"/></g>
   </defs>
 </svg>
 
+<div class="dim" id="dim" hidden></div>
+
+<nav class="ring" id="ring" aria-label="Kategorien" hidden>
+  <div class="center" id="center">
+    <span class="dot"></span>
+    <span class="who" id="who" hidden><span class="who-label" id="who-label"></span><span class="who-value" id="who-value"></span></span>
+  </div>
+</nav>
+
 <section class="panel" id="panel" role="dialog" aria-labelledby="title" hidden>
   <header class="head">
-    <h1 class="title" id="title">Interaktion</h1>
-    <p class="target" id="target" hidden></p>
+    <button class="back" type="button" data-action="back" id="back"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow-left"/></svg></button>
+    <h1 class="title" id="title"></h1>
   </header>
-  <nav class="tabs" id="tabs" role="tablist" aria-label="Kategorien" hidden></nav>
-  <div class="bar">
-    <div class="crumb" id="crumb" hidden>
-      <button class="back" type="button" data-action="back" aria-label="Zurück"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
-      <span class="path" id="path"></span>
-    </div>
-    <label class="search">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
-      <input id="search" type="search" autocomplete="off" spellcheck="false" aria-label="Suchen">
-    </label>
-  </div>
   <ul class="list" id="list" role="menu" tabindex="0" aria-labelledby="title"></ul>
   <dl class="details" id="details" hidden></dl>
   <p class="status" id="status" role="status" aria-live="polite"></p>
-  <footer class="foot" id="foot"></footer>
 </section>
 
+<ul class="keys" id="keys" hidden></ul>
+
 <script id="bridge">
-const CONTRACT_VERSION = 1;
+const CONTRACT_VERSION = 2;
 
 const Bridge = (() => {
   const handlers = {};
@@ -537,15 +563,18 @@ const Mock = {
 
 <script id="app">
 const TEXT = {
-  search: 'Suchen',
-  searchHint: 'In dieser Kategorie suchen',
   back: 'Zurück',
+  close: 'Schließen',
   choose: 'Wen meinst du?',
-  noResults: (query) => `Nichts gefunden für „${query}“`,
   noItems: 'Hier gibt es gerade nichts zu tun.',
-  pathSeparator: ' › ',
-  keys: { move: 'wählen', tabs: 'Kategorie', enter: 'ausführen', back: 'zurück', search: 'suchen', close: 'schließen' },
+  locked: 'Gesperrt',
+  keys: [
+    ['ESC', 'Menü verlassen'],
+    ['RMB', 'Zurück / verlassen'],
+    ['1-9', 'Schnellauswahl'],
+  ],
   errors: {
+    locked: 'Dafür fehlt dir die Berechtigung.',
     not_found: 'Das geht gerade nicht mehr. Menü neu öffnen.',
     player_gone: 'Die Person ist nicht mehr in der Nähe.',
     not_open: 'Das Menü ist schon zu.',
@@ -557,8 +586,9 @@ const TEXT = {
 
 const MAX_HOTKEYS = 9;
 const CLOSE_KEY = 'g';
-const SEARCH_KEY = '/';
 const PLAYER_PREFIX = 'p:';
+const FULL_TURN = 2 * Math.PI;
+const SUBTITLE_SPLIT = ': ';   // "Nächste Person: ID 17 · 1,2 m" -> zwei Zeilen in der Mitte des Kreises
 
 const state = {
   open: false,
@@ -569,28 +599,29 @@ const state = {
   items: [],
   players: [],
   tabIndex: 0,
-  stack: [],          // geoeffnete Unterkategorien (Knoten)
-  choosing: null,     // { id, label } wenn "Wen meinst du?" gefragt wird
-  query: '',
+  level: 'ring',      // 'ring': Tasten steuern den Kreis, 'list': die Liste
+  stack: [],          // geoeffnete Unterkategorien
+  choosing: null,     // { id, label } bei "Wen meinst du?"
   cursor: 0,
   busy: false,
   error: '',
 };
 
 const el = {
+  dim: document.getElementById('dim'),
+  ring: document.getElementById('ring'),
+  who: document.getElementById('who'),
+  whoLabel: document.getElementById('who-label'),
+  whoValue: document.getElementById('who-value'),
   panel: document.getElementById('panel'),
+  back: document.getElementById('back'),
   title: document.getElementById('title'),
-  target: document.getElementById('target'),
-  tabs: document.getElementById('tabs'),
-  crumb: document.getElementById('crumb'),
-  path: document.getElementById('path'),
-  search: document.getElementById('search'),
   list: document.getElementById('list'),
   details: document.getElementById('details'),
   status: document.getElementById('status'),
-  foot: document.getElementById('foot'),
+  keys: document.getElementById('keys'),
 };
-el.search.placeholder = TEXT.searchHint;
+el.back.setAttribute('aria-label', TEXT.back);
 
 function svgIcon(name, className) {
   if (!name || !document.getElementById(`i-${name}`)) return null;
@@ -608,100 +639,97 @@ function svgIcon(name, className) {
 function applyColors(colors) {
   if (!colors) return;
   const root = document.documentElement.style;
-  ['base', 'ink', 'accent', 'signal'].forEach((key) => {
+  ['base', 'ink', 'accent', 'mark'].forEach((key) => {
     if (typeof colors[key] === 'string') root.setProperty(`--rgb-${key}`, colors[key]);
   });
 }
 
 /* ---------- Was gerade angezeigt wird ---------- */
 
+const isInteract = () => state.mode === 'interact';
+const currentTab = () => state.tabs[state.tabIndex];
+
 function rootItems() {
-  if (state.mode === 'interact') return state.tabs[state.tabIndex]?.items || [];
-  return state.items;
+  return isInteract() ? currentTab()?.items || [] : state.items;
 }
 
 function currentItems() {
   if (state.choosing) {
     return state.players.map((player) => ({ id: PLAYER_PREFIX + player.serverId, label: player.label, icon: 'user', player: player.serverId }));
   }
-  if (state.query) return searchResults();
   const top = state.stack[state.stack.length - 1];
   return top ? top.children || [] : rootItems();
 }
 
-// Alle ausfuehrbaren Eintraege unter der aktuellen Ebene, mit Pfad als Beschreibung
-function searchResults() {
-  const query = state.query.toLocaleLowerCase('de-DE');
-  const base = state.stack[state.stack.length - 1];
-  const start = base ? base.children || [] : rootItems();
-  const results = [];
-  const walk = (nodes, path) => {
-    nodes.forEach((node) => {
-      if (node.children) {
-        walk(node.children, [...path, node.label]);
-        return;
-      }
-      const haystack = `${node.label} ${node.description || ''} ${path.join(' ')}`.toLocaleLowerCase('de-DE');
-      if (haystack.includes(query)) {
-        results.push({ ...node, description: path.length ? path.join(TEXT.pathSeparator) : node.description });
-      }
+function currentTitle() {
+  if (state.choosing) return TEXT.choose;
+  const top = state.stack[state.stack.length - 1];
+  if (top) return top.title || top.label;
+  return isInteract() ? currentTab()?.label || '' : state.title;
+}
+
+const isSelectable = (node) => node && !node.locked && !node.disabled && !node.readOnly;
+
+/* ---------- Kreis ---------- */
+
+function renderRing() {
+  const show = isInteract() && state.tabs.length > 0;
+  el.ring.hidden = !show;
+  if (!show) return;
+  el.ring.classList.toggle('is-ring-level', state.level === 'ring');
+
+  // Mitte: naechste Person
+  const [label, value] = state.subtitle.includes(SUBTITLE_SPLIT) ? state.subtitle.split(SUBTITLE_SPLIT) : ['', state.subtitle];
+  el.who.hidden = !state.subtitle;
+  el.whoLabel.textContent = label;
+  el.whoValue.textContent = value;
+
+  const count = state.tabs.length;
+  const existing = el.ring.querySelectorAll('.orb');
+  if (existing.length !== count || [...existing].some((orb, i) => orb.dataset.id !== state.tabs[i].id)) {
+    existing.forEach((orb) => orb.remove());
+    const fragment = document.createDocumentFragment();
+    state.tabs.forEach((tab, index) => {
+      // Im Uhrzeigersinn ab oben
+      const angle = (index / count) * FULL_TURN - Math.PI / 2;
+      const orb = document.createElement('button');
+      orb.type = 'button';
+      orb.className = 'orb';
+      orb.dataset.action = 'tab';
+      orb.dataset.index = String(index);
+      orb.dataset.id = tab.id;
+      orb.style.setProperty('--fx', Math.cos(angle).toFixed(4));
+      orb.style.setProperty('--fy', Math.sin(angle).toFixed(4));
+      const icon = svgIcon(tab.icon || 'list');
+      if (icon) orb.appendChild(icon);
+      const caption = document.createElement('span');
+      caption.className = 'orb-label';
+      const n = document.createElement('span');
+      n.className = 'n';
+      n.textContent = index < MAX_HOTKEYS ? String(index + 1) : '';
+      caption.append(n, document.createTextNode(tab.label));
+      orb.appendChild(caption);
+      fragment.appendChild(orb);
     });
-  };
-  walk(start, []);
-  return results;
-}
-
-function isSelectable(node) {
-  return node && !node.disabled && !node.readOnly;
-}
-
-/* ---------- Rendern ---------- */
-
-function renderHead() {
-  el.title.textContent = state.title;
-  el.target.hidden = !state.subtitle;
-  if (state.subtitle) {
-    el.target.replaceChildren();
-    const icon = svgIcon('user');
-    if (icon) el.target.appendChild(icon);
-    el.target.appendChild(document.createTextNode(state.subtitle));
+    el.ring.appendChild(fragment);
   }
-}
-
-function renderTabs() {
-  const show = state.mode === 'interact' && state.tabs.length > 0;
-  el.tabs.hidden = !show;
-  if (!show) return;
-  const fragment = document.createDocumentFragment();
-  state.tabs.forEach((tab, index) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'tab';
-    button.setAttribute('role', 'tab');
-    button.setAttribute('aria-selected', String(index === state.tabIndex));
-    button.dataset.action = 'tab';
-    button.dataset.index = String(index);
-    const icon = svgIcon(tab.icon);
-    if (icon) button.appendChild(icon);
-    button.appendChild(document.createTextNode(tab.label));
-    fragment.appendChild(button);
+  el.ring.querySelectorAll('.orb').forEach((orb, index) => {
+    const tab = state.tabs[index];
+    orb.setAttribute('aria-pressed', String(index === state.tabIndex));
+    orb.setAttribute('aria-label', tab.locked ? `${tab.label}, ${TEXT.locked}` : tab.label);
+    let badge = orb.querySelector('.lock-badge');
+    if (tab.locked && !badge) {
+      badge = document.createElement('span');
+      badge.className = 'lock-badge';
+      badge.appendChild(svgIcon('lock'));
+      orb.appendChild(badge);
+    } else if (!tab.locked && badge) {
+      badge.remove();
+    }
   });
-  el.tabs.replaceChildren(fragment);
 }
 
-function renderCrumb() {
-  const labels = state.stack.map((node) => node.title || node.label);
-  if (state.choosing) labels.push(state.choosing.label);
-  const show = labels.length > 0;
-  el.crumb.hidden = !show;
-  if (!show) return;
-  const root = state.mode === 'interact' ? state.tabs[state.tabIndex]?.label : state.title;
-  el.path.replaceChildren();
-  el.path.appendChild(document.createTextNode([root, ...labels.slice(0, -1)].filter(Boolean).join(TEXT.pathSeparator) + TEXT.pathSeparator));
-  const strong = document.createElement('strong');
-  strong.textContent = state.choosing ? TEXT.choose : labels[labels.length - 1];
-  el.path.appendChild(strong);
-}
+/* ---------- Liste ---------- */
 
 function rowFor(node, index) {
   const li = document.createElement('li');
@@ -714,17 +742,17 @@ function rowFor(node, index) {
   button.setAttribute('role', 'menuitem');
   button.dataset.action = 'select';
   button.dataset.index = String(index);
-  if (!isSelectable(node) && !node.children) button.setAttribute('aria-disabled', 'true');
+  if (node.locked) button.classList.add('is-locked');
+  if (!isSelectable(node) && !(node.children && !node.locked)) button.setAttribute('aria-disabled', 'true');
   if (node.children) button.setAttribute('aria-haspopup', 'menu');
 
-  const key = document.createElement('span');
-  key.className = 'key';
-  key.setAttribute('aria-hidden', 'true');
-  if (index < MAX_HOTKEYS) key.textContent = String(index + 1);
-  button.appendChild(key);
+  const num = document.createElement('span');
+  num.className = 'num';
+  num.setAttribute('aria-hidden', 'true');
+  if (index < MAX_HOTKEYS) num.textContent = String(index + 1);
+  button.appendChild(num);
 
-  const icon = svgIcon(node.icon, 'icon') || document.createElement('span');
-  button.appendChild(icon);
+  button.appendChild(svgIcon(node.icon, 'icon') || document.createElement('span'));
 
   const text = document.createElement('span');
   text.className = 'text';
@@ -754,10 +782,11 @@ function rowFor(node, index) {
 
   const side = document.createElement('span');
   side.className = 'side';
-  if (node.badge) side.appendChild(document.createTextNode(node.badge));
-  if (node.children) {
-    const chevron = svgIcon('chevron-right');
-    if (chevron) side.appendChild(chevron);
+  if (node.locked) {
+    side.appendChild(svgIcon('lock'));
+  } else {
+    if (node.badge) side.appendChild(document.createTextNode(node.badge));
+    if (node.children) side.appendChild(svgIcon('chevron-right'));
   }
   button.appendChild(side);
   li.appendChild(button);
@@ -765,6 +794,11 @@ function rowFor(node, index) {
 }
 
 function renderList() {
+  el.panel.hidden = false;
+  el.panel.classList.toggle('is-context', !isInteract());
+  el.title.textContent = currentTitle();
+  // Zurueck: Unterkategorie, Liste zum Kreis, auf oberster Ebene schliessen
+
   const items = currentItems();
   if (state.cursor >= items.length) state.cursor = Math.max(0, items.length - 1);
   const fragment = document.createDocumentFragment();
@@ -772,7 +806,7 @@ function renderList() {
   if (items.length === 0) {
     const li = document.createElement('li');
     li.className = 'empty';
-    li.textContent = state.query ? TEXT.noResults(state.query) : TEXT.noItems;
+    li.textContent = TEXT.noItems;
     fragment.appendChild(li);
   }
   el.list.replaceChildren(fragment);
@@ -780,9 +814,8 @@ function renderList() {
 }
 
 function renderCursor() {
-  const items = currentItems();
   el.list.querySelectorAll('.row.is-active').forEach((row) => row.classList.remove('is-active'));
-  const row = document.getElementById(`row-${state.cursor}`);
+  const row = state.level === 'list' ? document.getElementById(`row-${state.cursor}`) : null;
   if (row) {
     row.classList.add('is-active');
     el.list.setAttribute('aria-activedescendant', row.id);
@@ -790,7 +823,8 @@ function renderCursor() {
   } else {
     el.list.removeAttribute('aria-activedescendant');
   }
-  renderDetails(items[state.cursor]);
+  renderDetails(state.level === 'list' ? currentItems()[state.cursor] : null);
+  el.ring.classList.toggle('is-ring-level', state.level === 'ring');
 }
 
 function renderDetails(node) {
@@ -808,24 +842,17 @@ function renderDetails(node) {
   el.details.replaceChildren(fragment);
 }
 
-function renderFoot() {
-  const parts = [
-    ['↑↓', TEXT.keys.move],
-    ...(state.mode === 'interact' && state.tabs.length > 1 ? [['←→', TEXT.keys.tabs]] : []),
-    ['Enter', TEXT.keys.enter],
-    ['Esc', TEXT.keys.back],
-  ];
-  if (state.mode === 'interact') parts.push([CLOSE_KEY.toUpperCase(), TEXT.keys.close]);
+function renderKeys() {
+  if (el.keys.childElementCount > 0) return;
   const fragment = document.createDocumentFragment();
-  parts.forEach(([key, label]) => {
-    const span = document.createElement('span');
-    const k = document.createElement('kbd');
-    k.className = 'k';
-    k.textContent = key;
-    span.append(k, document.createTextNode(label));
-    fragment.appendChild(span);
+  TEXT.keys.forEach(([key, label]) => {
+    const li = document.createElement('li');
+    const kbd = document.createElement('kbd');
+    kbd.textContent = key;
+    li.append(kbd, document.createTextNode(label));
+    fragment.appendChild(li);
   });
-  el.foot.replaceChildren(fragment);
+  el.keys.replaceChildren(fragment);
 }
 
 function renderStatus() {
@@ -834,11 +861,11 @@ function renderStatus() {
 }
 
 function render() {
-  renderHead();
-  renderTabs();
-  renderCrumb();
+  el.dim.hidden = false;
+  el.keys.hidden = false;
+  renderKeys();
+  renderRing();
   renderList();
-  renderFoot();
   renderStatus();
 }
 
@@ -847,7 +874,10 @@ function render() {
 function close(notify) {
   if (!state.open) return;
   state.open = false;
+  el.dim.hidden = true;
+  el.ring.hidden = true;
   el.panel.hidden = true;
+  el.keys.hidden = true;
   if (notify) Bridge.send('menu_close', {});
 }
 
@@ -856,51 +886,54 @@ function setError(code) {
   renderStatus();
 }
 
-function resetNavigation() {
-  state.stack = [];
-  state.choosing = null;
-  state.query = '';
-  el.search.value = '';
-  state.cursor = 0;
-}
-
-function switchTab(index) {
-  if (state.mode !== 'interact' || state.tabs.length === 0) return;
-  state.tabIndex = (index + state.tabs.length) % state.tabs.length;
-  resetNavigation();
+function selectTab(index, enter) {
+  if (!isInteract() || state.tabs.length === 0) return;
+  const next = (index + state.tabs.length) % state.tabs.length;
+  if (next !== state.tabIndex) {
+    state.tabIndex = next;
+    state.stack = [];
+    state.choosing = null;
+    state.cursor = 0;
+  }
+  state.level = enter ? 'list' : 'ring';
   setError('');
-  render();
+  renderRing();
+  renderList();
+  if (enter) el.list.focus();
 }
 
+// Eine Ebene zurueck: Personenwahl, Unterkategorie, Liste, dann schliessen
 function back() {
   setError('');
   if (state.choosing) {
     state.choosing = null;
-  } else if (state.query) {
-    state.query = '';
-    el.search.value = '';
   } else if (state.stack.length > 0) {
     state.stack.pop();
+  } else if (isInteract() && state.level === 'list') {
+    state.level = 'ring';
   } else {
     close(true);
     return;
   }
   state.cursor = 0;
-  render();
+  renderList();
 }
 
 async function choose(index) {
-  const items = currentItems();
-  const node = items[index];
+  const node = currentItems()[index];
   if (!node || state.busy) return;
+  state.level = 'list';
   state.cursor = index;
+  if (node.locked) {
+    renderCursor();
+    setError('locked');
+    return;
+  }
   if (node.children) {
     state.stack.push(node);
-    state.query = '';
-    el.search.value = '';
     state.cursor = 0;
     setError('');
-    render();
+    renderList();
     el.list.focus();
     return;
   }
@@ -909,7 +942,7 @@ async function choose(index) {
   const payload = state.choosing ? { id: state.choosing.id, player: node.player } : { id: node.id };
   state.busy = true;
   setError('');
-  renderStatus();
+  renderCursor();
   const result = await Bridge.send('menu_select', payload);
   state.busy = false;
   if (!state.open) return;
@@ -920,7 +953,7 @@ async function choose(index) {
   if (result.data?.choose) {
     state.choosing = { id: node.id, label: node.label };
     state.cursor = 0;
-    render();
+    renderList();
     return;
   }
   if (result.data?.close) {
@@ -929,10 +962,6 @@ async function choose(index) {
   }
   state.choosing = null;
   renderStatus();
-}
-
-function isTopLevel() {
-  return state.mode === 'interact' && state.stack.length === 0 && !state.choosing && !state.query;
 }
 
 function moveCursor(step) {
@@ -955,7 +984,7 @@ function readPayload(data) {
 
 // Nach einem Neuaufbau dieselbe Stelle wiederfinden (gleiche IDs)
 function restorePath(tabId, stackIds) {
-  if (state.mode === 'interact') {
+  if (isInteract()) {
     const index = state.tabs.findIndex((tab) => tab.id === tabId);
     state.tabIndex = index >= 0 ? index : 0;
   }
@@ -972,114 +1001,122 @@ function restorePath(tabId, stackIds) {
 Bridge.on('menu_open', (data) => {
   readPayload(data);
   state.tabIndex = 0;
-  resetNavigation();
+  state.stack = [];
+  state.choosing = null;
+  state.cursor = 0;
+  state.level = isInteract() ? 'ring' : 'list';
   state.busy = false;
   state.error = '';
   state.open = true;
-  el.panel.hidden = false;
   render();
-  el.list.focus();
+  if (isInteract()) el.ring.querySelector('.orb[aria-pressed="true"]')?.focus();
+  else el.list.focus();
 });
 
 Bridge.on('menu_update', (data) => {
   if (!state.open) return;
-  const tabId = state.tabs[state.tabIndex]?.id;
+  const tabId = currentTab()?.id;
   const stackIds = state.stack.map((node) => node.id);
   const cursor = state.cursor;
   readPayload(data);
   restorePath(tabId, stackIds);
   state.cursor = cursor;
-  render();
+  renderRing();
+  renderList();
 });
 
 Bridge.on('menu_close', () => close(false));
 
 /* ---------- Eingabe ---------- */
 
-el.panel.addEventListener('click', (e) => {
+document.addEventListener('click', (e) => {
+  if (!state.open) return;
   const target = e.target.closest('[data-action]');
   if (!target) return;
   const action = target.dataset.action;
-  if (action === 'tab') switchTab(Number(target.dataset.index));
+  if (action === 'tab') selectTab(Number(target.dataset.index), true);
   if (action === 'back') back();
   if (action === 'select') choose(Number(target.dataset.index));
+});
+
+// Rechte Maustaste: zurueck, auf oberster Ebene schliessen
+document.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (state.open && !state.busy) back();
 });
 
 el.list.addEventListener('mousemove', (e) => {
   const row = e.target.closest('.row');
   if (!row) return;
   const index = Number(row.dataset.index);
-  if (index !== state.cursor) {
+  if (index !== state.cursor || state.level !== 'list') {
+    state.level = 'list';
     state.cursor = index;
     renderCursor();
   }
 });
 
-el.search.addEventListener('input', () => {
-  state.query = el.search.value.trim();
-  state.choosing = null;
-  state.cursor = 0;
-  renderCrumb();
-  renderList();
-});
-
-el.search.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    e.stopPropagation();
-    if (el.search.value) {
-      el.search.value = '';
-      state.query = '';
-      renderList();
-    }
-    el.list.focus();
-  } else if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    el.list.focus();
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    choose(state.cursor);
-  }
-  e.stopPropagation();
-});
-
 document.addEventListener('keydown', (e) => {
-  if (!state.open || e.target === el.search) return;
+  if (!state.open) return;
   const key = e.key;
   if (/^[1-9]$/.test(key)) {
     e.preventDefault();
-    choose(Number(key) - 1);
+    const index = Number(key) - 1;
+    if (isInteract() && state.level === 'ring') {
+      if (index < state.tabs.length) selectTab(index, true);
+    } else {
+      choose(index);
+    }
+    return;
+  }
+  if (key.toLowerCase() === CLOSE_KEY && isInteract()) {
+    e.preventDefault();
+    close(true);
+    return;
+  }
+  if (isInteract() && state.level === 'ring') {
+    switch (key) {
+      case 'ArrowDown':
+      case 'ArrowLeft':
+      case 'Tab':
+        e.preventDefault();
+        selectTab(state.tabIndex + (key === 'ArrowLeft' || (key === 'Tab' && e.shiftKey) ? -1 : 1), false);
+        el.ring.querySelector('.orb[aria-pressed="true"]')?.focus();
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        selectTab(state.tabIndex - 1, false);
+        el.ring.querySelector('.orb[aria-pressed="true"]')?.focus();
+        break;
+      case 'ArrowRight':
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        selectTab(state.tabIndex, true);
+        break;
+      case 'Escape':
+      case 'Backspace':
+        e.preventDefault();
+        close(true);
+        break;
+      default:
+    }
     return;
   }
   switch (key) {
     case 'ArrowDown': e.preventDefault(); moveCursor(1); break;
     case 'ArrowUp': e.preventDefault(); moveCursor(-1); break;
+    case 'ArrowRight':
     case 'Enter':
     case ' ':
       e.preventDefault(); choose(state.cursor); break;
-    // Oberste Ebene: Pfeil links und rechts wechseln den Reiter. Darunter: rechts oeffnet, links geht zurueck.
-    case 'ArrowRight': {
-      e.preventDefault();
-      if (isTopLevel()) { switchTab(state.tabIndex + 1); break; }
-      const node = currentItems()[state.cursor];
-      if (node && node.children) choose(state.cursor);
-      break;
-    }
-    case 'ArrowLeft':
-      e.preventDefault();
-      if (isTopLevel()) switchTab(state.tabIndex - 1);
-      else back();
-      break;
-    case 'Tab': e.preventDefault(); switchTab(state.tabIndex + (e.shiftKey ? -1 : 1)); break;
     case 'Escape':
+      // Esc verlaesst das Menue, wie unten links angezeigt
+      e.preventDefault(); close(true); break;
+    case 'ArrowLeft':
     case 'Backspace':
       e.preventDefault(); back(); break;
-    case SEARCH_KEY: e.preventDefault(); el.search.focus(); break;
     default:
-      if (state.mode === 'interact' && key.toLowerCase() === CLOSE_KEY) {
-        e.preventDefault();
-        close(true);
-      }
   }
 });
 
@@ -1090,6 +1127,18 @@ document.addEventListener('keydown', (e) => {
   if (result?.ok) applyColors(result.data?.colors);
 
   if (Bridge.platform === 'mock') {
+    const params = new URLSearchParams(location.search);
+    if (params.get('mode') === 'context') {
+      Mock.push('menu_open', { mode: 'context', title: 'Garage Pillbox', items: [
+        { id: 'c.1', label: 'Fahrzeuge', icon: 'car', title: 'Fahrzeuge', children: [
+          { id: 'c.1.1', label: 'Sultan RS', description: 'LS 4821 · Tank 72 %', icon: 'car', progress: 72 },
+          { id: 'c.1.2', label: 'Bison', description: 'LS 1907 · Tank 31 %', icon: 'car', progress: 31 },
+        ] },
+        { id: 'c.2', label: 'Stellplatzgebühr', icon: 'banknote', readOnly: true, metadata: [{ label: 'Preis', value: '150 $' }, { label: 'Fällig', value: 'jeden Montag' }] },
+        { id: 'c.3', label: 'Fahrzeug einparken', icon: 'key', locked: true, description: 'Du sitzt in keinem Fahrzeug.' },
+      ] });
+      return;
+    }
     Mock.push('menu_open', {
       mode: 'interact',
       title: 'Interaktion',
@@ -1099,14 +1148,20 @@ document.addEventListener('keydown', (e) => {
         { serverId: 9, label: 'ID 342 · 2,6 m' },
       ],
       tabs: [
-        { id: 'g:Person', label: 'Person', icon: 'user', items: [
+        { id: 'g:Person', label: 'Person', icon: 'hand', items: [
+          { id: 'e:person_give_cash', label: 'Geld übergeben', icon: 'banknote', target: 'player' },
+          { id: 'e:person_handshake', label: 'Hände schütteln', icon: 'handshake', target: 'player' },
+          { id: 'e:person_heal', label: 'Heile einen Spieler mit einem Erste-Hilfe-Kasten', icon: 'heart-pulse', target: 'player' },
           { id: 'g:Person/Ausweis zeigen', label: 'Ausweis zeigen', title: 'Ausweis zeigen', icon: 'id-card', children: [
             { id: 'e:person_doc_id', label: 'Personalausweis', icon: 'id-card', target: 'player' },
             { id: 'e:person_doc_driver', label: 'Führerschein', icon: 'id-card', target: 'player' },
-            { id: 'e:person_doc_weapon', label: 'Waffenschein', icon: 'id-card', target: 'player' },
+            { id: 'e:person_doc_weapon', label: 'Waffenschein', icon: 'id-card', target: 'player', locked: true, description: 'Du hast keinen gültigen Waffenschein.' },
           ] },
-          { id: 'e:person_search', label: 'Durchsuchen', description: 'Geht nur, wenn die Person die Hände oben hat oder gefesselt ist.', icon: 'search', target: 'player' },
-          { id: 'e:person_give_cash', label: 'Geld geben', description: 'Bargeld aus deinem Inventar übergeben.', icon: 'banknote', target: 'player' },
+          { id: 'e:person_search', label: 'Durchsuchen', icon: 'search', target: 'player' },
+          { id: 'g:Person/Rechtswidrige Handlungen', label: 'Rechtswidrige Handlungen', title: 'Rechtswidrige Handlungen', icon: 'alert', children: [
+            { id: 'e:crime_rob', label: 'Ausrauben', icon: 'wallet', target: 'player' },
+          ] },
+          { id: 'e:person_steal', label: 'Bargeld stehlen', icon: 'wallet', target: 'player', locked: true },
         ] },
         { id: 'g:Fahrzeug', label: 'Fahrzeug', icon: 'car', items: [
           { id: 'e:vehicle_engine', label: 'Motor', icon: 'power', badge: 'an' },
@@ -1120,17 +1175,22 @@ document.addEventListener('keydown', (e) => {
             { id: 'e:vehicle_window_front_left', label: 'Fenster vorne links', icon: 'window', badge: 'oben' },
           ] },
         ] },
-        { id: 'g:Organisation', label: 'Organisation', icon: 'building', items: [
-          { id: 'g:Organisation/Leader', label: 'Leader', title: 'Leader', icon: 'crown', children: [
-            { id: 'e:org_hire', label: 'Mitglied einstellen', icon: 'user-plus', target: 'player' },
-            { id: 'e:org_promote', label: 'Befördern', icon: 'arrow-up', target: 'player' },
-            { id: 'e:org_demote', label: 'Herabstufen', icon: 'arrow-down', target: 'player' },
-            { id: 'e:org_fire', label: 'Entlassen', icon: 'user-minus', target: 'player' },
-          ] },
+        { id: 'g:Grundstücke', label: 'Grundstücke', icon: 'home', items: [
+          { id: 'e:house_lock', label: 'Haustür abschließen', icon: 'lock' },
+          { id: 'e:house_ring', label: 'Klingeln', icon: 'volume' },
+        ] },
+        { id: 'g:Leader', label: 'Leader', icon: 'crown', locked: true, items: [
+          { id: 'e:org_hire', label: 'Mitglied einstellen', icon: 'user-plus', locked: true },
+          { id: 'e:org_fire', label: 'Entlassen', icon: 'user-minus', locked: true },
+        ] },
+        { id: 'g:Organisation', label: 'Organisation', icon: 'landmark', items: [
           { id: 'e:org_duty', label: 'Dienst', icon: 'shield', badge: 'außer Dienst' },
+          { id: 'e:org_radio', label: 'Funk', icon: 'phone' },
         ] },
       ],
     });
+    const tab = Number(params.get('tab'));
+    if (tab) selectTab(tab - 1, true);
   }
 })();
 </script>
