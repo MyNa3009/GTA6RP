@@ -164,6 +164,17 @@ lua.execute('Other.dead = true; Hit = { coords = vector3(0, 0, 1), entity = 0 };
 check('Wand dazwischen: nicht gefunden', P.GetPlayerInSight(3.0, 12, True) is None)
 lua.execute('Hit = nil')
 
+print('Zur Person drehen')
+lua.execute('''
+Heading = nil
+function GetPlayerFromServerId(id) return id == 2 and 1 or -1 end
+function SetEntityHeading(e, h) if e == 1 then Heading = h end end
+function GetHeadingFromVector_2d(x, y) return (math.deg(math.atan(-x, y)) + 360) % 360 end
+PedPos = vector3(0, 0, 1); Other.pos = vector3(2, 0, 0.1)
+''')
+check('dreht sich zur Person rechts daneben (270 Grad)', P.FacePlayer(2) is True and abs(lua.globals().Heading - 270) < 0.01, lua.globals().Heading)
+check('unbekannte Person: false', P.FacePlayer(9) is False)
+
 print('Lokale Ereignisse')
 lua.execute('Emitted = nil; function TriggerEvent(...) Emitted = table.pack(...) end')
 lua.execute("Platform.Emit('core_lib:select', 'core_ems:i:medkit', { player = { serverId = 2 } })")

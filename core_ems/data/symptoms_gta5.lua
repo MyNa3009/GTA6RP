@@ -22,4 +22,9 @@ SymptomData = {
     fadeMs = 400,          -- Ab- und Aufblenden bei einem Blackout
     -- Mediziner beim Behandeln (Fortschrittsbalken)
     treatAnim = { scenario = 'CODE_HUMAN_MEDIC_TEND_TO_DEAD' },
+    -- Waehrend des Minigames: Hochholen (Mediziner und Verbandskasten) und Versorgen. Laufen in Schleife.
+    actionAnims = {
+        revive = { dict = 'mini@cpr@char_a@cpr_str', clip = 'cpr_pumpchest' },   -- Herzdruckmassage
+        heal   = { dict = 'amb@medic@standing@tendtodead@idle_a', clip = 'idle_a' },   -- kniend versorgen
+    },
 }

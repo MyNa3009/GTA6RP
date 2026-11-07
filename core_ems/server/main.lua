@@ -269,6 +269,11 @@ function Ems.Refund(target, account, amount, reason)
 end
 
 -- Alles Geld geht in die Kasse des Rettungsdiensts
+-- Animation beim Spieler waehrend eines Minigames am Patienten. kind = 'revive' | 'heal', ohne kind: aufhoeren.
+function Ems.Anim(source, kind, target)
+    Network.SendToClient(source, 'core_ems:anim', { kind = kind, target = target })
+end
+
 function Ems.ToCash(amount, reason, actorSource, data)
     if amount > 0 and Platform.IsResourceStarted(FACTIONS) then
         Ems.Factions('Deposit', CFG.Faction, amount, { actorSource = actorSource, reason = reason, data = data })

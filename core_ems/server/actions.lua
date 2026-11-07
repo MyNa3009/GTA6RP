@@ -94,7 +94,9 @@ register('ems_revive', 'ems.revive', function(source, data)
         return { ok = false, error = 'target_busy' }
     end
     Platform.Async(function()
+        Ems.Anim(source, 'revive', target)
         local success = lib.minigame(source, 'skillcheck', { difficulty = CFG.Revive.Difficulty, keys = CFG.Revive.Keys })
+        Ems.Anim(source, nil)
         Ems.Unlock(target)
         if not success then
             return fail(source, 'minigame_failed')
@@ -131,7 +133,9 @@ register('ems_heal', 'ems.heal', function(source, data)
         return { ok = false, error = 'target_busy' }
     end
     Platform.Async(function()
+        Ems.Anim(source, 'heal', target)
         local success = lib.minigame(source, 'skillcheck', { difficulty = CFG.Heal.Difficulty, keys = CFG.Heal.Keys })
+        Ems.Anim(source, nil)
         Ems.Unlock(target)
         if not success then
             return fail(source, 'minigame_failed')
@@ -180,7 +184,9 @@ register('ems_medkit_revive', nil, function(source, data)
         return { ok = false, error = 'target_busy' }
     end
     Platform.Async(function()
+        Ems.Anim(source, 'revive', target)
         local success = lib.minigame(source, 'skillcheck', { difficulty = CFG.Medkit.Difficulty, keys = CFG.Medkit.Keys })
+        Ems.Anim(source, nil)
         Ems.Unlock(target)
         if not success then
             return Platform.Notify(source, 'Das hat nicht geklappt. Der Verbandskasten ist noch da.', 'error')

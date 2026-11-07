@@ -2,9 +2,9 @@
 -- Medizinische Datenbank (UI). Was erlaubt ist, entscheidet der Server.
 
 -- Braucht Core 1.10.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
-local REQUIRED_CORE = '1.10.0'
+local REQUIRED_CORE = '1.10.3'
 local missingBridge = {}
-for _, name in ipairs({ 'Async', 'Blackout', 'CallExport', 'DisableActionsThisFrame', 'Emit', 'GetOwnExposure', 'GetPedStatus', 'GetPlayerPedByServerId', 'GetResourceName', 'GetTime', 'IsOwnPedInVehicle',
+for _, name in ipairs({ 'Async', 'Blackout', 'CallExport', 'DisableActionsThisFrame', 'Emit', 'FacePlayer', 'GetOwnExposure', 'GetPedStatus', 'GetPlayerPedByServerId', 'GetResourceName', 'GetTime', 'IsOwnPedInVehicle',
     'IsOwnPedDead', 'IsPauseMenuOpen', 'OnEvent', 'PlayOwnAnim', 'Print', 'RagdollOwnPed', 'RegisterClientCommand', 'SetMinimapHidden',
     'SetOwnWalkStyle', 'SetScreenEffect', 'ShakeCamera', 'StopOwnAnim', 'UiFocus', 'UiOn', 'UiSend', 'Wait' }) do
     if type(Platform[name]) ~= 'function' then
@@ -71,6 +71,34 @@ end
 ------------------------------------------------------------------------
 -- Stand: eigene Krankheiten (vom Server), Organisation (von core_factions)
 ------------------------------------------------------------------------
+
+-- Animation waehrend eines Minigames am Patienten (Hochholen, Versorgen). Der Server startet das Minigame und
+-- sagt darum auch, wann die Animation beginnt ({ kind, target }) und endet ({}).
+local currentAnim = nil
+Network.On('core_ems:anim', function(data)
+    if type(data) ~= 'table' then
+        return
+    end
+    if currentAnim then
+        Platform.StopOwnAnim(currentAnim.dict, currentAnim.clip)
+        currentAnim = nil
+    end
+    local anim = type(data.kind) == 'string' and SymptomData.actionAnims[data.kind] or nil
+    if not anim then
+        return
+    end
+    currentAnim = anim
+    Platform.Async(function()
+        if data.target then
+            Platform.FacePlayer(data.target)
+        end
+        Platform.PlayOwnAnim(anim.dict, anim.clip, { loop = true })
+        -- Waehrend des Ladens schon beendet? Dann gleich wieder aufhoeren.
+        if currentAnim ~= anim then
+            Platform.StopOwnAnim(anim.dict, anim.clip)
+        end
+    end)
+end)
 
 Network.On('core_ems:diseases', function(list)
     EmsClient.diseases = type(list) == 'table' and list or {}

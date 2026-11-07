@@ -1,6 +1,11 @@
-# core_ems 1.1.1
+# core_ems 1.2.0
 
 Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskasten, Verkauf von Verbänden, Verbandskästen und Tabletten, Untersuchen und Behandeln, Krankheiten mit Stadien, Krankenversicherung und die Medizinische Datenbank. Ränge, Rechte, Dienst und Kasse kommen aus `core_factions` (Organisation `ems`).
+
+## Update von 1.1.1
+
+1. Erst Core 1.10.3, dann den Ordner `core_ems` ersetzen und neu starten.
+2. Animationen: Beim Hochholen (Mediziner und Verbandskasten) dreht sich die Figur zur Person und macht eine Herzdruckmassage, solange das Minigame läuft. Beim Versorgen kniet sie neben der Person. Danach rappelt sich die hochgeholte Person auf. Die Animationen stehen in `data/symptoms_gta5.lua` unter `actionAnims`.
 
 ## Update von 1.1.0
 

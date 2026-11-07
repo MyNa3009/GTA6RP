@@ -109,6 +109,12 @@ end)
 Network.On('core:death:revive', function()
     Platform.ReviveInPlace()
     Death.Reset()
+    local anim = DeathAnims and DeathAnims.getUp
+    if anim then
+        Platform.Async(function()
+            Platform.PlayOwnAnim(anim.dict, anim.clip, { loop = false, durationMs = anim.ms })
+        end)
+    end
 end)
 
 -- Vom Server: Zusammenbruch (z. B. Krankheit). Die normale Todesmeldung folgt von selbst.

@@ -1817,6 +1817,19 @@ function Platform.PlayOwnAnim(dict, clip, options)
     return true
 end
 
+-- Eigene Figur sofort zu einem Spieler drehen (z. B. vor dem Hochholen), seit Core 1.10.3. Gibt true oder false zurueck.
+function Platform.FacePlayer(serverId)
+    local player = GetPlayerFromServerId(tonumber(serverId) or -1)
+    local other = player ~= -1 and GetPlayerPed(player) or 0
+    if other == 0 then
+        return false
+    end
+    local ped = PlayerPedId()
+    local from, to = GetEntityCoords(ped), GetEntityCoords(other)
+    SetEntityHeading(ped, GetHeadingFromVector_2d(to.x - from.x, to.y - from.y))
+    return true
+end
+
 function Platform.StopOwnAnim(dict, clip)
     if type(dict) == 'string' and type(clip) == 'string' then
         StopAnimTask(PlayerPedId(), dict, clip, ANIM_BLEND)
