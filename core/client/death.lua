@@ -97,8 +97,9 @@ Platform.OnDeath(function(info)
         totalSeconds = Config.Death.HospitalAfterSeconds,
         holdMs = Config.Death.HoldToRespawnMs,
         keyLabel = Platform.GetActionLabel('respawn'),
-        cause = WeaponLabel(info.weapon),
+        cause = data.collapseReason or WeaponLabel(info.weapon),
         killerId = tonumber(data.killerId),
+        hospitalOnly = data.hospitalOnly == true,
     }, false)
 
     holdLoop()
@@ -108,4 +109,19 @@ end)
 Network.On('core:death:revive', function()
     Platform.ReviveInPlace()
     Death.Reset()
+end)
+
+-- Vom Server: Zusammenbruch (z. B. Krankheit). Die normale Todesmeldung folgt von selbst.
+Network.On('core:death:collapse', function()
+    if Client.state.character and not dying.active then
+        Platform.KillSelf()
+    end
+end)
+
+-- Vom Server: Gesundheit geben (Verbandskasten vom Rettungsdienst)
+Network.On('core:heal', function(data)
+    local amount = type(data) == 'table' and tonumber(data.amount)
+    if amount and amount > 0 then
+        Platform.AddHealth(amount)
+    end
 end)

@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<!--
+  UI: Medizinische Datenbank (core_ems)
+  CONTRACT_VERSION: 1
+  Links Personen suchen (Name oder permanente ID), rechts die Krankenakte: Versicherung, aktuelle Erkrankungen, Verlauf.
+  Mit Recht ems.records.note kann man Eintraege schreiben. Die UI zeigt nur an, jede Anfrage prueft der Server.
+
+  EINGEHEND (Lua -> UI)
+  records_open  { colors: { base, ink, accent, signal }, canNote: boolean, admin?: boolean, noteMax: number, characterId?: number }
+  records_close {}
+
+  AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
+  ui_ready      { ui: "records", version: 1 }                     -> data.colors
+  records_close {}
+  records_call  { name, data }
+    ems_records_search { text }                -> { results: [{ characterId, name, dateOfBirth, insuredUntil?, diseases }] }
+    ems_records_get    { characterId }         -> Record
+    ems_records_note   { characterId, text }   -> Record
+
+  Record {
+    characterId, name, dateOfBirth, gender: "male" | "female",
+    insurance?: { validUntil, valid, soldBy },
+    diseases: [{ label, stage, stages, cure: "pill" | "treatment", series, needed }],
+    history: [{ kind, text, by?, at }]      // neuester Eintrag zuerst
+  }
+
+  FEHLERCODES: not_medic, not_on_duty, no_permission, not_found, invalid_input, server_error, timeout
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medizinische Datenbank</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Inspect (Akte) mit Explore (Suche). Dichte 7, Bewegung 2, Varianz 3.
+  Richtung
+    Zweck: Mediziner pruefen schnell, wer jemand ist, ob er versichert ist und was er hat oder hatte.
+    Charakter: klinisch, ruhig, genau.
+    Welt: Patientenakte am Stationsrechner, Klemmbrett, Befundzettel.
+    Highlight: der Versicherungsstatus oben in der Akte und die Stadien als Leiste.
+    Signatur: Stadium als Segmentleiste (gefuellt Magenta, letztes Stadium in der Signalfarbe).
+  Flaeche: grosses Panel, links Suche, rechts die Akte.
+*/
+:root {
+  --rgb-base:   24 15 36;
+  --rgb-ink:    253 241 233;
+  --rgb-accent: 232 64 190;
+  --rgb-signal: 240 84 96;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.96);
+  --c-side:        rgb(var(--rgb-ink) / 0.03);
+  --c-surface:     rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.09);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.12);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.08);
+  --shadow:        0 16px 48px rgb(var(--rgb-base) / 0.6);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+  --fs-xxl: clamp(26px, 1.7vw, 36px);
+
+  --panel-w: min(94vw, 1560px);
+  --panel-h: min(90dvh, 1000px);
+  --list-w: clamp(320px, 26vw, 420px);
+  --head-h: 64px;
+  --field-h: 36px;
+  --seg-h: 8px;
+  --icon: 18px;
+
+  --z-panel: 10;
+  --z-toast: 30;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; background: transparent; overflow: hidden;
+  font-family: 'Montserrat', sans-serif; font-size: var(--fs-md); color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+[hidden] { display: none !important; }
+button, input, textarea { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.icon { width: var(--icon); height: var(--icon); flex: none; }
+:focus-visible { outline: 2px solid rgb(var(--rgb-accent) / 0.6); outline-offset: 2px; }
+
+.panel {
+  position: fixed; left: 50%; top: 50%; z-index: var(--z-panel);
+  width: var(--panel-w); height: var(--panel-h); transform: translate(-50%, -50%);
+  display: grid; grid-template-columns: var(--list-w) 1fr;
+  background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+
+/* ---------- Suche ---------- */
+.search { display: grid; grid-template-rows: auto auto 1fr; min-height: 0; background: var(--c-side); border-right: 1px solid var(--c-border); }
+.search__head { display: flex; align-items: center; gap: var(--space-3); height: var(--head-h); padding: 0 var(--space-5); border-bottom: 1px solid var(--c-border); }
+.search__title { margin: 0; font-size: var(--fs-md); font-weight: 700; }
+.search__title .icon { color: var(--c-accent); }
+.search__bar { padding: var(--space-4) var(--space-4) var(--space-3); }
+.input, .textarea {
+  width: 100%; height: var(--field-h); padding: 0 var(--space-3);
+  border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+  background: rgb(var(--rgb-base) / 0.6); font-size: var(--fs-sm); outline: none;
+}
+.input:focus, .textarea:focus { border-color: rgb(var(--rgb-accent) / 0.45); }
+.textarea { height: auto; min-height: 88px; padding: var(--space-3); resize: vertical; line-height: 1.5; }
+
+.results { list-style: none; margin: 0; padding: 0 var(--space-2) var(--space-4); overflow: auto; }
+.result {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px var(--space-3); width: 100%;
+  padding: var(--space-3); border: 0; border-radius: var(--radius-sm);
+  background: transparent; text-align: left; cursor: pointer;
+}
+.result:hover { background: var(--c-surface); }
+.result[aria-selected="true"] { background: var(--c-surface-hi); box-shadow: var(--edge-light); }
+.result__name { font-size: var(--fs-sm); font-weight: 600; }
+.result__id { font-size: var(--fs-xs); color: var(--c-text-muted); text-align: right; }
+.result__meta { grid-column: 1 / -1; display: flex; gap: var(--space-3); font-size: var(--fs-xs); color: var(--c-text-muted); }
+.tag-ok { color: var(--c-text-2); }
+.tag-sick { color: var(--c-accent); font-weight: 600; }
+.hint { padding: var(--space-5) var(--space-5); color: var(--c-text-muted); font-size: var(--fs-sm); line-height: 1.5; }
+
+/* ---------- Akte ---------- */
+.record { display: grid; grid-template-rows: var(--head-h) 1fr; min-width: 0; min-height: 0; }
+.record__bar { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-5); border-bottom: 1px solid var(--c-border); }
+.record__bar .meta { color: var(--c-text-muted); font-size: var(--fs-sm); }
+.close { margin-left: auto; display: inline-grid; place-items: center; width: var(--field-h); height: var(--field-h); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--c-text-2); cursor: pointer; }
+.close:hover { background: var(--c-surface); color: var(--c-text); }
+.record__body { min-height: 0; overflow: auto; padding: var(--space-5) var(--space-6); }
+.record__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: var(--space-6); align-items: start; }
+
+.person__name { margin: 0; font-size: var(--fs-xxl); font-weight: 700; }
+.person__facts { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin-top: var(--space-2); color: var(--c-text-2); font-size: var(--fs-sm); }
+
+/* Versicherung: das Highlight */
+.cover {
+  display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-4); align-items: center;
+  margin-top: var(--space-5); padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md); border: 1px solid var(--c-border); background: var(--c-surface);
+}
+.cover__mark { grid-row: span 2; width: 12px; height: 12px; border-radius: 50%; background: var(--c-accent); box-shadow: 0 0 0 4px var(--c-accent-soft); }
+.cover__title { font-size: var(--fs-lg); font-weight: 700; }
+.cover__sub { font-size: var(--fs-sm); color: var(--c-text-muted); }
+.cover--none { border-color: rgb(var(--rgb-signal) / 0.35); background: var(--c-signal-soft); }
+.cover--none .cover__mark { background: var(--c-signal); box-shadow: 0 0 0 4px rgb(var(--rgb-signal) / 0.2); }
+
+.section-title { margin: var(--space-6) 0 var(--space-3); font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.05em; }
+.record__grid > div > .section-title:first-child { margin-top: 0; }
+
+.disease { padding: var(--space-4) 0; border-top: 1px solid var(--c-border); display: grid; gap: var(--space-2); }
+.disease:first-of-type { border-top: 0; padding-top: 0; }
+.disease__head { display: flex; align-items: baseline; gap: var(--space-3); }
+.disease__name { font-weight: 600; }
+.disease__stage { margin-left: auto; font-size: var(--fs-sm); color: var(--c-text-2); }
+.stages { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: var(--space-1); }
+.stages i { height: var(--seg-h); border-radius: 2px; background: rgb(var(--rgb-ink) / 0.10); }
+.stages i.on { background: var(--c-accent); }
+.stages i.on.last { background: var(--c-signal); }
+.disease__note { font-size: var(--fs-xs); color: var(--c-text-muted); }
+.none { color: var(--c-text-muted); font-size: var(--fs-sm); }
+
+.history { list-style: none; margin: 0; padding: 0; display: grid; }
+.history li { display: grid; grid-template-columns: 128px 1fr; gap: var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--c-border); font-size: var(--fs-sm); }
+.history li:first-child { border-top: 0; padding-top: 0; }
+.history time { color: var(--c-text-muted); }
+.history .kind { display: block; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.04em; margin-bottom: 2px; }
+.history .kind--alert { color: var(--c-signal); }
+.history .kind--good { color: var(--c-accent); }
+.history small { display: block; margin-top: 2px; color: var(--c-text-muted); font-size: var(--fs-xs); }
+
+.note-form { display: grid; gap: var(--space-2); margin-bottom: var(--space-4); }
+.note-form__row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.note-form__count { font-size: var(--fs-xs); color: var(--c-text-muted); }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; height: var(--field-h); padding: 0 var(--space-4);
+  border: 0; border-radius: var(--radius-sm); background: rgb(var(--rgb-ink) / 0.92); color: var(--c-on-accent);
+  font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+}
+.btn:disabled { opacity: 0.45; cursor: default; }
+
+.empty-record { display: grid; place-items: center; height: 100%; color: var(--c-text-muted); font-size: var(--fs-md); text-align: center; line-height: 1.6; }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc((100dvh - var(--panel-h)) / 2 + var(--space-5)); z-index: var(--z-toast);
+  transform: translateX(-50%); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm);
+  background: rgb(var(--rgb-ink)); color: var(--c-on-accent); font-size: var(--fs-sm); font-weight: 600; box-shadow: var(--shadow);
+}
+.toast--error { background: var(--c-signal); color: rgb(var(--rgb-base)); }
+
+@media (max-width: 1280px) { .record__grid { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-pulse" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-5 4 10 2-5h6"/></g>
+    <g id="i-close" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></g>
+  </defs>
+</svg>
+
+<div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="title" hidden>
+  <section class="search">
+    <header class="search__head">
+      <svg class="icon" viewBox="0 0 24 24" style="color: var(--c-accent)"><use href="#i-pulse"/></svg>
+      <h1 class="search__title" id="title"></h1>
+    </header>
+    <div class="search__bar"><input class="input" id="search" type="search" autocomplete="off"></div>
+    <ul class="results" id="results" role="listbox"></ul>
+  </section>
+  <section class="record">
+    <div class="record__bar">
+      <span class="meta" id="record-meta"></span>
+      <button class="close" type="button" data-action="close" id="close"><svg class="icon" viewBox="0 0 24 24"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="record__body" id="record"></div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  const isFiveM = typeof GetParentResourceName === 'function';
+  const platform = isFiveM ? 'fivem' : 'mock';
+  function on(event, fn) { (handlers[event] ||= []).push(fn); }
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${GetParentResourceName()}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+  return { on, send, emit, platform };
+})();
+
+const Mock = (() => {
+  const people = [
+    { characterId: 256, name: 'Fabian Nandes', dateOfBirth: '1998-04-12', gender: 'male', insurance: { validUntil: '2026-12-07', valid: true, soldBy: 'Mira Schulz' },
+      diseases: [{ label: 'Bluthochdruck', stage: 2, stages: 3, cure: 'treatment', series: 1, needed: 3 }],
+      history: [
+        { kind: 'treatment', text: 'Bluthochdruck behandelt, 1 von 3', by: 'Mira Schulz', at: '2026-11-07 17:12' },
+        { kind: 'diagnosis', text: 'Untersucht: Bluthochdruck, Stadium 2 von 3', by: 'Mira Schulz', at: '2026-11-07 17:10' },
+        { kind: 'worse', text: 'Bluthochdruck, Stadium 2 von 3 schlimmer geworden', at: '2026-11-07 16:31' },
+        { kind: 'insurance', text: 'Krankenversicherung bis 2026-12-07', by: 'Mira Schulz', at: '2026-11-07 15:02' },
+        { kind: 'onset', text: 'Bluthochdruck, Stadium 1 von 3 begonnen', at: '2026-11-07 14:44' },
+        { kind: 'cured', text: 'Erkältung geheilt (Tablette)', at: '2026-11-05 21:18' },
+        { kind: 'revive', text: 'Vor Ort hochgeholt', by: 'Jonas Weber', at: '2026-11-03 23:40' },
+      ] },
+    { characterId: 17, name: 'Lena Hoffmann', dateOfBirth: '1991-09-30', gender: 'female', diseases: [], history: [{ kind: 'note', text: 'Allergie gegen Penicillin laut eigener Aussage.', by: 'Jonas Weber', at: '2026-10-21 12:05' }] },
+    { characterId: 311, name: 'Sara Yilmaz', dateOfBirth: '2001-02-17', gender: 'female', insurance: { validUntil: '2026-10-30', valid: false, soldBy: 'Tom Becker' },
+      diseases: [{ label: 'Erkältung', stage: 3, stages: 3, cure: 'pill', series: 0, needed: null }, { label: 'Demenz', stage: 1, stages: 3, cure: 'treatment', series: 0, needed: 3 }],
+      history: [{ kind: 'collapse', text: 'Zusammenbruch durch Demenz', at: '2026-11-01 20:15' }] },
+  ];
+  const calls = {
+    ems_records_search: (d) => ({ ok: true, data: { results: people.filter((p) => !d.text || p.name.toLowerCase().includes(d.text.toLowerCase()) || String(p.characterId) === d.text)
+      .map((p) => ({ characterId: p.characterId, name: p.name, dateOfBirth: p.dateOfBirth, insuredUntil: p.insurance && p.insurance.valid ? p.insurance.validUntil : undefined, diseases: p.diseases.length })) } }),
+    ems_records_get: (d) => { const p = people.find((x) => x.characterId === d.characterId); return p ? { ok: true, data: p } : { ok: false, error: 'not_found' }; },
+    ems_records_note: (d) => { const p = people.find((x) => x.characterId === d.characterId); p.history.unshift({ kind: 'note', text: d.text, by: 'Mira Schulz', at: '2026-11-07 18:01' }); return { ok: true, data: p }; },
+  };
+  return {
+    delay: 120,
+    async handle(event, data) {
+      await new Promise((r) => setTimeout(r, this.delay));
+      if (event === 'records_call') { const fn = calls[data.name]; return fn ? fn(data.data || {}) : { ok: false, error: 'invalid_input' }; }
+      return { ok: true };
+    },
+    push(event, data) { Bridge.emit(event, data); },
+  };
+})();
+</script>
+
+<script id="app">
+const TEXT = {
+  title: 'Medizinische Datenbank',
+  search: 'Name oder ID suchen',
+  close: 'Schließen',
+  hint: 'Suche nach Name oder permanenter ID. Die ID steht auf dem Personalausweis.',
+  noResults: 'Keine Person gefunden.',
+  insured: 'versichert',
+  sick: (n) => `${n} ${n === 1 ? 'Erkrankung' : 'Erkrankungen'}`,
+  pick: 'Wähle links eine Person aus.\nLass dir vorher den Personalausweis zeigen.',
+  id: (id) => `ID ${id}`,
+  born: (d) => `geboren ${d}`,
+  gender: { male: 'männlich', female: 'weiblich' },
+  cover: {
+    yes: 'Krankenversichert',
+    yesSub: (until, by) => `Gültig bis ${until}${by ? `, verkauft von ${by}` : ''}`,
+    expired: 'Versicherung abgelaufen',
+    expiredSub: (until) => `Abgelaufen am ${until}. Behandlungen kosten den vollen Preis.`,
+    no: 'Nicht versichert',
+    noSub: 'Behandlungen kosten den vollen Preis.',
+  },
+  current: 'AKTUELLE ERKRANKUNGEN',
+  none: 'Keine bekannten Erkrankungen.',
+  stage: (s, n) => `Stadium ${s} von ${n}`,
+  pill: 'Tablette senkt um ein Stadium, Behandlung heilt sofort.',
+  treatment: (s, n) => `Nur Behandlung hilft. Bisher ${s} von ${n} in der laufenden Stunde.`,
+  history: 'VERLAUF',
+  noHistory: 'Noch keine Einträge.',
+  note: 'Eintrag schreiben',
+  notePlaceholder: 'Z. B. Allergien, Vorerkrankungen, Absprachen',
+  noteSave: 'Eintragen',
+  admin: 'Admin-Ansicht, nur lesen',
+  kinds: {
+    onset: 'ERKRANKT', worse: 'VERSCHLECHTERT', better: 'GEBESSERT', cured: 'GEHEILT', treatment: 'BEHANDLUNG', pill: 'TABLETTE',
+    revive: 'HOCHGEHOLT', medkit: 'VERBANDSKASTEN', collapse: 'ZUSAMMENBRUCH', hospital: 'KRANKENHAUS', insurance: 'VERSICHERUNG',
+    diagnosis: 'UNTERSUCHUNG', note: 'NOTIZ', series: 'BEHANDLUNG ABGEBROCHEN',
+  },
+  saved: 'Eingetragen.',
+  errors: {
+    not_medic: 'Das darf nur der Rettungsdienst.',
+    not_on_duty: 'Dafür musst du im Dienst sein.',
+    no_permission: 'Dafür hast du keine Rechte.',
+    not_found: 'Diese Person gibt es nicht.',
+    invalid_input: 'Bitte einen Text eingeben.',
+    server_error: 'Fehler auf dem Server. Bitte nochmal versuchen.',
+    timeout: 'Der Server antwortet nicht.',
+    default: 'Das hat nicht geklappt.',
+  },
+};
+
+const ALERT_KINDS = new Set(['worse', 'collapse', 'series']);
+const GOOD_KINDS = new Set(['cured', 'better', 'revive']);
+const SEARCH_DELAY_MS = 250;
+const TOAST_MS = 2600;
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+
+const state = { open: false, busy: false, canNote: false, admin: false, noteMax: 255, results: [], selected: null, record: null };
+const el = {
+  panel: document.getElementById('panel'),
+  title: document.getElementById('title'),
+  search: document.getElementById('search'),
+  results: document.getElementById('results'),
+  record: document.getElementById('record'),
+  meta: document.getElementById('record-meta'),
+  close: document.getElementById('close'),
+  toast: document.getElementById('toast'),
+};
+
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+function applyColors(colors) {
+  if (!colors) return;
+  COLOR_KEYS.forEach((key) => {
+    if (typeof colors[key] === 'string' && COLOR_PATTERN.test(colors[key])) document.documentElement.style.setProperty(`--rgb-${key}`, colors[key]);
+  });
+}
+let toastTimer = null;
+function toast(text, error = false) {
+  el.toast.textContent = text;
+  el.toast.classList.toggle('toast--error', error);
+  el.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.toast.hidden = true; }, TOAST_MS);
+}
+async function call(name, data) {
+  if (state.busy) return null;
+  state.busy = true;
+  const res = await Bridge.send('records_call', { name, data });
+  state.busy = false;
+  if (!res || !res.ok) { toast(TEXT.errors[res && res.error] || TEXT.errors.default, true); return null; }
+  return res.data || {};
+}
+
+/* ---------- Suche ---------- */
+function renderResults() {
+  el.results.replaceChildren();
+  if (!state.results.length) {
+    el.results.append(make('li', 'hint', el.search.value.trim() ? TEXT.noResults : TEXT.hint));
+    return;
+  }
+  state.results.forEach((r) => {
+    const li = make('li');
+    const b = make('button', 'result');
+    b.type = 'button';
+    b.dataset.action = 'pick';
+    b.dataset.id = r.characterId;
+    b.setAttribute('role', 'option');
+    b.setAttribute('aria-selected', String(r.characterId === state.selected));
+    const meta = make('div', 'result__meta');
+    meta.append(make('span', 'num', r.dateOfBirth));
+    if (r.insuredUntil) meta.append(make('span', 'tag-ok', TEXT.insured));
+    if (r.diseases > 0) meta.append(make('span', 'tag-sick', TEXT.sick(r.diseases)));
+    b.append(make('span', 'result__name', r.name), make('span', 'result__id num', TEXT.id(r.characterId)), meta);
+    li.append(b);
+    el.results.append(li);
+  });
+}
+
+let searchTimer = null;
+async function search() {
+  const data = await call('ems_records_search', { text: el.search.value.trim() });
+  if (!data) return;
+  state.results = data.results;
+  renderResults();
+}
+
+/* ---------- Akte ---------- */
+function stageBar(stage, stages) {
+  const bar = make('div', 'stages');
+  bar.setAttribute('role', 'img');
+  bar.setAttribute('aria-label', TEXT.stage(stage, stages));
+  for (let i = 1; i <= stages; i += 1) {
+    const seg = make('i', i <= stage ? `on${stage === stages && i === stages ? ' last' : ''}` : '');
+    bar.append(seg);
+  }
+  return bar;
+}
+
+function renderRecord() {
+  const r = state.record;
+  el.meta.textContent = state.admin ? TEXT.admin : '';
+  if (!r) {
+    const empty = make('div', 'empty-record');
+    empty.append(make('div', '', TEXT.pick));
+    empty.firstChild.style.whiteSpace = 'pre-line';
+    el.record.replaceChildren(empty);
+    return;
+  }
+  const grid = make('div', 'record__grid');
+  const left = make('div');
+  left.append(make('h2', 'person__name', r.name));
+  const facts = make('div', 'person__facts num');
+  facts.append(make('span', '', TEXT.id(r.characterId)), make('span', '', TEXT.born(r.dateOfBirth)), make('span', '', TEXT.gender[r.gender] || ''));
+  left.append(facts);
+
+  const cover = make('div', 'cover');
+  const ins = r.insurance;
+  let title, sub;
+  if (ins && ins.valid) { title = TEXT.cover.yes; sub = TEXT.cover.yesSub(ins.validUntil, ins.soldBy); }
+  else if (ins) { title = TEXT.cover.expired; sub = TEXT.cover.expiredSub(ins.validUntil); cover.classList.add('cover--none'); }
+  else { title = TEXT.cover.no; sub = TEXT.cover.noSub; cover.classList.add('cover--none'); }
+  cover.append(make('span', 'cover__mark'), make('span', 'cover__title', title), make('span', 'cover__sub', sub));
+  left.append(cover);
+
+  left.append(make('h3', 'section-title', TEXT.current));
+  if (!r.diseases.length) left.append(make('div', 'none', TEXT.none));
+  r.diseases.forEach((d) => {
+    const box = make('div', 'disease');
+    const head = make('div', 'disease__head');
+    head.append(make('span', 'disease__name', d.label), make('span', 'disease__stage num', TEXT.stage(d.stage, d.stages)));
+    box.append(head, stageBar(d.stage, d.stages), make('div', 'disease__note', d.cure === 'pill' ? TEXT.pill : TEXT.treatment(d.series, d.needed)));
+    left.append(box);
+  });
+
+  const right = make('div');
+  right.append(make('h3', 'section-title', TEXT.history));
+  if (state.canNote) {
+    const form = make('div', 'note-form');
+    const area = make('textarea', 'textarea');
+    area.id = 'note';
+    area.maxLength = state.noteMax;
+    area.placeholder = TEXT.notePlaceholder;
+    area.setAttribute('aria-label', TEXT.note);
+    const row = make('div', 'note-form__row');
+    const count = make('span', 'note-form__count num', `0 / ${state.noteMax}`);
+    count.id = 'note-count';
+    const save = make('button', 'btn', TEXT.noteSave);
+    save.type = 'button';
+    save.dataset.action = 'note';
+    row.append(count, save);
+    form.append(area, row);
+    right.append(form);
+  }
+  if (!r.history.length) right.append(make('div', 'none', TEXT.noHistory));
+  else {
+    const list = make('ol', 'history');
+    r.history.forEach((h) => {
+      const li = make('li');
+      const what = make('div');
+      const kindClass = ALERT_KINDS.has(h.kind) ? ' kind--alert' : GOOD_KINDS.has(h.kind) ? ' kind--good' : '';
+      what.append(make('span', `kind${kindClass}`, TEXT.kinds[h.kind] || h.kind.toUpperCase()), make('span', '', h.text));
+      if (h.by) what.append(make('small', '', h.by));
+      li.append(make('time', 'num', h.at), what);
+      list.append(li);
+    });
+    right.append(list);
+  }
+  grid.append(left, right);
+  el.record.replaceChildren(grid);
+}
+
+async function pick(id) {
+  const data = await call('ems_records_get', { characterId: id });
+  if (!data) return;
+  state.selected = id;
+  state.record = data;
+  renderResults();
+  renderRecord();
+}
+
+/* ---------- Ereignisse ---------- */
+document.addEventListener('click', async (event) => {
+  const t = event.target.closest('[data-action]');
+  if (!t || state.busy) return;
+  if (t.dataset.action === 'close') close();
+  if (t.dataset.action === 'pick') pick(Number(t.dataset.id));
+  if (t.dataset.action === 'note') {
+    const text = document.getElementById('note').value.trim();
+    if (!text) { toast(TEXT.errors.invalid_input, true); return; }
+    const data = await call('ems_records_note', { characterId: state.selected, text });
+    if (data) { state.record = data; toast(TEXT.saved); renderRecord(); }
+  }
+});
+
+document.addEventListener('input', (event) => {
+  if (event.target === el.search) {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(search, SEARCH_DELAY_MS);
+  }
+  if (event.target.id === 'note') {
+    document.getElementById('note-count').textContent = `${event.target.value.length} / ${state.noteMax}`;
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (!state.open) return;
+  if (event.key === 'Escape') { event.preventDefault(); close(); return; }
+  if (event.key === 'Enter' && event.target === el.search) { clearTimeout(searchTimer); search(); }
+  if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && (event.target === el.search || event.target.classList.contains('result'))) {
+    event.preventDefault();
+    const items = [...el.results.querySelectorAll('.result')];
+    if (!items.length) return;
+    const index = items.indexOf(document.activeElement);
+    const next = items[Math.max(0, Math.min(items.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))] || items[0];
+    next.focus();
+  }
+});
+
+function close() {
+  if (!state.open) return;
+  state.open = false;
+  el.panel.hidden = true;
+  Bridge.send('records_close', {});
+}
+
+Bridge.on('records_open', async (data) => {
+  applyColors(data.colors);
+  Object.assign(state, { open: true, canNote: data.canNote === true, admin: data.admin === true, noteMax: Number(data.noteMax) || 255,
+    results: [], selected: null, record: null });
+  el.panel.hidden = false;
+  el.search.value = '';
+  renderRecord();
+  await search();
+  if (Number.isInteger(data.characterId)) pick(data.characterId);
+  el.search.focus();
+});
+
+Bridge.on('records_close', () => {
+  state.open = false;
+  el.panel.hidden = true;
+});
+
+el.title.textContent = TEXT.title;
+el.search.placeholder = TEXT.search;
+el.search.setAttribute('aria-label', TEXT.search);
+el.close.setAttribute('aria-label', TEXT.close);
+
+(async () => {
+  const res = await Bridge.send('ui_ready', { ui: 'records', version: CONTRACT_VERSION });
+  if (res && res.ok && res.data) applyColors(res.data.colors);
+  if (Bridge.platform === 'mock') {
+    const params = new URLSearchParams(location.search);
+    Mock.push('records_open', { canNote: true, noteMax: 255, characterId: params.has('empty') ? undefined : Number(params.get('id') || 256) });
+  }
+})();
+</script>
+</body>
+</html>

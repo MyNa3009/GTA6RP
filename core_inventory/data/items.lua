@@ -37,6 +37,17 @@ Items = {
     -- Werkzeug und Sonstiges
     bandage  = { label = 'Verband',  weight = 100, stack = 20, description = 'Stoppt leichte Blutungen.',
                  use = { remove = 1, health = 25, message = 'Du legst einen Verband an.' } },
+    -- Medizin (Rettungsdienst, core_ems). Wirkung macht core_ems ueber das Ereignis core_inventory:itemUsed:
+    -- Tabletten senken die passende Krankheit um ein Stadium, der Verbandskasten heilt nach einem Minigame.
+    -- Der Verbandskasten wird erst nach geschafftem Minigame abgezogen (darum hier remove = 0).
+    medkit        = { label = 'Verbandskasten', weight = 600, stack = 5, description = 'Heilt Verletzungen. Ruhige Hand nötig.',
+                      use = { remove = 0 } },
+    pill_cold     = { label = 'Erkältungstablette', weight = 10, stack = 20, description = 'Lindert Husten und Schnupfen.',
+                      use = { remove = 1, message = 'Du nimmst eine Erkältungstablette.' } },
+    pill_headache = { label = 'Kopfschmerztablette', weight = 10, stack = 20, description = 'Hilft gegen Kopfschmerzen.',
+                      use = { remove = 1, message = 'Du nimmst eine Kopfschmerztablette.' } },
+    pill_stomach  = { label = 'Magen-Darm-Tablette', weight = 10, stack = 20, description = 'Beruhigt Magen und Darm.',
+                      use = { remove = 1, message = 'Du nimmst eine Magen-Darm-Tablette.' } },
     lockpick = { label = 'Dietrich', weight = 50,  stack = 10, description = 'Zum Öffnen einfacher Schlösser.' },
     phone    = { label = 'Handy',    weight = 200, stack = 1,  description = 'Dein Smartphone.' },
 

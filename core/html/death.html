@@ -12,7 +12,8 @@
     holdMs: number,         // so lange muss die Taste gehalten werden
     keyLabel: string,       // z. B. "E"
     cause?: string,         // Todesursache aus data/weapons_gta5.lua, z. B. "Pistole" oder "Sturz"
-    killerId?: number       // permanente ID des Spielers, der getoetet hat. Fehlt ohne Spieler (Sturz, eigene Schuld)
+    killerId?: number,      // permanente ID des Spielers, der getoetet hat. Fehlt ohne Spieler (Sturz, eigene Schuld)
+    hospitalOnly?: boolean  // Zusammenbruch (z. B. Krankheit): Hochholen vor Ort geht nicht, nur das Krankenhaus
   }
   death_update { secondsLeft?: number, holding?: boolean, error?: string }
   death_close  {}
@@ -507,6 +508,7 @@ const TEXT = {
   lead: 'Du bist',
   title: 'Bewusstlos',
   text: 'Bleib liegen und warte auf den Rettungsdienst. Kommt niemand, kannst du dich nach Ablauf der Zeit ins Krankenhaus bringen lassen.',
+  textHospital: 'Du bist zusammengebrochen. Vor Ort kann dich niemand hochholen, nach Ablauf der Zeit geht es ins Krankenhaus.',
   waitLabel: 'Krankenhaus möglich in',
   readyAfter: 'halten: ins Krankenhaus',
   holding: 'Halten…',
@@ -656,6 +658,7 @@ Bridge.on('death_open', (data) => {
   setText(el.cause, typeof data.cause === 'string' && data.cause ? data.cause : TEXT.causeUnknown);
   el.cause.title = el.cause.textContent;
   setText(el.time, clockFormat.format(new Date(now)));
+  setText(el.text, data.hospitalOnly === true ? TEXT.textHospital : TEXT.text);
   const killerId = Number(data.killerId);
   el.killerRow.hidden = !(Number.isInteger(killerId) && killerId > 0);
   setText(el.killer, el.killerRow.hidden ? '' : TEXT.killerValue(killerId));

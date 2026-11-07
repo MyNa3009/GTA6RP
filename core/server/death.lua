@@ -1,7 +1,14 @@
 -- Tod, Krankenhaus und Wiederbeleben.
 -- Der Client meldet den Tod, der Server merkt sich die Zeit und entscheidet, wann es ins Krankenhaus geht.
+-- Andere Scripts (Rettungsdienst, Krankheiten) nutzen die Exports Revive, Collapse, IsDead und Heal.
+-- "Nur Krankenhaus" (hospitalOnly): nach einem Zusammenbruch, z. B. durch eine Krankheit im letzten Stadium,
+-- darf vor Ort niemand hochholen ausser einem Admin. Es gilt bis zum naechsten Krankenhaus.
 
 local REVIVE_EVENT = 'core:death:revive'
+local COLLAPSE_EVENT = 'core:death:collapse'
+local HEAL_EVENT = 'core:heal'
+local COLLAPSE_REPORT_SECONDS = 30   -- so lange nach dem Zusammenbruch zaehlt eine Todesmeldung noch dazu
+local REASON_MAX_LENGTH = 120
 
 local function remainingSeconds(character)
     return math.max(0, character.diedAt + Config.Death.HospitalAfterSeconds - os.time())
@@ -16,10 +23,19 @@ Core.RegisterCallback('death_report', function(source, data)
 
     -- Schon gemeldet: nur die Restzeit zurueckgeben
     if character.diedAt then
-        return { ok = true, data = { respawnInSeconds = remainingSeconds(character), killerId = character.deathKillerId } }
+        return { ok = true, data = { respawnInSeconds = remainingSeconds(character), killerId = character.deathKillerId,
+            hospitalOnly = character.hospitalOnly == true } }
     end
 
     character.diedAt = os.time()
+
+    -- Zusammenbruch, den ein Script ausgeloest hat (Krankheit)
+    local collapse = character.pendingCollapse
+    character.pendingCollapse = nil
+    if collapse and os.time() - collapse.at <= COLLAPSE_REPORT_SECONDS then
+        character.hospitalOnly = collapse.hospitalOnly or nil
+        character.collapseReason = collapse.reason
+    end
 
     local killerId = tonumber(data.killer)
     local killer = killerId and killerId ~= source and Core.GetPlayer(killerId) or nil
@@ -49,7 +65,8 @@ Core.RegisterCallback('death_report', function(source, data)
 
     -- Permanente ID des Taeters fuer den Bewusstlos-Bildschirm (nicht der Name)
     character.deathKillerId = killer and killer.characterId or nil
-    return { ok = true, data = { respawnInSeconds = Config.Death.HospitalAfterSeconds, killerId = character.deathKillerId } }
+    return { ok = true, data = { respawnInSeconds = Config.Death.HospitalAfterSeconds, killerId = character.deathKillerId,
+        hospitalOnly = character.hospitalOnly == true, collapseReason = character.collapseReason } }
 end)
 
 Core.RegisterCallback('death_respawn', function(source)
@@ -64,8 +81,11 @@ Core.RegisterCallback('death_respawn', function(source)
         return { ok = false, error = 'too_early', data = { retryIn = remaining } }
     end
 
+    local hospitalOnly, collapseReason = character.hospitalOnly == true, character.collapseReason
     character.diedAt = nil
     character.deathKillerId = nil
+    character.hospitalOnly = nil
+    character.collapseReason = nil
     Needs.AfterRespawn(source)
     local position = Jail.RespawnPosition(player) or SpawnData.respawn
     Core.Log({
@@ -74,23 +94,32 @@ Core.RegisterCallback('death_respawn', function(source)
         character_id = character.id,
         category = 'death',
         action = 'hospital',
-        data = { position = position, jailed = player.jail ~= nil or nil },
+        data = { position = position, jailed = player.jail ~= nil or nil, hospitalOnly = hospitalOnly or nil },
     })
+    -- Fuer andere Scripts, z. B. Krankheiten (nach dem Krankenhaus eine Stufe zurueck)
+    Platform.Emit('core:characterRespawned', source, character.id, { hospitalOnly = hospitalOnly, reason = collapseReason })
 
     return { ok = true, data = { position = position } }
 end)
 
--- Fuer spaetere Systeme (Rettungsdienst, Admin-Menue)
-function Core.Revive(source, actorAccountId, reason)
+-- Wiederbeleben vor Ort (Rettungsdienst, Admin-Menue, /revive). Gibt true oder false und einen Fehlercode zurueck.
+-- options.force: auch bei "nur Krankenhaus" (nur fuer Admins)
+function Core.Revive(source, actorAccountId, reason, options)
     local player = Core.GetPlayer(source)
     local character = player and player.character
     if not character then
-        return false
+        return false, 'no_character'
+    end
+    if character.hospitalOnly and not (options and options.force) then
+        return false, 'hospital_only'
     end
 
     local wasDead = character.diedAt ~= nil
     character.diedAt = nil
     character.deathKillerId = nil
+    character.hospitalOnly = nil
+    character.collapseReason = nil
+    character.pendingCollapse = nil
     Needs.AfterRespawn(source)
     Network.SendToClient(source, REVIVE_EVENT, {})
 
@@ -101,10 +130,68 @@ function Core.Revive(source, actorAccountId, reason)
         category = 'death',
         action = 'revive',
         reason = reason,
-        data = { wasDead = wasDead },
+        data = { wasDead = wasDead, forced = options and options.force or nil },
+    })
+    Platform.Emit('core:characterRevived', source, character.id, actorAccountId)
+    return true
+end
+
+-- Zusammenbruch, ausgeloest von einem Script (z. B. Krankheit im letzten Stadium). Der Client faellt um,
+-- seine Todesmeldung uebernimmt dann hospitalOnly. Gibt true oder false und einen Fehlercode zurueck.
+function Core.Collapse(source, reason, hospitalOnly)
+    local player = Core.GetPlayer(source)
+    local character = player and player.character
+    if not character then
+        return false, 'no_character'
+    end
+    reason = type(reason) == 'string' and reason:sub(1, REASON_MAX_LENGTH) or nil
+    if character.diedAt then
+        if hospitalOnly then
+            character.hospitalOnly = true
+            character.collapseReason = reason
+        end
+        return true
+    end
+    character.pendingCollapse = { at = os.time(), reason = reason, hospitalOnly = hospitalOnly == true }
+    Network.SendToClient(source, COLLAPSE_EVENT, { reason = reason })
+    Core.Log({
+        account_id = player.accountId,
+        character_id = character.id,
+        category = 'death',
+        action = 'collapse',
+        reason = reason,
+        data = { hospitalOnly = hospitalOnly == true or nil, resource = Platform.GetCallingResource() },
     })
     return true
 end
+
+-- Gesundheit geben (z. B. Verbandskasten vom Rettungsdienst). amount: Punkte, GTA zaehlt 100 von leer bis voll.
+function Core.Heal(source, amount)
+    local player = Core.GetPlayer(source)
+    local character = player and player.character
+    amount = tonumber(amount)
+    if not character or character.diedAt or not amount or amount <= 0 then
+        return false
+    end
+    Network.SendToClient(source, HEAL_EVENT, { amount = math.floor(amount) })
+    return true
+end
+
+-- Bewusstlos? Zweiter Wert: nur Krankenhaus moeglich
+function Core.IsDead(source)
+    local character = Core.GetCharacter(source)
+    if not character then
+        return false, false
+    end
+    return character.diedAt ~= nil, character.hospitalOnly == true
+end
+
+Platform.Export('IsDead', Core.IsDead)
+Platform.Export('Revive', function(source, actorAccountId, reason)
+    return Core.Revive(source, actorAccountId, reason)
+end)
+Platform.Export('Collapse', Core.Collapse)
+Platform.Export('Heal', Core.Heal)
 
 ------------------------------------------------------------------------
 -- Befehl (Recht player.revive)
@@ -119,7 +206,7 @@ Core.RegisterAdminCommand('revive', 'player.revive', function(source, args, acto
         return
     end
 
-    if not Core.Revive(target, actorAccountId, 'Befehl /revive') then
+    if not Core.Revive(target, actorAccountId, 'Befehl /revive', { force = true }) then
         Platform.Notify(source, 'Dieser Spieler spielt gerade keinen Charakter.', 'error')
         return
     end

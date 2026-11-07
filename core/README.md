@@ -1,10 +1,20 @@
-# Core 1.9.0 (Testserver)
+# Core 1.10.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.9.0
+
+1. Den Ordner `core` ersetzen und neu starten. Gebraucht von `core_factions` und `core_ems`.
+2. Migration `database/migrations/011_character_lastname.sql` (Index für die Suche nach Nachnamen). Die Core legt den Index beim Start auch selbst an.
+3. **Tod für andere Scripts:** neue Exports `IsDead(source)` (zweiter Wert: nur Krankenhaus), `Revive(source, actorAccountId, grund)`, `Collapse(source, grund, nurKrankenhaus)` und `Heal(source, punkte)`. Nach einem Zusammenbruch mit "nur Krankenhaus" kann vor Ort niemand hochholen außer einem Admin (`/revive` und Admin-Menü holen immer hoch). Der Bewusstlos-Bildschirm sagt das dann auch.
+4. Neue Ereignisse auf dem Server: `core:characterRevived` (`source, characterId, actorAccountId`) und `core:characterRespawned` (`source, characterId, { hospitalOnly, reason }`).
+5. Neuer Export `SearchCharacters(text, limit)`: permanente ID genau oder Name ab Anfang ("Max Mus" findet Max Mustermann).
+6. Neue Rechte: `factions.view` (ab Administrator Assistant, Organisationen und Medizinische Datenbank ansehen), `factions.manage` (ab Senior Administrator, `/setorga`, `/removeorga`).
+7. Neu in der Client-Bridge: `SpawnVehicleAt`, `AddBlip`, `RemoveBlip`, `DrawMarkerAt`, `Blackout`, `ShakeCamera`, `RagdollOwnPed`, `SetOwnWalkStyle`, `SetMinimapHidden`, `GetOwnExposure`.
 
 ## Update von 1.8.3
 

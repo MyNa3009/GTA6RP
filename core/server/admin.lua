@@ -993,7 +993,7 @@ Core.RegisterCallback('admin_action', function(source, data)
     local admin = Core.GetPlayer(source)
 
     if data.action == 'revive' then
-        Core.Revive(target.source, admin.accountId, 'Admin-Menü')
+        Core.Revive(target.source, admin.accountId, 'Admin-Menü', { force = true })
         return { ok = true }
     end
 

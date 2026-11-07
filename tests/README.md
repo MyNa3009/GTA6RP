@@ -56,3 +56,7 @@ Alles, was nur im Spiel sichtbar ist: Animationen, Positionen (Kofferraum, Spawn
 `test_noclip.py` braucht keine Datenbank. Er lädt die Client-Bridge mit nachgebauten FiveM-Natives und prüft den Noclip (Richtung, Q und E, Shift und Alt, Nachziehen des Peds, Teleport, Ausschalten mit Fallschutz).
 
 `test_vehicle_target.py` braucht auch keine Datenbank. Er prüft die Bridge-Funktionen für das Fahrzeug von außen: Fahrzeug im Blick (Abstand zur Karosserie, nicht hinter der eigenen Figur, nicht aus dem Fahrzeug), Umrandung, Stand von außen, Türen von außen (Schloss, Abstand, Kontrolle über das Fahrzeug) und Einsteigen.
+
+`test_factions.py` prüft `core_factions` gegen MariaDB: Leitung per `/setorga`, alle fünf Tabs mit Rechten (Leader nimmt dem Vice Rechte weg, Vice ändert nichts über sich), Abteilungen mit höchstens 5 Rängen, Prüfungen, Fahrzeuge ab Rang, Leitstelle, Entlassen mit Archiv, Kasse, Dienst an der Umkleide, Garage, G-Menü-Aktionen und Admin-Ansicht.
+
+`test_ems.py` prüft `core_ems` gegen MariaDB: Hochholen mit Skillcheck, Verbandskasten, Verkauf zu festen Preisen in die Kasse, Krankenversicherung mit halbem Preis, Krankheiten mit Stadien, Zusammenbruch im Endstadium (nur Krankenhaus), Behandlungsserie mit Abstand und Ablauf, Tabletten, Ansteckung über den Abstand, Medizinische Datenbank und Logs.

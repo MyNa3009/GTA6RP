@@ -4,17 +4,19 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 
 | Ordner | Version | Inhalt |
 |---|---|---|
-| [`core/`](core/README.md) | 1.9.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
-| [`core_inventory/`](core_inventory/README.md) | 1.3.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
+| [`core/`](core/README.md) | 1.10.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
+| [`core_inventory/`](core_inventory/README.md) | 1.4.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
 | [`core_lib/`](core_lib/README.md) | 1.4.1 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
-| [`tests/`](tests/README.md) | | Tests für die Serverlogik beider Resources |
+| [`core_factions/`](core_factions/README.md) | 1.0.0 | Organisationen: 30 Ränge, Rechte pro Rang, Abteilungen, Prüfungen, Leitstelle, Archiv, Kasse, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Organisationsmenü mit 5 Tabs |
+| [`core_ems/`](core_ems/README.md) | 1.0.0 | Rettungsdienst: Hochholen, Verbandskasten, Verkauf, Behandlung, Krankheiten mit Stadien und Ansteckung, Krankenversicherung, Medizinische Datenbank |
+| [`tests/`](tests/README.md) | | Tests für die Serverlogik aller Resources |
 
-Das Inventar 1.3.0 braucht mindestens die Core 1.8.2, die `core_lib` 1.4.0 die Core 1.9.0. Empfohlen ist immer die neueste Core, darum alle Ordner zusammen aktualisieren.
+Das Inventar 1.4.0 braucht mindestens die Core 1.8.2, die `core_lib` 1.4.0 die Core 1.9.0, `core_factions` und `core_ems` die Core 1.10.0. Empfohlen ist immer die neueste Core, darum alle Ordner zusammen aktualisieren.
 
 ## Installation
 
 1. `core/database/schema.sql` in der Datenbank ausführen. Die Tabellen des Inventars legt das Inventar beim Start selbst an.
-2. Die Ordner `core`, `core_inventory` und `core_lib` nach `resources/[core]/` kopieren.
+2. Die Ordner `core`, `core_inventory`, `core_lib`, `core_factions` und `core_ems` nach `resources/[core]/` kopieren.
 3. In der eigenen `server.cfg` nach der Datenbank-Verbindung ergänzen:
 
 ```cfg
@@ -25,6 +27,8 @@ ensure oxmysql
 ensure core
 ensure core_inventory
 ensure core_lib
+ensure core_factions
+ensure core_ems
 ```
 
 4. Server neu starten.

@@ -201,6 +201,7 @@ end
 local ACTIONS = {
     respawn       = { control = 38, label = 'E' },      -- INPUT_PICKUP
     cancel        = { control = 73, label = 'X' },      -- INPUT_VEH_DUCK, Abbrechen (z. B. Fortschrittsbalken der core_lib)
+    interact      = { control = 38, label = 'E' },      -- INPUT_PICKUP, an einem Punkt etwas tun (seit Core 1.10.0)
 }
 local CONTROL_GROUP = 0
 
@@ -1057,6 +1058,33 @@ function Platform.SpawnVehicle(model, plate, timeoutMs)
     return vehicle
 end
 
+-- Spawnt das Fahrzeug an einer festen Stelle (z. B. Garage einer Organisation) und setzt den Spieler ans Steuer
+-- (seit Core 1.10.0). position: { x, y, z, heading }. Gibt das Fahrzeug und seine Netz-ID oder nil und einen Fehlercode.
+function Platform.SpawnVehicleAt(model, plate, position, timeoutMs)
+    local hash = GetHashKey(model)
+    if not IsModelInCdimage(hash) or not IsModelAVehicle(hash) then
+        return nil, 'invalid_model'
+    end
+    RequestModel(hash)
+    local timeout = GetGameTimer() + timeoutMs
+    while not HasModelLoaded(hash) do
+        if GetGameTimer() > timeout then
+            return nil, 'model_timeout'
+        end
+        Wait(0)
+    end
+    local vehicle = CreateVehicle(hash, position.x + 0.0, position.y + 0.0, position.z + 0.0, (position.heading or 0.0) + 0.0, true, false)
+    SetModelAsNoLongerNeeded(hash)
+    if vehicle == 0 then
+        return nil, 'spawn_failed'
+    end
+    SetVehicleOnGroundProperly(vehicle)
+    SetVehicleNumberPlateText(vehicle, plate)
+    SetVehicleEngineOn(vehicle, true, true, false)
+    SetPedIntoVehicle(PlayerPedId(), vehicle, DRIVER_SEAT)
+    return vehicle, VehToNet(vehicle)
+end
+
 -- Boost: einmal setzen, danach jeden Frame die Motorleistung erhoehen
 function Platform.SetVehicleBoost(vehicle, percent, topSpeedKmh)
     if not DoesEntityExist(vehicle) then
@@ -1697,6 +1725,7 @@ local CONTROL_GROUPS = {
     car    = { 63, 64, 71, 72, 75, 59, 60 },                         -- lenken, Gas, Bremse, aussteigen
     combat = { 24, 25, 37, 45, 47, 58, 140, 141, 142, 143, 257, 263, 264 },
     mouse  = { 1, 2, 106 },                                          -- umsehen
+    sprint = { 21 },                                                 -- nur rennen (seit Core 1.10.0, z. B. Atemnot)
 }
 
 -- groups: { move = true, car = true, combat = true, mouse = true }. Jeden Frame aufrufen.
@@ -2017,4 +2046,125 @@ function Platform.EnterVehicleSeat(vehicle, seat, maxDistance)
     end
     TaskEnterVehicle(PlayerPedId(), vehicle, ENTER_TIMEOUT_MS, seat, ENTER_SPEED, ENTER_FLAGS, 0)
     return true
+end
+
+------------------------------------------------------------------------
+-- Karte, Bildschirm und Koerper (seit Core 1.10.0, fuer Organisationen und Krankheiten)
+------------------------------------------------------------------------
+
+local BLIP_DEFAULT_SCALE = 0.8
+local FADE_WAIT_STEP_MS = 10
+local FADE_WAIT_MAX_MS = 3000
+local WALK_LOAD_TIMEOUT_MS = 2000
+local WALK_BLEND = 0.25
+local RAIN_FROM = 0.2           -- ab diesem Regen gilt man draussen als nass
+
+-- Blip auf der Karte. options: { coords = { x, y, z }, sprite, color, scale, label, shortRange }. Gibt den Blip zurueck.
+function Platform.AddBlip(options)
+    local c = options.coords
+    local blip = AddBlipForCoord(c.x + 0.0, c.y + 0.0, (c.z or 0) + 0.0)
+    SetBlipSprite(blip, options.sprite)
+    SetBlipColour(blip, options.color or 0)
+    SetBlipScale(blip, (options.scale or BLIP_DEFAULT_SCALE) + 0.0)
+    SetBlipAsShortRange(blip, options.shortRange ~= false)
+    if options.label then
+        BeginTextCommandSetBlipName('STRING')
+        AddTextComponentSubstringPlayerName(options.label)
+        EndTextCommandSetBlipName(blip)
+    end
+    return blip
+end
+
+function Platform.RemoveBlip(blip)
+    if blip and DoesBlipExist(blip) then
+        RemoveBlip(blip)
+    end
+end
+
+-- Markierung am Boden an einer festen Stelle, jeden Frame aufrufen.
+-- style: { type, size, height, color = { r, g, b }, alpha, zOffset, rotate }
+function Platform.DrawMarkerAt(coords, style)
+    local color = style.color
+    DrawMarker(style.type, coords.x + 0.0, coords.y + 0.0, coords.z + (style.zOffset or 0.0),
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        style.size, style.size, style.height or style.size,
+        color.r, color.g, color.b, style.alpha,
+        false, false, 2, style.rotate == true, nil, nil, false)
+end
+
+-- Bildschirm kurz schwarz (Ohnmacht, Blackout) und wieder auf. Bleibt nie dauerhaft schwarz. Wartet, nur im Thread.
+function Platform.Blackout(fadeMs, holdMs)
+    if IsScreenFadedOut() or IsScreenFadingOut() then
+        return false
+    end
+    DoScreenFadeOut(fadeMs)
+    local waited = 0
+    while not IsScreenFadedOut() and waited < FADE_WAIT_MAX_MS do
+        Wait(FADE_WAIT_STEP_MS)
+        waited = waited + FADE_WAIT_STEP_MS
+    end
+    Wait(holdMs)
+    DoScreenFadeIn(fadeMs)
+    return true
+end
+
+-- Kamera wackeln (Schwindel, Kopfschmerzen). name kommt aus den Daten, intensity 0 bis 1. Ohne name: aufhoeren.
+function Platform.ShakeCamera(name, intensity)
+    if not name then
+        StopGameplayCamShaking(true)
+        return
+    end
+    ShakeGameplayCam(name, (intensity or 0.5) + 0.0)
+end
+
+-- Kurz umkippen (Ohnmacht, Schwindel). Nicht im Fahrzeug und nicht bewusstlos.
+function Platform.RagdollOwnPed(durationMs)
+    local ped = PlayerPedId()
+    if IsPedInAnyVehicle(ped, false) or IsEntityDead(ped) then
+        return false
+    end
+    SetPedToRagdoll(ped, durationMs, durationMs, 0, false, false, false)
+    return true
+end
+
+-- Gangart (z. B. muede, wackelig). Ohne clipset: normale Gangart.
+function Platform.SetOwnWalkStyle(clipset)
+    local ped = PlayerPedId()
+    if not clipset then
+        ResetPedMovementClipset(ped, WALK_BLEND)
+        return true
+    end
+    RequestAnimSet(clipset)
+    local timeout = GetGameTimer() + WALK_LOAD_TIMEOUT_MS
+    while not HasAnimSetLoaded(clipset) do
+        if GetGameTimer() > timeout then
+            return false
+        end
+        Wait(0)
+    end
+    SetPedMovementClipset(ped, clipset, WALK_BLEND)
+    return true
+end
+
+-- Minimap aus und wieder an (z. B. Orientierungslosigkeit)
+function Platform.SetMinimapHidden(hidden)
+    DisplayRadar(not hidden)
+end
+
+-- Was die eigene Figur gerade erlebt, fuer Ausloeser von Krankheiten. Nur ein Hinweis, der Server entscheidet.
+-- { wet, raining, sprinting, shooting, aiming, inVehicle, indoors }
+function Platform.GetOwnExposure()
+    local ped = PlayerPedId()
+    local inVehicle = IsPedInAnyVehicle(ped, false)
+    local indoors = GetInteriorFromEntity(ped) ~= 0
+    local raining = GetRainLevel() >= RAIN_FROM
+    return {
+        wet = IsEntityInWater(ped) or (raining and not inVehicle and not indoors),
+        raining = raining,
+        sprinting = IsPedSprinting(ped),
+        shooting = IsPedShooting(ped),
+        aiming = IsPlayerFreeAiming(PlayerId()),
+        inVehicle = inVehicle,
+        indoors = indoors,
+    }
 end

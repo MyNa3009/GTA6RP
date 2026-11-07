@@ -65,6 +65,7 @@ Config.Inventory = {
             LSSD = 'Los Santos County Sheriff',
             SAHP = 'San Andreas Highway Patrol',
             LSMD = 'Los Santos Medical Department',
+            EMS  = 'Emergency Medical Service',
             DOJ  = 'Department of Justice',
         },
         LicenseDays = 30,

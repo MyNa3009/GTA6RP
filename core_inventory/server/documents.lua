@@ -399,7 +399,9 @@ end
 
 -- source zeigt sein Dokument der Person targetSource. Pruefungen: hat es, steht nah genug, gleiche Dimension.
 -- Danach muss targetSource zustimmen (wartet bis zu Config.Consent.TimeoutMs, also nur aus einem Thread aufrufen).
-function Documents.Show(source, licenseType, targetSource)
+-- options.skipConsent: die andere Person hat den Ausweis selbst verlangt (z. B. Rettungsdienst), dann fragt nur
+-- das aufrufende Script den Zeigenden und hier kommt keine zweite Abfrage.
+function Documents.Show(source, licenseType, targetSource, options)
     local characterId = InventoryApi_ActiveCharacter(source)
     local targetCharacter = InventoryApi_ActiveCharacter(targetSource)
     if not characterId then
@@ -426,10 +428,12 @@ function Documents.Show(source, licenseType, targetSource)
         return false, 'no_document'
     end
     -- Erst zeigen, wenn die andere Person annimmt
-    local accepted, consentError = InventoryConsent(source, targetSource,
-        ('Willst du den %s nehmen?'):format(info.label), ('ID %d möchte ihn dir zeigen.'):format(characterId))
-    if not accepted then
-        return false, consentError
+    if not (type(options) == 'table' and options.skipConsent == true) then
+        local accepted, consentError = InventoryConsent(source, targetSource,
+            ('Willst du den %s nehmen?'):format(info.label), ('ID %d möchte ihn dir zeigen.'):format(characterId))
+        if not accepted then
+            return false, consentError
+        end
     end
     if not InventoryApi_ActiveCharacter(targetSource) then
         return false, 'target_offline'

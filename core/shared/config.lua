@@ -70,11 +70,11 @@ Config.Characters = {
 ------------------------------------------------------------------------
 Config.Ranks = {
     { id = 'player',      level = 0, label = 'Spieler',                    permissions = {} },
-    { id = 'assistant',   level = 1, label = 'Administrator Assistant',    permissions = { 'admin.menu', 'admin.duty', 'player.view', 'admin.message', 'admin.esp', 'tickets.manage' } },
+    { id = 'assistant',   level = 1, label = 'Administrator Assistant',    permissions = { 'admin.menu', 'admin.duty', 'player.view', 'admin.message', 'admin.esp', 'tickets.manage', 'factions.view' } },
     { id = 'junior',      level = 2, label = 'Junior Administrator',       permissions = { 'player.revive', 'player.teleport', 'player.ajail', 'admin.noclip', 'player.freeze', 'player.heal', 'vehicle.fix', 'vehicle.delete', 'admin.dimension', 'player.spectate' } },
     { id = 'admin',       level = 3, label = 'Administrator',              permissions = { 'player.kick', 'accounts.links', 'player.dimension', 'player.kill', 'player.rename' } },
     { id = 'serveradmin', level = 4, label = 'Server Administrator',       permissions = { 'player.warn', 'player.ban', 'vehicle.spawn', 'player.silentkick', 'weapon.give', 'admin.mass' } },
-    { id = 'senior',      level = 5, label = 'Senior Administrator',       permissions = { 'player.unban', 'money.manage', 'vehicle.boost', 'items.manage', 'admin.keys' } },
+    { id = 'senior',      level = 5, label = 'Senior Administrator',       permissions = { 'player.unban', 'money.manage', 'vehicle.boost', 'items.manage', 'admin.keys', 'factions.manage' } },
     { id = 'deputy',      level = 6, label = 'Deputy Chief Administrator', permissions = { 'ranks.manage', 'data.private' } },
     { id = 'chief',       level = 7, label = 'Chief Administrator',        permissions = { '*' } },
 }

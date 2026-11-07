@@ -13,6 +13,9 @@ import pymysql
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORE = os.path.join(ROOT, 'core')
 INVENTORY = os.path.join(ROOT, 'core_inventory')
+LIB = os.path.join(ROOT, 'core_lib')
+FACTIONS = os.path.join(ROOT, 'core_factions')
+EMS = os.path.join(ROOT, 'core_ems')
 
 # Die Tests LOESCHEN alle Tabellen der Datenbank. Darum nur gegen eine eigene Test-Datenbank,
 # deren Name "test" enthaelt. Nie gegen die Datenbank des Servers.
@@ -37,6 +40,19 @@ INVENTORY_FILES = [
 ]
 
 
+# Weitere Resources fuer Env(extra=[...]), in dieser Reihenfolge geladen
+BRIDGE = [(CORE, 'bridge/platform/fivem_server.lua'), (CORE, 'bridge/database/oxmysql.lua'), (CORE, 'bridge/network/fivem_server.lua')]
+EXTRA_FILES = {
+    'core_lib': [(CORE, 'shared/config.lua'), (LIB, 'config.lua')] + BRIDGE + [(LIB, 'server/main.lua')],
+    'core_factions': [(CORE, 'shared/config.lua'), (FACTIONS, 'config.lua'), (FACTIONS, 'data/places_gta5.lua')] + BRIDGE + [
+        (LIB, 'init.lua'), (FACTIONS, 'server/schema.lua'), (FACTIONS, 'server/main.lua'), (FACTIONS, 'server/consent.lua'),
+        (FACTIONS, 'server/members.lua'), (FACTIONS, 'server/menu.lua'), (FACTIONS, 'server/places.lua'), (FACTIONS, 'server/commands.lua')],
+    'core_ems': [(CORE, 'shared/config.lua'), (EMS, 'config.lua')] + BRIDGE + [
+        (LIB, 'init.lua'), (EMS, 'server/schema.lua'), (EMS, 'server/main.lua'), (EMS, 'server/diseases.lua'),
+        (EMS, 'server/actions.lua'), (EMS, 'server/records.lua')],
+}
+
+
 def connect():
     return pymysql.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME, autocommit=True,
                            cursorclass=pymysql.cursors.DictCursor, charset='utf8mb4')
@@ -46,7 +62,9 @@ def reset_db():
     db = connect()
     with db.cursor() as cur:
         cur.execute('SET FOREIGN_KEY_CHECKS=0')
-        for table in ['audit_log', 'account_links', 'account_identifiers', 'characters', 'accounts', 'bans', 'admin_jails', 'account_devices', 'account_ips', 'device_alerts', 'warns', 'tickets', 'ticket_messages', 'audit_log_archive', 'inventories', 'weapon_registry', 'licenses', 'admin_keys']:
+        for table in ['audit_log', 'account_links', 'account_identifiers', 'characters', 'accounts', 'bans', 'admin_jails', 'account_devices', 'account_ips', 'device_alerts', 'warns', 'tickets', 'ticket_messages', 'audit_log_archive', 'inventories', 'weapon_registry', 'licenses', 'admin_keys',
+                      'faction_members', 'faction_settings', 'faction_ranks', 'faction_vehicles', 'faction_departments', 'faction_exams',
+                      'faction_history', 'faction_archive', 'ems_diseases', 'ems_records', 'ems_insurance']:
             cur.execute(f'DROP TABLE IF EXISTS {table}')
         cur.execute('SET FOREIGN_KEY_CHECKS=1')
         for statement in open(f'{CORE}/database/schema.sql').read().split(';'):
@@ -56,7 +74,7 @@ def reset_db():
 
 
 class Env:
-    def __init__(self, debug=False, inventory=False, admin_keys=False):
+    def __init__(self, debug=False, inventory=False, admin_keys=False, extra=None):
         reset_db()
         self.db = connect()
         self.lua = lupa.LuaRuntime(unpack_returned_tuples=True)
@@ -83,9 +101,14 @@ class Env:
         if inventory:
             self.inv = lupa.LuaRuntime(unpack_returned_tuples=True)
             self.runtimes['core_inventory'] = self.inv
+        self.extra = list(extra or [])
+        for resource in self.extra:
+            self.runtimes[resource] = lupa.LuaRuntime(unpack_returned_tuples=True)
         self._setup()
         if inventory:
             self._install(self.inv, 'core_inventory', INVENTORY_FILES)
+        for resource in self.extra:
+            self._install(self.runtimes[resource], resource, EXTRA_FILES[resource])
 
     # ---------- Lua <-> Python ----------
     def to_py(self, value):
@@ -443,6 +466,17 @@ class Env:
         self._rid += 1
         rid = 200000 + self._rid
         lua.execute('function hcall(src, n, id, d) source = src; NET["core_inventory:cb:request"](n, id, d) end')
+        lua.globals().hcall(src, name, rid, self.to_lua(data or {}, lua))
+        self.tick(10)
+        self._settle(lua, rid)
+        return self.to_py(lua.globals().RESPONSES[rid])
+
+    # Anfrage an eine weitere Resource (core_factions, core_ems, core_lib)
+    def rcall(self, resource, src, name, data=None):
+        lua = self.runtimes[resource]
+        self._rid += 1
+        rid = 300000 + self._rid
+        lua.execute(f'function hcall(src, n, id, d) source = src; NET["{resource}:cb:request"](n, id, d) end')
         lua.globals().hcall(src, name, rid, self.to_lua(data or {}, lua))
         self.tick(10)
         self._settle(lua, rid)

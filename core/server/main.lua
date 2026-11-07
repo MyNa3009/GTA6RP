@@ -227,6 +227,38 @@ Platform.Export('GetCharacterRecord', function(characterId)
     return { characterId = row.id, firstname = row.firstname, lastname = row.lastname, dateOfBirth = row.date_of_birth, gender = row.gender }
 end)
 
+-- Personen suchen (z. B. Medizinische Datenbank, spaeter MDT): permanente ID genau oder Name ab Anfang.
+-- "Max Mus" findet Max Mustermann. Hoechstens limit Treffer (1 bis 50), nur nicht geloeschte Charaktere.
+local SEARCH_MAX = 50
+local SEARCH_TEXT_MAX = 50
+Platform.Export('SearchCharacters', function(text, limit)
+    limit = math.max(1, math.min(SEARCH_MAX, math.floor(tonumber(limit) or 20)))
+    text = type(text) == 'string' and text:sub(1, SEARCH_TEXT_MAX):match('^%s*(.-)%s*$') or ''
+    local select = "SELECT id, firstname, lastname, DATE_FORMAT(date_of_birth, '%Y-%m-%d') AS date_of_birth, gender FROM characters"
+    local rows
+    local id = tonumber(text)
+    if id then
+        rows = DB.Query(select .. ' WHERE id = ? AND deleted_at IS NULL', { math.floor(id) })
+    elseif text == '' then
+        rows = DB.Query(select .. ' WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ?', { limit })
+    else
+        local escaped = text:gsub('[%%_\\]', '\\%0')
+        local first, last = escaped:match('^(%S+)%s+(.+)$')
+        if first then
+            rows = DB.Query(select .. ' WHERE firstname LIKE ? AND lastname LIKE ? AND deleted_at IS NULL ORDER BY lastname, firstname LIMIT ?',
+                { first .. '%', last .. '%', limit })
+        else
+            rows = DB.Query(select .. ' WHERE id IN (SELECT id FROM (SELECT id FROM characters WHERE firstname LIKE ? UNION SELECT id FROM characters WHERE lastname LIKE ?) AS hits) AND deleted_at IS NULL ORDER BY lastname, firstname LIMIT ?',
+                { escaped .. '%', escaped .. '%', limit })
+        end
+    end
+    local list = {}
+    for _, row in ipairs(rows or {}) do
+        list[#list + 1] = { characterId = row.id, firstname = row.firstname, lastname = row.lastname, dateOfBirth = row.date_of_birth, gender = row.gender }
+    end
+    return list
+end)
+
 Platform.Export('GetCharacterAccount', function(characterId)
     characterId = tonumber(characterId)
     if not characterId then
@@ -267,6 +299,8 @@ DB.Ready(function()
     end
 
     Platform.Print('ok', ('Core %s, Datenbank verbunden, %d Accounts vorhanden.'):format(Platform.GetResourceVersion() or '?', accountCount))
+    -- Seit 1.10.0: Suche nach Nachnamen (SearchCharacters). Migration 011 macht dasselbe.
+    DB.Query('CREATE INDEX IF NOT EXISTS idx_lastname ON characters (lastname)')
     if DEBUG then
         Platform.Print('warn', 'Debug-Modus aktiv: Testbefehle sind freigeschaltet.')
     end

@@ -1,0 +1,1640 @@
+<!DOCTYPE html>
+<!--
+  UI: Organisationsmenue (core_factions)
+  CONTRACT_VERSION: 1
+  Fuenf Tabs: Uebersicht, Anpassung (Raenge, Rechte, Abteilungen, Pruefungen), Fahrzeuge, Leitstelle, Archiv.
+  Tabs ohne Zugriff fehlen ganz. Die UI zeigt nur an, jede Aenderung prueft der Server.
+
+  EINGEHEND (Lua -> UI)
+  orgmenu_open  { colors: { base, ink, accent, signal }, overview: Overview }
+  orgmenu_close {}
+
+  Overview {
+    org: { id, label, short, ranks, leaderRank, viceRank },
+    me: { name, rank?, rankName?, dn?, hiredAt?, admin?, readOnly? },
+    leader?: string,
+    message?: { text, by, at },
+    balance?: number,                       // nur mit Recht cash.view
+    onDuty: [{ name, dn, rank, rankName }], // gerade im Dienst
+    access: { structure, leitstelle, archive, message, cash }
+  }
+
+  AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
+  ui_ready      { ui: "orgmenu", version: 1 }                -> data.colors
+  orgmenu_close {}
+  orgmenu_call  { name, data }                               // name aus der Liste unten, geht unveraendert an den Server
+    faction_menu_open {}                                     -> Overview
+    faction_message_save { text }                            -> Overview
+    faction_cash { action: "deposit" | "withdraw", amount }  -> Overview
+    faction_ranks {}                                         -> Ranks
+    faction_rank_save { rank, name, permissions: string[] }  -> Ranks
+    faction_department_save { id?, name, ranks: string[] }   -> Ranks
+    faction_department_delete { id }                         -> Ranks
+    faction_exam_save { id?, name }                          -> Ranks
+    faction_exam_delete { id }                               -> Ranks
+    faction_vehicles {}                                      -> { vehicles: [{ model, label, minRank, rankName }], canEdit }
+    faction_vehicle_save { model, minRank }                  -> wie faction_vehicles
+    faction_members {}                                       -> Members
+    faction_member_update { characterId, field: "dn"|"strikes"|"vacation"|"departments"|"exams", value, examId? } -> Members
+    faction_member_rank { characterId, rank }                -> Members
+    faction_member_fire { characterId, reason }              -> Members
+    faction_hire { characterId }                             -> Members (Person muss online sein und zustimmen)
+    faction_archive { page, search? }                        -> { entries: Archived[], page, hasMore }
+
+  Ranks   { ranks: [{ rank, name, permissions: string[], editable, fixedPermissions? }],
+            permissions: [{ key, group, label, grantable }], departments: [{ id, name, ranks: string[] }],
+            exams: [{ id, name }], limits: { departments, departmentRanks, exams, rankName, department, exam }, canEdit }
+  Members { members: [{ characterId, name, dn, rank, rankName, strikes, vacationDays, departments: [{ id, name, rank, rankName }],
+            exams: [{ id, name, at, by }], hiredAt, online?, onDuty?, above?, self? }],
+            edit: { hire?, fire?, rank?, dn?, strikes?, vacation?, departments?, exams? },
+            departments: [{ id, name, ranks }], exams: [{ id, name }], leads: number[], ranks: [{ rank, name, assignable? }],
+            limits: { strikes, vacation, dn, reason } }
+  Archived { id, characterId, name, dn, lastRank, ranks: [{ rank, name, at, leader }], exams: [{ name, at, by }],
+             hiredAt, leftAt, reason, by, kind: "fire" | "leave" | "admin" }
+
+  FEHLERCODES: not_member, no_permission, invalid_input, invalid_rank, invalid_name, invalid_ranks, invalid_amount,
+  not_enough_money, limit_reached, not_found, dn_taken, already_member, target_offline, consent_declined, consent_timeout,
+  target_busy, db_error, server_error, timeout
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Organisation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Operate (Leitstelle) mit Inspect (Mitarbeiter, Archiv). Dichte 7, Bewegung 2, Varianz 3.
+  Richtung
+    Zweck: Leitung und Mitarbeiter einer Organisation verwalten ihre Leute, Raenge und Fahrzeuge.
+    Charakter: dienstlich, ordentlich, schnell.
+    Welt: Verwaltung einer Wache, Dienstplan an der Wand, Personalakte, Funk.
+    Highlight: die eigene Dienstkarte in der Uebersicht und die Leitstelle als dichte Liste.
+    Signatur: Funkpunkt vor jedem Namen (Magenta = im Dienst, gedaempft = online, leer = offline).
+  Flaeche: grosses Panel fast im Vollbild, Seitenleiste links, Inhalt fuellt den Rest.
+*/
+:root {
+  --rgb-base:   24 15 36;
+  --rgb-ink:    253 241 233;
+  --rgb-accent: 232 64 190;
+  --rgb-signal: 240 84 96;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.96);
+  --c-side:        rgb(var(--rgb-ink) / 0.03);
+  --c-surface:     rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.09);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.08);
+  --shadow:        0 16px 48px rgb(var(--rgb-base) / 0.6);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+  --fs-xxl: clamp(28px, 1.9vw, 40px);
+
+  --dur-fast: 120ms; --dur-base: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --panel-w: min(96vw, 1760px);
+  --panel-h: min(92dvh, 1040px);
+  --side-w: 256px;
+  --head-h: 64px;
+  --row-h: 44px;
+  --nav-h: 40px;
+  --field-h: 36px;
+  --detail-w: clamp(320px, 24vw, 420px);
+  --dot: 8px;
+  --icon: 18px;
+
+  --z-panel: 10;
+  --z-modal: 20;
+  --z-toast: 30;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Montserrat', sans-serif;
+  font-size: var(--fs-md);
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] { display: none !important; }
+button, input, select, textarea { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.icon { width: var(--icon); height: var(--icon); flex: none; }
+
+/* ---------- Panel ---------- */
+.panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: var(--z-panel);
+  width: var(--panel-w);
+  height: var(--panel-h);
+  transform: translate(-50%, -50%);
+  display: grid;
+  grid-template-columns: var(--side-w) 1fr;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* ---------- Seitenleiste ---------- */
+.side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--space-5) var(--space-4) var(--space-4);
+  background: var(--c-side);
+  border-right: 1px solid var(--c-border);
+}
+.brand { padding: 0 var(--space-2) var(--space-5); }
+.brand__short { font-size: var(--fs-xxl); font-weight: 700; letter-spacing: 0.02em; line-height: 1; }
+.brand__label { margin-top: var(--space-2); font-size: var(--fs-sm); color: var(--c-text-muted); }
+
+.nav { display: grid; gap: var(--space-1); }
+.nav__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--nav-h);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--c-text-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.nav__item:hover { background: var(--c-surface); color: var(--c-text); }
+.nav__item[aria-current="page"] { background: var(--c-surface-hi); color: var(--c-text); box-shadow: var(--edge-light); }
+.nav__item[aria-current="page"] .icon { color: var(--c-accent); }
+.nav__count { margin-left: auto; color: var(--c-text-muted); font-size: var(--fs-xs); }
+
+.side__me {
+  margin-top: auto;
+  padding: var(--space-4) var(--space-2) 0;
+  border-top: 1px solid var(--c-border);
+}
+.side__name { font-size: var(--fs-sm); font-weight: 600; }
+.side__rank { margin-top: var(--space-1); font-size: var(--fs-xs); color: var(--c-text-muted); }
+.badge-admin {
+  display: inline-block;
+  margin-top: var(--space-2);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--c-accent-line);
+  border-radius: var(--radius-xs);
+  color: var(--c-accent);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+/* ---------- Inhalt ---------- */
+.main { display: grid; grid-template-rows: var(--head-h) 1fr; min-width: 0; min-height: 0; }
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--c-border);
+}
+.head__title { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+.head__meta { color: var(--c-text-muted); font-size: var(--fs-sm); }
+.head__actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+
+.view { min-height: 0; overflow: auto; padding: var(--space-5); }
+.view--split { display: grid; grid-template-columns: 1fr var(--detail-w); gap: 0; padding: 0; overflow: hidden; }
+.view--split > .scroll { min-height: 0; overflow: auto; padding: var(--space-5); }
+.view--split > .detail { min-height: 0; overflow: auto; padding: var(--space-5); border-left: 1px solid var(--c-border); background: var(--c-side); }
+
+/* ---------- Bedienelemente ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--field-h);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface);
+  color: var(--c-text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--c-surface-hi); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn--primary { background: rgb(var(--rgb-ink) / 0.92); border-color: transparent; color: var(--c-on-accent); }
+.btn--primary:hover:not(:disabled) { background: rgb(var(--rgb-ink)); }
+.btn--danger { border-color: rgb(var(--rgb-signal) / 0.4); color: var(--c-signal); background: transparent; }
+.btn--danger:hover:not(:disabled) { background: var(--c-signal-soft); }
+.btn--ghost { border-color: transparent; background: transparent; color: var(--c-text-2); }
+.btn--icon { width: var(--field-h); padding: 0; }
+
+.field { display: grid; gap: var(--space-2); }
+.field__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+.input, .select, .textarea {
+  width: 100%;
+  height: var(--field-h);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: rgb(var(--rgb-base) / 0.6);
+  font-size: var(--fs-sm);
+  outline: none;
+}
+.textarea { height: auto; min-height: 160px; padding: var(--space-3); resize: vertical; line-height: 1.5; }
+.input:focus, .select:focus, .textarea:focus { border-color: var(--c-accent-line); }
+.input:disabled, .select:disabled, .textarea:disabled { opacity: 0.6; }
+.select option { background: rgb(var(--rgb-base)); }
+
+:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 2px; }
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.check:hover { background: var(--c-surface); }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: rgb(var(--rgb-accent)); }
+.check--locked { cursor: default; color: var(--c-text-muted); }
+.check--locked:hover { background: transparent; }
+
+.section-title { margin: 0 0 var(--space-3); font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.04em; }
+.muted { color: var(--c-text-muted); }
+.empty { padding: var(--space-6) 0; color: var(--c-text-muted); font-size: var(--fs-sm); }
+
+/* ---------- Tab 1: Uebersicht ---------- */
+.overview { display: grid; grid-template-columns: minmax(360px, 0.9fr) 1.1fr; gap: var(--space-5); align-items: start; }
+.stack { display: grid; gap: var(--space-5); }
+
+/* Dienstkarte: das Highlight */
+.card-id {
+  position: relative;
+  padding: var(--space-5);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: var(--c-surface);
+  box-shadow: var(--edge-light);
+  overflow: hidden;
+}
+.card-id::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--c-accent);
+}
+.card-id__org { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.06em; }
+.card-id__name { margin-top: var(--space-2); font-size: var(--fs-xl); font-weight: 700; }
+.card-id__rank { margin-top: var(--space-1); font-size: var(--fs-md); color: var(--c-accent); font-weight: 600; }
+.facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-4) var(--space-5); margin: var(--space-5) 0 0; }
+.facts dt { font-size: var(--fs-xs); color: var(--c-text-muted); font-weight: 600; }
+.facts dd { margin: var(--space-1) 0 0; font-size: var(--fs-md); font-weight: 500; }
+
+.box { padding: var(--space-5); border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-surface); }
+.cash__value { font-size: var(--fs-xxl); font-weight: 700; }
+.cash__row { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-2); margin-top: var(--space-4); }
+
+.memo__text { margin: 0; white-space: pre-wrap; line-height: 1.6; font-size: var(--fs-md); color: var(--c-text); max-width: 72ch; }
+.memo__by { margin-top: var(--space-4); font-size: var(--fs-xs); color: var(--c-text-muted); }
+.memo__actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-3); }
+.duty-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.duty-list li { display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr); gap: var(--space-3); align-items: center; height: 40px; border-top: 1px solid var(--c-border); font-size: var(--fs-sm); }
+.duty-list li:first-child { border-top: 0; }
+
+/* ---------- Tab 2: Anpassung ---------- */
+.seg { display: inline-flex; gap: var(--space-1); padding: var(--space-1); border: 1px solid var(--c-border); border-radius: var(--radius-sm); }
+.seg button {
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--c-text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--c-surface-hi); color: var(--c-text); }
+
+.ranks { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: var(--space-5); min-height: 100%; }
+.rank-list { display: grid; gap: 2px; align-content: start; }
+.rank-item {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--c-text-2);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.rank-item:hover { background: var(--c-surface); color: var(--c-text); }
+.rank-item[aria-selected="true"] { background: var(--c-surface-hi); color: var(--c-text); box-shadow: var(--edge-light); }
+.rank-item__no { color: var(--c-text-muted); font-size: var(--fs-xs); }
+.rank-item__count { color: var(--c-text-muted); font-size: var(--fs-xs); }
+
+.perm-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-5); margin-top: var(--space-5); }
+.perm-group h4 { margin: 0 0 var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--c-border); font-size: var(--fs-sm); font-weight: 600; }
+.editor-head { display: flex; align-items: end; gap: var(--space-3); }
+.editor-head .field { flex: 1; max-width: 420px; }
+.note { margin-top: var(--space-3); font-size: var(--fs-xs); color: var(--c-text-muted); }
+
+.dept-list { display: grid; gap: var(--space-3); }
+.dept {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr auto;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+}
+.dept__ranks { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-2); }
+.dept__actions { display: flex; gap: var(--space-2); }
+.exam-list { display: grid; gap: var(--space-2); max-width: 720px; }
+.exam-row { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-2); }
+
+/* ---------- Tab 3: Fahrzeuge ---------- */
+.table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 36px;
+  padding: 0 var(--space-3);
+  background: rgb(var(--rgb-base));
+  border-bottom: 1px solid var(--c-border);
+  color: var(--c-text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+.table td { height: var(--row-h); padding: 0 var(--space-3); border-bottom: 1px solid var(--c-border); vertical-align: middle; }
+.table tbody tr { cursor: pointer; }
+.table tbody tr:hover td { background: var(--c-surface); }
+.table tbody tr[aria-selected="true"] td { background: var(--c-surface-hi); }
+.table--static tbody tr { cursor: default; }
+.table .r { text-align: right; }
+.vehicles .select { max-width: 320px; }
+
+/* ---------- Tab 4: Leitstelle ---------- */
+.toolbar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); }
+.toolbar .input { max-width: 320px; }
+.toolbar__count { color: var(--c-text-muted); font-size: var(--fs-sm); }
+.toolbar__right { margin-left: auto; display: flex; gap: var(--space-2); }
+.hire .input { width: 120px; }
+
+.who { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.dot { width: var(--dot); height: var(--dot); flex: none; border-radius: 50%; border: 1px solid rgb(var(--rgb-ink) / 0.3); }
+.dot--online { background: rgb(var(--rgb-ink) / 0.45); border-color: transparent; }
+.dot--duty { background: var(--c-accent); border-color: transparent; }
+.who__name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.chip { padding: 2px var(--space-2); border: 1px solid var(--c-border); border-radius: var(--radius-xs); font-size: var(--fs-xs); color: var(--c-text-2); white-space: nowrap; }
+.strikes--hot { color: var(--c-signal); font-weight: 600; }
+
+.detail__name { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
+.detail__meta { margin-top: var(--space-1); color: var(--c-text-muted); font-size: var(--fs-sm); }
+.detail__block { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--c-border); display: grid; gap: var(--space-3); }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.stepper { display: grid; grid-template-columns: var(--field-h) 1fr var(--field-h); gap: var(--space-1); }
+.stepper .input { text-align: center; }
+.dept-pick { display: grid; grid-template-columns: 1fr 140px; gap: var(--space-2); align-items: center; }
+
+/* ---------- Tab 5: Archiv ---------- */
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.timeline li { display: grid; grid-template-columns: 96px 1fr; gap: var(--space-3); font-size: var(--fs-sm); }
+.timeline time { color: var(--c-text-muted); }
+.timeline small { display: block; color: var(--c-text-muted); font-size: var(--fs-xs); margin-top: 2px; }
+.pager { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
+
+/* ---------- Modal und Meldung ---------- */
+.modal-back { position: fixed; inset: 0; z-index: var(--z-modal); background: rgb(var(--rgb-base) / 0.6); display: grid; place-items: center; }
+.modal { width: min(92vw, 480px); padding: var(--space-5); border: 1px solid var(--c-border); border-radius: var(--radius-lg); background: rgb(var(--rgb-base)); box-shadow: var(--shadow); }
+.modal h3 { margin: 0 0 var(--space-2); font-size: var(--fs-lg); }
+.modal p { margin: 0 0 var(--space-4); color: var(--c-text-2); font-size: var(--fs-sm); line-height: 1.5; }
+.modal__actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc((100dvh - var(--panel-h)) / 2 + var(--space-5));
+  z-index: var(--z-toast);
+  transform: translateX(-50%);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: rgb(var(--rgb-ink));
+  color: var(--c-on-accent);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+.toast--error { background: var(--c-signal); color: rgb(var(--rgb-base)); }
+
+kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 var(--space-1);
+  border: 1px solid var(--c-border); border-radius: var(--radius-xs);
+  color: var(--c-text-2); font-family: inherit; font-size: var(--fs-xs); font-weight: 600;
+}
+
+@media (max-width: 1280px) {
+  :root { --side-w: 216px; }
+  .overview { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-home" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1Z"/></g>
+    <g id="i-sliders" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></g>
+    <g id="i-car" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h14M5 17v2M19 17v2M3 13l2-6a2 2 0 0 1 2-1.4h10A2 2 0 0 1 19 7l2 6v4H3Z"/><circle cx="7.5" cy="13.5" r="1"/><circle cx="16.5" cy="13.5" r="1"/></g>
+    <g id="i-radio" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="13" rx="2"/><path d="M8 8 17 3M8 13h8M8 17h4"/></g>
+    <g id="i-archive" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></g>
+    <g id="i-close" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></g>
+    <g id="i-plus" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></g>
+    <g id="i-minus" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14"/></g>
+    <g id="i-trash" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></g>
+  </defs>
+</svg>
+
+<div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="brand-short" hidden>
+  <aside class="side">
+    <div class="brand">
+      <div class="brand__short" id="brand-short"></div>
+      <div class="brand__label" id="brand-label"></div>
+    </div>
+    <nav class="nav" id="nav" aria-label="Bereiche"></nav>
+    <div class="side__me">
+      <div class="side__name" id="me-name"></div>
+      <div class="side__rank" id="me-rank"></div>
+      <span class="badge-admin" id="me-admin" hidden></span>
+    </div>
+  </aside>
+  <section class="main">
+    <header class="head">
+      <h1 class="head__title" id="head-title"></h1>
+      <span class="head__meta" id="head-meta"></span>
+      <div class="head__actions" id="head-actions"></div>
+      <button class="btn btn--ghost btn--icon" type="button" data-action="close" aria-label="Schließen"><svg class="icon" viewBox="0 0 24 24"><use href="#i-close"/></svg></button>
+    </header>
+    <div class="view" id="view"></div>
+  </section>
+</div>
+
+<div class="modal-back" id="modal" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
+    <h3 id="modal-title"></h3>
+    <p id="modal-text"></p>
+    <div id="modal-field"></div>
+    <div class="modal__actions">
+      <button class="btn btn--ghost" type="button" data-action="modal-cancel"></button>
+      <button class="btn" type="button" data-action="modal-confirm" id="modal-confirm"></button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  const isFiveM = typeof GetParentResourceName === 'function';
+  const platform = isFiveM ? 'fivem' : 'mock';
+
+  function on(event, fn) {
+    (handlers[event] ||= []).push(fn);
+  }
+
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${GetParentResourceName()}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+
+  return { on, send, emit, platform };
+})();
+
+const Mock = (() => {
+  const RANK_NAMES = ['Praktikant', 'Rettungssanitäter-Anwärter', 'Rettungssanitäter', 'Rettungssanitäter II', 'Rettungssanitäter III',
+    'Notfallsanitäter-Anwärter', 'Notfallsanitäter', 'Notfallsanitäter II', 'Notfallsanitäter III', 'Praxisanleiter', 'Assistenzarzt',
+    'Assistenzarzt II', 'Assistenzarzt III', 'Arzt', 'Arzt II', 'Facharzt', 'Facharzt II', 'Notarzt', 'Notarzt II', 'Oberarzt',
+    'Oberarzt II', 'Leitender Oberarzt', 'Stationsleitung', 'Wachleitung', 'Bereichsleitung', 'Ärztlicher Leiter', 'Stellv. Direktor',
+    'Direktor', 'Vice Leader', 'Leader'];
+  const PERMS = [
+    { key: 'leitstelle.view', group: 'Leitstelle', label: 'Leitstelle ansehen', min: 1 },
+    { key: 'members.hire', group: 'Leitstelle', label: 'Einstellen', min: 24 },
+    { key: 'members.fire', group: 'Leitstelle', label: 'Entlassen', min: 26 },
+    { key: 'members.rank', group: 'Leitstelle', label: 'Befördern und degradieren', min: 24 },
+    { key: 'members.dn', group: 'Leitstelle', label: 'Dienstnummer ändern', min: 24 },
+    { key: 'members.strikes', group: 'Leitstelle', label: 'Strikes vergeben', min: 22 },
+    { key: 'members.vacation', group: 'Leitstelle', label: 'Urlaubstage ändern', min: 22 },
+    { key: 'members.departments', group: 'Leitstelle', label: 'Abteilungen zuweisen', min: 20 },
+    { key: 'members.exams', group: 'Leitstelle', label: 'Prüfungen eintragen', min: 15 },
+    { key: 'archive.view', group: 'Verwaltung', label: 'Mitarbeiter-Archiv ansehen', min: 20 },
+    { key: 'message.edit', group: 'Verwaltung', label: 'Nachricht vom Leader ändern', min: 29 },
+    { key: 'cash.view', group: 'Verwaltung', label: 'Kasse ansehen', min: 25 },
+    { key: 'cash.manage', group: 'Verwaltung', label: 'Kasse ein- und auszahlen', min: 28 },
+    { key: 'ems.revive', group: 'Rettungsdienst', label: 'Hochholen', min: 1 },
+    { key: 'ems.medkit', group: 'Rettungsdienst', label: 'Verbandskasten anwenden', min: 1 },
+    { key: 'ems.sell', group: 'Rettungsdienst', label: 'Verbände, Kästen und Tabletten verkaufen', min: 2 },
+    { key: 'ems.treat', group: 'Rettungsdienst', label: 'Behandeln', min: 3 },
+    { key: 'ems.insurance', group: 'Rettungsdienst', label: 'Krankenversicherung verkaufen', min: 5 },
+    { key: 'ems.records', group: 'Rettungsdienst', label: 'Medizinische Datenbank', min: 1 },
+    { key: 'ems.records.note', group: 'Rettungsdienst', label: 'Einträge in die Akte schreiben', min: 3 },
+  ];
+  const ME_RANK = 30;
+  const db = {
+    message: { text: 'Ab Montag gilt der neue Dienstplan. Jede Schicht meldet sich bei Dienstbeginn über Funk bei der Leitstelle an.\n\nPrüfung Notfallsanitäter am Freitag um 19 Uhr im Schulungsraum, Anmeldung bei Dr. Weber.', by: 'Lena Hoffmann', at: '2026-11-06 18:42' },
+    balance: 48250,
+    ranks: {},
+    departments: [{ id: 1, name: 'Ausbildung', ranks: ['Mitglied', 'Ausbilder', 'Leitung'] }, { id: 2, name: 'Luftrettung', ranks: ['Pilot', 'Leitung'] }],
+    exams: [{ id: 1, name: 'Erste-Hilfe-Ausbilder' }, { id: 2, name: 'Notfallsanitäter' }, { id: 3, name: 'Hubschrauber' }],
+    vehicles: [{ model: 'ambulance', label: 'Rettungswagen', minRank: 1 }, { model: 'lguard', label: 'Einsatzfahrzeug', minRank: 7 }, { model: 'firetruk', label: 'Großraum-Rettung', minRank: 18 }],
+    members: [
+      { characterId: 17, name: 'Lena Hoffmann', dn: 'EMS-001', rank: 30, strikes: 0, vacationDays: 12, departments: [{ id: 1, rank: 3 }], exams: [{ id: 1, at: '2026-10-02', by: 'Admin' }], hiredAt: '2026-09-14', online: true, onDuty: true, self: true },
+      { characterId: 42, name: 'Jonas Weber', dn: 'EMS-002', rank: 29, strikes: 0, vacationDays: 5, departments: [{ id: 2, rank: 2 }], exams: [{ id: 2, at: '2026-10-11', by: 'Lena Hoffmann' }, { id: 3, at: '2026-10-20', by: 'Lena Hoffmann' }], hiredAt: '2026-09-15', online: true },
+      { characterId: 108, name: 'Mira Schulz', dn: 'EMS-004', rank: 18, strikes: 1, vacationDays: 0, departments: [{ id: 1, rank: 2 }], exams: [{ id: 2, at: '2026-10-28', by: 'Jonas Weber' }], hiredAt: '2026-09-22', online: true, onDuty: true },
+      { characterId: 233, name: 'Tom Becker', dn: 'EMS-007', rank: 7, strikes: 2, vacationDays: 3, departments: [], exams: [], hiredAt: '2026-10-03' },
+      { characterId: 256, name: 'Fabian Nandes', dn: 'EMS-009', rank: 3, strikes: 0, vacationDays: 0, departments: [{ id: 1, rank: 1 }], exams: [], hiredAt: '2026-10-19', online: true },
+      { characterId: 311, name: 'Sara Yilmaz', dn: 'EMS-011', rank: 1, strikes: 3, vacationDays: 0, departments: [], exams: [], hiredAt: '2026-11-02' },
+    ],
+    archive: [
+      { id: 3, characterId: 87, name: 'Kevin Lorenz', dn: 'EMS-003', lastRank: 'Notarzt', ranks: [{ rank: 1, name: 'Praktikant', at: '2026-09-16', leader: 'Lena Hoffmann' }, { rank: 7, name: 'Notfallsanitäter', at: '2026-09-30', leader: 'Lena Hoffmann' }, { rank: 18, name: 'Notarzt', at: '2026-10-21', leader: 'Lena Hoffmann' }], exams: [{ name: 'Notfallsanitäter', at: '2026-09-29', by: 'Jonas Weber' }], hiredAt: '2026-09-16', leftAt: '2026-11-04', reason: 'Dreimal unentschuldigt gefehlt', by: 'Jonas Weber', kind: 'fire' },
+      { id: 2, characterId: 64, name: 'Paula Krüger', dn: 'EMS-005', lastRank: 'Rettungssanitäter', ranks: [{ rank: 1, name: 'Praktikant', at: '2026-09-25', leader: 'Lena Hoffmann' }, { rank: 3, name: 'Rettungssanitäter', at: '2026-10-08', leader: 'Lena Hoffmann' }], exams: [], hiredAt: '2026-09-25', leftAt: '2026-10-30', reason: 'Selbst gekündigt', by: 'Paula Krüger', kind: 'leave' },
+    ],
+  };
+  const rankName = (r) => (db.ranks[r] && db.ranks[r].name) || RANK_NAMES[r - 1];
+  const has = (r, key) => r >= 30 || (db.ranks[r] && db.ranks[r].perms ? db.ranks[r].perms.includes(key) : r >= PERMS.find((p) => p.key === key).min);
+  const overview = () => ({
+    org: { id: 'ems', label: 'Emergency Medical Service', short: 'EMS', ranks: 30, leaderRank: 30, viceRank: 29 },
+    me: { name: 'Lena Hoffmann', rank: ME_RANK, rankName: rankName(ME_RANK), dn: 'EMS-001', hiredAt: '2026-09-14' },
+    leader: 'Lena Hoffmann',
+    message: db.message,
+    balance: db.balance,
+    onDuty: db.members.filter((m) => m.onDuty).map((m) => ({ name: m.name, dn: m.dn, rank: m.rank, rankName: rankName(m.rank) })),
+    access: { structure: true, leitstelle: true, archive: true, message: true, cash: true },
+  });
+  const ranksPayload = () => ({
+    ranks: Array.from({ length: 30 }, (_, i) => 30 - i).map((r) => ({ rank: r, name: rankName(r), permissions: PERMS.filter((p) => has(r, p.key)).map((p) => p.key), editable: true, fixedPermissions: r === 30 || undefined })),
+    permissions: PERMS.map((p) => ({ key: p.key, group: p.group, label: p.label, grantable: true })),
+    departments: db.departments, exams: db.exams,
+    limits: { departments: 12, departmentRanks: 5, exams: 30, rankName: 32, department: 32, exam: 40 }, canEdit: true,
+  });
+  const membersPayload = () => ({
+    members: db.members.map((m) => ({ ...m, rankName: rankName(m.rank),
+      departments: m.departments.map((d) => { const dep = db.departments.find((x) => x.id === d.id); return dep ? { id: d.id, name: dep.name, rank: d.rank, rankName: dep.ranks[d.rank - 1] } : null; }).filter(Boolean),
+      exams: m.exams.map((e) => ({ ...e, name: (db.exams.find((x) => x.id === e.id) || {}).name || '?' })),
+      above: m.rank < ME_RANK || undefined })),
+    edit: { hire: true, fire: true, rank: true, dn: true, strikes: true, vacation: true, departments: true, exams: true },
+    departments: db.departments, exams: db.exams, leads: [1],
+    ranks: Array.from({ length: 30 }, (_, i) => ({ rank: i + 1, name: rankName(i + 1), assignable: i + 1 < ME_RANK || undefined })),
+    limits: { strikes: 10, vacation: 365, dn: 12, reason: 120 },
+  });
+  const calls = {
+    faction_menu_open: () => ({ ok: true, data: overview() }),
+    faction_message_save: (d) => { db.message = d.text ? { text: d.text, by: 'Lena Hoffmann', at: '2026-11-07 17:50' } : null; return { ok: true, data: overview() }; },
+    faction_cash: (d) => { if (d.action === 'withdraw' && d.amount > db.balance) return { ok: false, error: 'not_enough_money' }; db.balance += d.action === 'deposit' ? d.amount : -d.amount; return { ok: true, data: overview() }; },
+    faction_ranks: () => ({ ok: true, data: ranksPayload() }),
+    faction_rank_save: (d) => { db.ranks[d.rank] = { name: d.name, perms: d.permissions }; return { ok: true, data: ranksPayload() }; },
+    faction_department_save: (d) => { if (d.id) Object.assign(db.departments.find((x) => x.id === d.id), { name: d.name, ranks: d.ranks }); else db.departments.push({ id: Date.now(), name: d.name, ranks: d.ranks }); return { ok: true, data: ranksPayload() }; },
+    faction_department_delete: (d) => { db.departments = db.departments.filter((x) => x.id !== d.id); return { ok: true, data: ranksPayload() }; },
+    faction_exam_save: (d) => { if (d.id) db.exams.find((x) => x.id === d.id).name = d.name; else db.exams.push({ id: Date.now(), name: d.name }); return { ok: true, data: ranksPayload() }; },
+    faction_exam_delete: (d) => { db.exams = db.exams.filter((x) => x.id !== d.id); return { ok: true, data: ranksPayload() }; },
+    faction_vehicles: () => ({ ok: true, data: { vehicles: db.vehicles.map((v) => ({ ...v, rankName: rankName(v.minRank) })), canEdit: true } }),
+    faction_vehicle_save: (d) => { db.vehicles.find((v) => v.model === d.model).minRank = d.minRank; return calls.faction_vehicles(); },
+    faction_members: () => ({ ok: true, data: membersPayload() }),
+    faction_member_update: (d) => {
+      const m = db.members.find((x) => x.characterId === d.characterId);
+      if (d.field === 'dn') m.dn = d.value; if (d.field === 'strikes') m.strikes = d.value; if (d.field === 'vacation') m.vacationDays = d.value;
+      if (d.field === 'departments') m.departments = d.value;
+      if (d.field === 'exams') { m.exams = m.exams.filter((e) => e.id !== d.examId); if (d.value === 'add') m.exams.push({ id: d.examId, at: '2026-11-07', by: 'Lena Hoffmann' }); }
+      return { ok: true, data: membersPayload() };
+    },
+    faction_member_rank: (d) => { db.members.find((x) => x.characterId === d.characterId).rank = d.rank; return { ok: true, data: membersPayload() }; },
+    faction_member_fire: (d) => { db.members = db.members.filter((x) => x.characterId !== d.characterId); return { ok: true, data: membersPayload() }; },
+    faction_hire: (d) => d.characterId === 999 ? { ok: false, error: 'consent_declined' } : (db.members.push({ characterId: d.characterId, name: 'Neue Person', dn: 'EMS-012', rank: 1, strikes: 0, vacationDays: 0, departments: [], exams: [], hiredAt: '2026-11-07', online: true }), { ok: true, data: membersPayload() }),
+    faction_archive: (d) => ({ ok: true, data: { entries: db.archive.filter((a) => !d.search || a.name.toLowerCase().includes(d.search.toLowerCase()) || String(a.characterId) === d.search), page: 1, hasMore: false } }),
+  };
+  return {
+    delay: 120,
+    async handle(event, data) {
+      await new Promise((r) => setTimeout(r, this.delay));
+      console.info(`[mock] ${event}`, data);
+      if (event === 'orgmenu_call') {
+        const fn = calls[data.name];
+        return fn ? fn(data.data || {}) : { ok: false, error: 'invalid_input' };
+      }
+      return { ok: true };
+    },
+    push(event, data) { Bridge.emit(event, data); },
+    overview,
+  };
+})();
+</script>
+
+<script id="app">
+const TEXT = {
+  tabs: {
+    overview: 'Übersicht',
+    structure: 'Anpassung',
+    vehicles: 'Fahrzeuge',
+    leitstelle: 'Leitstelle',
+    archive: 'Archiv',
+  },
+  admin: (readOnly) => readOnly ? 'Admin, nur ansehen' : 'Admin, bearbeiten',
+  close: 'Schließen',
+  card: { org: (short) => `DIENSTKARTE ${short}`, rank: 'Rang', dn: 'Dienstnummer', hired: 'Eingestellt am', leader: 'Leader', none: 'Keiner eingetragen', noRank: 'Kein Mitglied' },
+  cash: { title: 'Kasse', deposit: 'Einzahlen', withdraw: 'Auszahlen', amount: 'Betrag in $', hint: 'Einzahlen aus deinem Bargeld, Auszahlen in dein Bargeld.' },
+  duty: { title: 'Gerade im Dienst', none: 'Gerade ist niemand im Dienst.', count: (n) => `${n} im Dienst` },
+  memo: { title: 'Nachricht vom Leader', empty: 'Gerade keine Nachricht.', edit: 'Bearbeiten', save: 'Speichern', cancel: 'Abbrechen', by: (by, at) => `${by}, ${at}` },
+  structure: {
+    sub: { ranks: 'Ränge und Rechte', departments: 'Abteilungen', exams: 'Prüfungen' },
+    rankName: 'Name des Rangs', save: 'Speichern',
+    fixed: 'Der höchste Rang hat immer alle Rechte. Hier lässt sich nur der Name ändern.',
+    readonly: 'Diesen Rang darfst du nicht ändern. Der Vice Leader ändert nur Ränge unter sich, seine eigenen Rechte nur der Leader.',
+    notGrantable: 'Rechte, die du selbst nicht hast, kannst du nicht vergeben.',
+    perms: (n) => `${n} Rechte`,
+    deptName: 'Name der Abteilung', deptRanks: 'Interne Ränge, von unten nach oben (bis zu 5)', deptRankPlaceholder: (i) => `Rang ${i}`,
+    addDept: 'Abteilung anlegen', deleteDept: 'Löschen', saveDept: 'Speichern', noDepts: 'Noch keine Abteilungen. Lege die erste an, z. B. Ausbildung.',
+    examName: 'Name der Prüfung', addExam: 'Prüfung anlegen', noExams: 'Noch keine Prüfungen angelegt.',
+    deptLead: 'Du leitest diese Abteilung und kannst die Rangnamen ändern.',
+  },
+  vehicles: { vehicle: 'Fahrzeug', model: 'Modell', from: 'Erlaubt ab Rang', info: 'Wer den Rang hat, kann das Fahrzeug in der Garage ausparken. Nur im Dienst.' },
+  lst: {
+    search: 'Name, ID oder DN suchen', count: (n) => `${n} Mitarbeiter`, hire: 'Einstellen', hireId: 'ID', hireHint: 'Die Person muss online sein und zustimmen.',
+    cols: { name: 'Name', id: 'ID', dn: 'DN', rank: 'Rang', strikes: 'Strikes', vacation: 'Urlaub', departments: 'Abteilungen', exams: 'Prüfungen' },
+    empty: 'Keine Treffer.', pick: 'Wähle links einen Mitarbeiter aus.',
+    status: { duty: 'Im Dienst', online: 'Online', offline: 'Offline' },
+    since: (d) => `Seit ${d}`,
+    fields: { rank: 'Rang', dn: 'Dienstnummer', strikes: 'Strikes', vacation: 'Urlaubstage', departments: 'Abteilungen', exams: 'Prüfungen' },
+    none: 'Keine', save: 'Speichern', fire: 'Entlassen', noDept: 'Nicht dabei',
+    fireTitle: (name) => `${name} entlassen?`, fireText: 'Rang, Dienstausweis und Zugriff auf die Fahrzeuge gehen verloren. Der Eintrag kommt ins Archiv.',
+    reason: 'Grund (steht im Archiv)',
+    above: 'Diese Person steht nicht unter deinem Rang. Ändern kannst du nur Mitarbeiter unter dir.',
+    days: (n) => `${n} ${n === 1 ? 'Tag' : 'Tage'}`,
+  },
+  archive: {
+    search: 'Name oder ID suchen', empty: 'Keine ehemaligen Mitarbeiter gefunden.', pick: 'Wähle links einen Eintrag aus.',
+    cols: { name: 'Name', id: 'ID', last: 'Letzter Rang', left: 'Ausgetreten', kind: 'Art' },
+    kind: { fire: 'Entlassen', leave: 'Gekündigt', admin: 'Vom Admin entfernt' },
+    ranks: 'Ränge', exams: 'Prüfungen', none: 'Keine', under: (leader) => leader ? `unter ${leader}` : 'kein Leader eingetragen',
+    left: (at, by) => `Ausgetreten am ${at}${by ? `, durch ${by}` : ''}`, hired: (at) => `Eingestellt am ${at}`, reason: 'Grund',
+    more: 'Mehr laden',
+  },
+  saved: 'Gespeichert.',
+  errors: {
+    not_member: 'Du bist in keiner Organisation mehr.',
+    no_permission: 'Dafür hast du keine Rechte.',
+    invalid_input: 'Die Eingabe passt nicht.',
+    invalid_rank: 'Diesen Rang gibt es nicht.',
+    invalid_name: 'Bitte einen Namen eingeben.',
+    invalid_ranks: 'Die Abteilung braucht mindestens einen Rang.',
+    invalid_amount: 'Bitte einen gültigen Betrag eingeben.',
+    not_enough_money: 'Dafür reicht das Geld nicht.',
+    limit_reached: 'Das Limit ist erreicht.',
+    not_found: 'Den Eintrag gibt es nicht mehr.',
+    dn_taken: 'Diese Dienstnummer ist schon vergeben.',
+    already_member: 'Die Person ist schon in einer Organisation.',
+    target_offline: 'Die Person ist nicht online.',
+    consent_declined: 'Die Person hat abgelehnt.',
+    consent_timeout: 'Die Person hat nicht geantwortet.',
+    target_busy: 'Die Person entscheidet gerade etwas anderes.',
+    db_error: 'Datenbankfehler. Bitte einem Admin melden.',
+    server_error: 'Fehler auf dem Server. Bitte nochmal versuchen.',
+    timeout: 'Der Server antwortet nicht.',
+    default: 'Das hat nicht geklappt.',
+  },
+};
+
+const TABS = [
+  { id: 'overview', icon: 'i-home', access: () => true },
+  { id: 'structure', icon: 'i-sliders', access: (a) => a.structure },
+  { id: 'vehicles', icon: 'i-car', access: (a) => a.structure },
+  { id: 'leitstelle', icon: 'i-radio', access: (a) => a.leitstelle },
+  { id: 'archive', icon: 'i-archive', access: (a) => a.archive },
+];
+const TOAST_MS = 2600;
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const MONEY = new Intl.NumberFormat('de-DE');
+
+const state = {
+  open: false,
+  busy: false,
+  tab: 'overview',
+  overview: null,
+  ranks: null, rankSel: null, sub: 'ranks',
+  vehicles: null,
+  members: null, memberSel: null, search: '',
+  archive: null, archiveSel: null, archiveSearch: '', archivePage: 1,
+  memoEdit: false,
+  modal: null,
+};
+
+const el = {
+  panel: document.getElementById('panel'),
+  nav: document.getElementById('nav'),
+  brandShort: document.getElementById('brand-short'),
+  brandLabel: document.getElementById('brand-label'),
+  meName: document.getElementById('me-name'),
+  meRank: document.getElementById('me-rank'),
+  meAdmin: document.getElementById('me-admin'),
+  headTitle: document.getElementById('head-title'),
+  headMeta: document.getElementById('head-meta'),
+  headActions: document.getElementById('head-actions'),
+  view: document.getElementById('view'),
+  modal: document.getElementById('modal'),
+  modalTitle: document.getElementById('modal-title'),
+  modalText: document.getElementById('modal-text'),
+  modalField: document.getElementById('modal-field'),
+  modalConfirm: document.getElementById('modal-confirm'),
+  toast: document.getElementById('toast'),
+};
+
+/* ---------- Hilfen ---------- */
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+function icon(id) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.append(use);
+  return svg;
+}
+function button(label, action, variant = '', attrs = {}) {
+  const node = make('button', `btn ${variant}`.trim(), label);
+  node.type = 'button';
+  node.dataset.action = action;
+  Object.entries(attrs).forEach(([k, v]) => { if (v !== undefined) node.dataset[k] = v; });
+  return node;
+}
+function input(value, attrs = {}) {
+  const node = make('input', 'input');
+  node.value = value ?? '';
+  Object.entries(attrs).forEach(([k, v]) => { if (v !== undefined && v !== false) node.setAttribute(k, v === true ? '' : v); });
+  return node;
+}
+function select(options, value, attrs = {}) {
+  const node = make('select', 'select');
+  options.forEach((o) => {
+    const opt = make('option', '', o.label);
+    opt.value = String(o.value);
+    if (o.disabled) opt.disabled = true;
+    node.append(opt);
+  });
+  node.value = String(value);
+  Object.entries(attrs).forEach(([k, v]) => { if (v !== undefined && v !== false) node.setAttribute(k, v === true ? '' : v); });
+  return node;
+}
+function field(label, control) {
+  const wrap = make('label', 'field');
+  wrap.append(make('span', 'field__label', label), control);
+  return wrap;
+}
+function applyColors(colors) {
+  if (!colors) return;
+  COLOR_KEYS.forEach((key) => {
+    if (typeof colors[key] === 'string' && COLOR_PATTERN.test(colors[key])) {
+      document.documentElement.style.setProperty(`--rgb-${key}`, colors[key]);
+    }
+  });
+}
+let toastTimer = null;
+function toast(text, error = false) {
+  el.toast.textContent = text;
+  el.toast.classList.toggle('toast--error', error);
+  el.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.toast.hidden = true; }, TOAST_MS);
+}
+function errorText(code) {
+  return TEXT.errors[code] || TEXT.errors.default;
+}
+function readOnly() {
+  return state.overview?.me?.readOnly === true;
+}
+
+// Anfrage an den Server, waehrend sie laeuft sind Aktionen gesperrt
+async function call(name, data = {}) {
+  if (state.busy) return null;
+  state.busy = true;
+  el.panel.setAttribute('aria-busy', 'true');
+  const res = await Bridge.send('orgmenu_call', { name, data });
+  state.busy = false;
+  el.panel.removeAttribute('aria-busy');
+  if (!res || !res.ok) {
+    toast(errorText(res && res.error), true);
+    return null;
+  }
+  return res.data ?? {};
+}
+
+/* ---------- Grundgeruest ---------- */
+function renderFrame() {
+  const ov = state.overview;
+  el.brandShort.textContent = ov.org.short;
+  el.brandLabel.textContent = ov.org.label;
+  el.meName.textContent = ov.me.name;
+  el.meRank.textContent = ov.me.rankName ? `${ov.me.rankName} · ${ov.me.dn || ''}`.replace(/ · $/, '') : '';
+  el.meAdmin.hidden = !ov.me.admin;
+  el.meAdmin.textContent = ov.me.admin ? TEXT.admin(ov.me.readOnly) : '';
+  el.nav.replaceChildren(...TABS.filter((t) => t.access(ov.access)).map((t) => {
+    const item = make('button', 'nav__item');
+    item.type = 'button';
+    item.dataset.action = 'tab';
+    item.dataset.tab = t.id;
+    if (state.tab === t.id) item.setAttribute('aria-current', 'page');
+    item.append(icon(t.icon), make('span', '', TEXT.tabs[t.id]));
+    if (t.id === 'leitstelle' && state.members) item.append(make('span', 'nav__count num', state.members.members.length));
+    return item;
+  }));
+}
+
+function setHead(title, meta = '', actions = []) {
+  el.headTitle.textContent = title;
+  el.headMeta.textContent = meta;
+  el.headActions.replaceChildren(...actions);
+}
+
+async function openTab(tab) {
+  state.tab = tab;
+  if (tab === 'structure' && !state.ranks) state.ranks = await call('faction_ranks');
+  if (tab === 'vehicles' && !state.vehicles) state.vehicles = await call('faction_vehicles');
+  if (tab === 'leitstelle' && !state.members) state.members = await call('faction_members');
+  if (tab === 'archive' && !state.archive) state.archive = await call('faction_archive', { page: 1 });
+  render();
+}
+
+function render() {
+  if (!state.open || !state.overview) return;
+  renderFrame();
+  el.view.className = 'view';
+  ({ overview: renderOverview, structure: renderStructure, vehicles: renderVehicles, leitstelle: renderLeitstelle, archive: renderArchive })[state.tab]();
+}
+
+/* ---------- Tab 1: Uebersicht ---------- */
+function renderOverview() {
+  const ov = state.overview;
+  setHead(TEXT.tabs.overview, ov.org.label);
+  const wrap = make('div', 'overview');
+  const left = make('div', 'stack');
+
+  const card = make('article', 'card-id');
+  card.append(make('div', 'card-id__org', TEXT.card.org(ov.org.short)), make('div', 'card-id__name', ov.me.name),
+    make('div', 'card-id__rank', ov.me.rankName || TEXT.card.noRank));
+  const facts = make('dl', 'facts');
+  [[TEXT.card.dn, ov.me.dn || '-'], [TEXT.card.hired, ov.me.hiredAt || '-'], [TEXT.card.leader, ov.leader || TEXT.card.none], [TEXT.card.rank, ov.me.rank ? `${ov.me.rank} von ${ov.org.ranks}` : '-']]
+    .forEach(([k, v]) => { const d = make('div'); d.append(make('dt', '', k), make('dd', 'num', v)); facts.append(d); });
+  card.append(facts);
+  left.append(card);
+
+  if (typeof ov.balance === 'number') {
+    const cash = make('section', 'box');
+    cash.append(make('h2', 'section-title', TEXT.cash.title.toUpperCase()), make('div', 'cash__value num', `${MONEY.format(ov.balance)} $`));
+    if (ov.access.cash && !readOnly()) {
+      const row = make('div', 'cash__row');
+      const amount = input('', { type: 'number', min: 1, step: 1, placeholder: TEXT.cash.amount, id: 'cash-amount', 'aria-label': TEXT.cash.amount });
+      row.append(amount, button(TEXT.cash.deposit, 'cash', '', { kind: 'deposit' }), button(TEXT.cash.withdraw, 'cash', '', { kind: 'withdraw' }));
+      cash.append(row, make('div', 'note', TEXT.cash.hint));
+    }
+    left.append(cash);
+  }
+
+  const memo = make('section', 'box');
+  memo.append(make('h2', 'section-title', TEXT.memo.title.toUpperCase()));
+  if (state.memoEdit) {
+    const area = make('textarea', 'textarea');
+    area.id = 'memo-text';
+    area.maxLength = 600;
+    area.value = ov.message?.text || '';
+    const actions = make('div', 'memo__actions');
+    actions.append(button(TEXT.memo.cancel, 'memo-cancel', 'btn--ghost'), button(TEXT.memo.save, 'memo-save', 'btn--primary'));
+    memo.append(area, actions);
+    requestAnimationFrame(() => area.focus());
+  } else {
+    memo.append(ov.message ? make('p', 'memo__text', ov.message.text) : make('p', 'memo__text muted', TEXT.memo.empty));
+    if (ov.message) memo.append(make('div', 'memo__by', TEXT.memo.by(ov.message.by, ov.message.at)));
+    if (ov.access.message && !readOnly()) {
+      const actions = make('div', 'memo__actions');
+      actions.append(button(TEXT.memo.edit, 'memo-edit'));
+      memo.append(actions);
+    }
+  }
+  const right = make('div', 'stack');
+  right.append(memo);
+  const duty = make('section', 'box');
+  const list = ov.onDuty || [];
+  duty.append(make('h2', 'section-title', `${TEXT.duty.title.toUpperCase()} · ${list.length}`));
+  if (!list.length) duty.append(make('div', 'muted', TEXT.duty.none));
+  else {
+    const ul = make('ul', 'duty-list');
+    list.forEach((p) => {
+      const li = make('li');
+      const who = make('div', 'who');
+      who.append(make('span', 'dot dot--duty'), make('span', 'who__name', p.name));
+      li.append(who, make('span', 'muted num', p.dn || ''), make('span', 'muted', `${p.rank} · ${p.rankName}`));
+      ul.append(li);
+    });
+    duty.append(ul);
+  }
+  right.append(duty);
+  wrap.append(left, right);
+  el.view.replaceChildren(wrap);
+}
+
+/* ---------- Tab 2: Anpassung ---------- */
+function renderStructure() {
+  const data = state.ranks;
+  const seg = make('div', 'seg');
+  seg.setAttribute('role', 'group');
+  Object.entries(TEXT.structure.sub).forEach(([id, label]) => {
+    const b = make('button', '', label);
+    b.type = 'button';
+    b.dataset.action = 'sub';
+    b.dataset.sub = id;
+    b.setAttribute('aria-pressed', String(state.sub === id));
+    seg.append(b);
+  });
+  setHead(TEXT.tabs.structure, '', [seg]);
+  if (!data) { el.view.replaceChildren(make('div', 'empty', TEXT.errors.default)); return; }
+  if (state.sub === 'ranks') renderRanks(data);
+  if (state.sub === 'departments') renderDepartments(data);
+  if (state.sub === 'exams') renderExams(data);
+}
+
+function renderRanks(data) {
+  if (state.rankSel === null) state.rankSel = data.ranks[0].rank;
+  const wrap = make('div', 'ranks');
+  const list = make('div', 'rank-list');
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-label', TEXT.structure.sub.ranks);
+  data.ranks.forEach((r) => {
+    const item = make('button', 'rank-item');
+    item.type = 'button';
+    item.dataset.action = 'rank-pick';
+    item.dataset.rank = r.rank;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(r.rank === state.rankSel));
+    item.append(make('span', 'rank-item__no num', r.rank), make('span', '', r.name), make('span', 'rank-item__count num', TEXT.structure.perms(r.permissions.length)));
+    list.append(item);
+  });
+
+  const rank = data.ranks.find((r) => r.rank === state.rankSel);
+  const editor = make('div');
+  const head = make('div', 'editor-head');
+  const name = input(rank.name, { id: 'rank-name', maxlength: data.limits.rankName, disabled: !rank.editable });
+  head.append(field(TEXT.structure.rankName, name));
+  if (rank.editable) head.append(button(TEXT.structure.save, 'rank-save', 'btn--primary'));
+  editor.append(head);
+  if (rank.fixedPermissions) editor.append(make('div', 'note', TEXT.structure.fixed));
+  else if (!rank.editable) editor.append(make('div', 'note', TEXT.structure.readonly));
+  else if (data.permissions.some((p) => !p.grantable)) editor.append(make('div', 'note', TEXT.structure.notGrantable));
+
+  const groups = make('div', 'perm-groups');
+  const byGroup = new Map();
+  data.permissions.forEach((p) => { if (!byGroup.has(p.group)) byGroup.set(p.group, []); byGroup.get(p.group).push(p); });
+  byGroup.forEach((perms, group) => {
+    const box = make('section', 'perm-group');
+    box.append(make('h4', '', group));
+    perms.forEach((p) => {
+      const locked = !rank.editable || rank.fixedPermissions || !p.grantable;
+      const row = make('label', `check${locked ? ' check--locked' : ''}`);
+      const cb = make('input');
+      cb.type = 'checkbox';
+      cb.name = 'perm';
+      cb.value = p.key;
+      cb.checked = rank.fixedPermissions || rank.permissions.includes(p.key);
+      cb.disabled = locked;
+      row.append(cb, make('span', '', p.label));
+      box.append(row);
+    });
+    groups.append(box);
+  });
+  editor.append(groups);
+  wrap.append(list, editor);
+  el.view.replaceChildren(wrap);
+}
+
+function renderDepartments(data) {
+  const wrap = make('div', 'dept-list');
+  const canEdit = data.canEdit;
+  const leads = new Set(state.members?.leads || []);
+  data.departments.forEach((d) => {
+    const lead = !canEdit && leads.has(d.id);
+    const row = make('div', 'dept');
+    row.dataset.id = d.id;
+    row.append(field(TEXT.structure.deptName, input(d.name, { 'data-role': 'dept-name', maxlength: data.limits.department, disabled: !canEdit })));
+    const ranks = make('div', 'dept__ranks');
+    for (let i = 0; i < data.limits.departmentRanks; i += 1) {
+      ranks.append(input(d.ranks[i] || '', { 'data-role': 'dept-rank', placeholder: TEXT.structure.deptRankPlaceholder(i + 1), maxlength: data.limits.rankName,
+        disabled: !(canEdit || (lead && i < d.ranks.length)), 'aria-label': TEXT.structure.deptRankPlaceholder(i + 1) }));
+    }
+    row.append(field(TEXT.structure.deptRanks, ranks));
+    const actions = make('div', 'dept__actions');
+    if (canEdit || lead) actions.append(button(TEXT.structure.saveDept, 'dept-save', '', { id: d.id }));
+    if (canEdit) actions.append(button(TEXT.structure.deleteDept, 'dept-delete', 'btn--danger', { id: d.id }));
+    row.append(actions);
+    wrap.append(row);
+  });
+  if (!data.departments.length) wrap.append(make('div', 'empty', TEXT.structure.noDepts));
+  if (canEdit && data.departments.length < data.limits.departments) {
+    const row = make('div', 'dept');
+    row.dataset.id = '';
+    row.append(field(TEXT.structure.deptName, input('', { 'data-role': 'dept-name', maxlength: data.limits.department })));
+    const ranks = make('div', 'dept__ranks');
+    for (let i = 0; i < data.limits.departmentRanks; i += 1) {
+      ranks.append(input('', { 'data-role': 'dept-rank', placeholder: TEXT.structure.deptRankPlaceholder(i + 1), maxlength: data.limits.rankName, 'aria-label': TEXT.structure.deptRankPlaceholder(i + 1) }));
+    }
+    row.append(field(TEXT.structure.deptRanks, ranks));
+    const actions = make('div', 'dept__actions');
+    actions.append(button(TEXT.structure.addDept, 'dept-save', 'btn--primary', { id: '' }));
+    row.append(actions);
+    wrap.append(row);
+  }
+  el.view.replaceChildren(wrap);
+}
+
+function renderExams(data) {
+  const wrap = make('div', 'exam-list');
+  data.exams.forEach((e) => {
+    const row = make('div', 'exam-row');
+    row.dataset.id = e.id;
+    row.append(input(e.name, { 'data-role': 'exam-name', maxlength: data.limits.exam, disabled: !data.canEdit, 'aria-label': TEXT.structure.examName }));
+    if (data.canEdit) row.append(button(TEXT.structure.save, 'exam-save', '', { id: e.id }), button(TEXT.structure.deleteDept, 'exam-delete', 'btn--danger', { id: e.id }));
+    wrap.append(row);
+  });
+  if (!data.exams.length) wrap.append(make('div', 'empty', TEXT.structure.noExams));
+  if (data.canEdit && data.exams.length < data.limits.exams) {
+    const row = make('div', 'exam-row');
+    row.dataset.id = '';
+    row.append(input('', { 'data-role': 'exam-name', maxlength: data.limits.exam, placeholder: TEXT.structure.examName, 'aria-label': TEXT.structure.examName }),
+      button(TEXT.structure.addExam, 'exam-save', 'btn--primary', { id: '' }));
+    wrap.append(row);
+  }
+  el.view.replaceChildren(wrap);
+}
+
+/* ---------- Tab 3: Fahrzeuge ---------- */
+function rankOptions(count, upTo = count) {
+  const names = state.ranks?.ranks || state.members?.ranks;
+  const nameOf = (r) => (names ? (names.find((x) => x.rank === r) || {}).name : '') || '';
+  return Array.from({ length: count }, (_, i) => ({ value: i + 1, label: `${i + 1} · ${nameOf(i + 1)}`.replace(/ · $/, ''), disabled: i + 1 > upTo }));
+}
+
+function renderVehicles() {
+  const data = state.vehicles;
+  setHead(TEXT.tabs.vehicles, TEXT.vehicles.info);
+  if (!data) { el.view.replaceChildren(make('div', 'empty', TEXT.errors.default)); return; }
+  const table = make('table', 'table table--static vehicles');
+  const head = make('thead');
+  const hr = make('tr');
+  [TEXT.vehicles.vehicle, TEXT.vehicles.model, TEXT.vehicles.from].forEach((t) => hr.append(make('th', '', t)));
+  head.append(hr);
+  const body = make('tbody');
+  data.vehicles.forEach((v) => {
+    const tr = make('tr');
+    const td = make('td');
+    const sel = select(rankOptions(state.overview.org.ranks), v.minRank, { 'data-role': 'vehicle-rank', 'data-model': v.model, disabled: !data.canEdit, 'aria-label': `${TEXT.vehicles.from}: ${v.label}` });
+    td.append(sel);
+    tr.append(make('td', '', v.label), make('td', 'muted', v.model), td);
+    body.append(tr);
+  });
+  table.append(head, body);
+  el.view.replaceChildren(table);
+}
+
+/* ---------- Tab 4: Leitstelle ---------- */
+function statusOf(m) {
+  if (m.onDuty) return { cls: 'dot dot--duty', label: TEXT.lst.status.duty };
+  if (m.online) return { cls: 'dot dot--online', label: TEXT.lst.status.online };
+  return { cls: 'dot', label: TEXT.lst.status.offline };
+}
+
+function filteredMembers() {
+  const q = state.search.trim().toLowerCase();
+  const list = state.members.members;
+  if (!q) return list;
+  return list.filter((m) => m.name.toLowerCase().includes(q) || String(m.characterId) === q || (m.dn || '').toLowerCase().includes(q));
+}
+
+function renderLeitstelle() {
+  const data = state.members;
+  if (!data) { setHead(TEXT.tabs.leitstelle); el.view.replaceChildren(make('div', 'empty', TEXT.errors.default)); return; }
+  setHead(TEXT.tabs.leitstelle, TEXT.lst.count(data.members.length));
+  el.view.className = 'view view--split';
+
+  const scroll = make('div', 'scroll');
+  const bar = make('div', 'toolbar');
+  const search = input(state.search, { type: 'search', placeholder: TEXT.lst.search, id: 'lst-search', 'aria-label': TEXT.lst.search });
+  bar.append(search);
+  if (data.edit.hire) {
+    const hire = make('div', 'toolbar__right hire');
+    hire.append(input('', { type: 'number', min: 1, step: 1, placeholder: TEXT.lst.hireId, id: 'hire-id', 'aria-label': TEXT.lst.hireId, title: TEXT.lst.hireHint }),
+      button(TEXT.lst.hire, 'hire', 'btn--primary'));
+    bar.append(hire);
+  }
+
+  const table = make('table', 'table');
+  const head = make('thead');
+  const hr = make('tr');
+  const c = TEXT.lst.cols;
+  [[c.name, ''], [c.id, 'r'], [c.dn, ''], [c.rank, ''], [c.strikes, 'r'], [c.vacation, 'r'], [c.departments, ''], [c.exams, '']]
+    .forEach(([t, cls]) => hr.append(make('th', cls, t)));
+  head.append(hr);
+  const body = make('tbody');
+  const list = filteredMembers();
+  list.forEach((m) => {
+    const tr = make('tr');
+    tr.dataset.action = 'member-pick';
+    tr.dataset.id = m.characterId;
+    tr.setAttribute('aria-selected', String(m.characterId === state.memberSel));
+    tr.tabIndex = 0;
+    const who = make('div', 'who');
+    const st = statusOf(m);
+    const dot = make('span', st.cls);
+    dot.title = st.label;
+    dot.setAttribute('aria-label', st.label);
+    who.append(dot, make('span', 'who__name', m.name));
+    const tdWho = make('td');
+    tdWho.append(who);
+    const deps = make('div', 'chips');
+    m.departments.forEach((d) => deps.append(make('span', 'chip', d.rankName ? `${d.name} · ${d.rankName}` : d.name)));
+    const exams = make('div', 'chips');
+    m.exams.forEach((e) => exams.append(make('span', 'chip', e.name)));
+    const tdDeps = make('td');
+    tdDeps.append(m.departments.length ? deps : make('span', 'muted', '-'));
+    const tdExams = make('td');
+    tdExams.append(m.exams.length ? exams : make('span', 'muted', '-'));
+    tr.append(tdWho, make('td', 'r num muted', m.characterId), make('td', 'num', m.dn || '-'), make('td', '', `${m.rank} · ${m.rankName}`),
+      make('td', `r num${m.strikes >= 3 ? ' strikes--hot' : ''}`, m.strikes), make('td', 'r num', m.vacationDays), tdDeps, tdExams);
+    body.append(tr);
+  });
+  table.append(head, body);
+  scroll.append(bar, table);
+  if (!list.length) scroll.append(make('div', 'empty', TEXT.lst.empty));
+
+  const detail = make('aside', 'detail');
+  detail.setAttribute('aria-label', 'Mitarbeiter');
+  renderMemberDetail(detail);
+  el.view.replaceChildren(scroll, detail);
+}
+
+function renderMemberDetail(box) {
+  const data = state.members;
+  const m = data.members.find((x) => x.characterId === state.memberSel);
+  if (!m) { box.append(make('div', 'empty', TEXT.lst.pick)); return; }
+  const edit = data.edit;
+  const can = (key) => edit[key] && m.above;
+  const st = statusOf(m);
+  box.append(make('h2', 'detail__name', m.name), make('div', 'detail__meta num', `ID ${m.characterId} · ${m.dn || '-'} · ${st.label} · ${TEXT.lst.since(m.hiredAt)}`));
+  if (!m.above && !readOnly() && Object.keys(edit).length) box.append(make('div', 'note', TEXT.lst.above));
+
+  const general = make('div', 'detail__block');
+  const rankSel = select(data.ranks.map((r) => ({ value: r.rank, label: `${r.rank} · ${r.name}`, disabled: !r.assignable && r.rank !== m.rank })), m.rank,
+    { 'data-role': 'member-rank', disabled: !can('rank') });
+  general.append(field(TEXT.lst.fields.rank, rankSel));
+  const pair = make('div', 'pair');
+  const dn = input(m.dn || '', { 'data-role': 'member-dn', maxlength: data.limits.dn, disabled: !can('dn') });
+  pair.append(field(TEXT.lst.fields.dn, dn));
+  const vac = input(m.vacationDays, { type: 'number', min: 0, max: data.limits.vacation, 'data-role': 'member-vacation', disabled: !can('vacation') });
+  pair.append(field(TEXT.lst.fields.vacation, vac));
+  general.append(pair);
+  const stepper = make('div', 'stepper');
+  const minus = button('', 'strike', 'btn--icon', { delta: '-1' });
+  minus.append(icon('i-minus'));
+  minus.setAttribute('aria-label', 'Strike abziehen');
+  const plus = button('', 'strike', 'btn--icon', { delta: '1' });
+  plus.append(icon('i-plus'));
+  plus.setAttribute('aria-label', 'Strike vergeben');
+  minus.disabled = plus.disabled = !can('strikes');
+  stepper.append(minus, input(m.strikes, { readonly: true, class: 'input num', 'aria-label': TEXT.lst.fields.strikes }), plus);
+  general.append(field(TEXT.lst.fields.strikes, stepper));
+  if (can('dn') || can('vacation')) {
+    const row = make('div');
+    row.append(button(TEXT.lst.save, 'member-save'));
+    general.append(row);
+  }
+  box.append(general);
+
+  const deps = make('div', 'detail__block');
+  deps.append(make('h3', 'section-title', TEXT.lst.fields.departments.toUpperCase()));
+  const leads = new Set(data.leads);
+  if (!data.departments.length) deps.append(make('div', 'muted', TEXT.lst.none));
+  data.departments.forEach((d) => {
+    const current = m.departments.find((x) => x.id === d.id);
+    const allowed = (can('departments')) || (leads.has(d.id) && !m.self && !readOnly());
+    const row = make('div', 'dept-pick');
+    row.append(make('span', '', d.name));
+    const options = [{ value: 0, label: TEXT.lst.noDept }, ...d.ranks.map((name, i) => ({ value: i + 1, label: name }))];
+    row.append(select(options, current ? current.rank : 0, { 'data-role': 'member-dept', 'data-dept': d.id, disabled: !allowed, 'aria-label': d.name }));
+    deps.append(row);
+  });
+  box.append(deps);
+
+  const exams = make('div', 'detail__block');
+  exams.append(make('h3', 'section-title', TEXT.lst.fields.exams.toUpperCase()));
+  if (!data.exams.length) exams.append(make('div', 'muted', TEXT.lst.none));
+  data.exams.forEach((e) => {
+    const passed = m.exams.find((x) => x.id === e.id);
+    const row = make('label', `check${can('exams') ? '' : ' check--locked'}`);
+    const cb = make('input');
+    cb.type = 'checkbox';
+    cb.checked = !!passed;
+    cb.disabled = !can('exams');
+    cb.dataset.role = 'member-exam';
+    cb.dataset.exam = e.id;
+    row.append(cb, make('span', '', passed ? `${e.name} · ${passed.at}` : e.name));
+    exams.append(row);
+  });
+  box.append(exams);
+
+  if (can('fire') && !m.self) {
+    const fire = make('div', 'detail__block');
+    fire.append(button(TEXT.lst.fire, 'member-fire', 'btn--danger'));
+    box.append(fire);
+  }
+}
+
+/* ---------- Tab 5: Archiv ---------- */
+function renderArchive() {
+  const data = state.archive;
+  setHead(TEXT.tabs.archive);
+  el.view.className = 'view view--split';
+  const scroll = make('div', 'scroll');
+  const bar = make('div', 'toolbar');
+  bar.append(input(state.archiveSearch, { type: 'search', placeholder: TEXT.archive.search, id: 'archive-search', 'aria-label': TEXT.archive.search }));
+  scroll.append(bar);
+  const entries = data ? data.entries : [];
+  if (!entries.length) scroll.append(make('div', 'empty', TEXT.archive.empty));
+  else {
+    const table = make('table', 'table');
+    const head = make('thead');
+    const hr = make('tr');
+    const c = TEXT.archive.cols;
+    [[c.name, ''], [c.id, 'r'], [c.last, ''], [c.left, ''], [c.kind, '']].forEach(([t, cls]) => hr.append(make('th', cls, t)));
+    head.append(hr);
+    const body = make('tbody');
+    entries.forEach((a) => {
+      const tr = make('tr');
+      tr.dataset.action = 'archive-pick';
+      tr.dataset.id = a.id;
+      tr.tabIndex = 0;
+      tr.setAttribute('aria-selected', String(a.id === state.archiveSel));
+      tr.append(make('td', 'who__name', a.name), make('td', 'r num muted', a.characterId), make('td', '', a.lastRank), make('td', 'num', a.leftAt), make('td', 'muted', TEXT.archive.kind[a.kind] || a.kind));
+      body.append(tr);
+    });
+    table.append(head, body);
+    scroll.append(table);
+    if (data.hasMore) {
+      const pager = make('div', 'pager');
+      pager.append(button(TEXT.archive.more, 'archive-more'));
+      scroll.append(pager);
+    }
+  }
+  const detail = make('aside', 'detail');
+  const a = entries.find((x) => x.id === state.archiveSel);
+  if (!a) detail.append(make('div', 'empty', TEXT.archive.pick));
+  else {
+    detail.append(make('h2', 'detail__name', a.name), make('div', 'detail__meta num', `ID ${a.characterId} · ${a.dn || '-'} · ${TEXT.archive.hired(a.hiredAt || '-')}`));
+    const left = make('div', 'detail__block');
+    left.append(make('div', '', TEXT.archive.left(a.leftAt, a.by)));
+    if (a.reason) left.append(field(TEXT.archive.reason, make('div', '', a.reason)));
+    detail.append(left);
+    const ranks = make('div', 'detail__block');
+    ranks.append(make('h3', 'section-title', TEXT.archive.ranks.toUpperCase()));
+    const tl = make('ol', 'timeline');
+    a.ranks.forEach((r) => {
+      const li = make('li');
+      const t = make('time', 'num', r.at);
+      const what = make('div', '', `${r.rank} · ${r.name || ''}`);
+      what.append(make('small', '', TEXT.archive.under(r.leader)));
+      li.append(t, what);
+      tl.append(li);
+    });
+    ranks.append(a.ranks.length ? tl : make('div', 'muted', TEXT.archive.none));
+    detail.append(ranks);
+    const exams = make('div', 'detail__block');
+    exams.append(make('h3', 'section-title', TEXT.archive.exams.toUpperCase()));
+    const el2 = make('ol', 'timeline');
+    a.exams.forEach((e) => {
+      const li = make('li');
+      const what = make('div', '', e.name);
+      if (e.by) what.append(make('small', '', e.by));
+      li.append(make('time', 'num', e.at || '-'), what);
+      el2.append(li);
+    });
+    exams.append(a.exams.length ? el2 : make('div', 'muted', TEXT.archive.none));
+    detail.append(exams);
+  }
+  el.view.replaceChildren(scroll, detail);
+}
+
+/* ---------- Modal ---------- */
+function openModal(options) {
+  state.modal = options;
+  el.modalTitle.textContent = options.title;
+  el.modalText.textContent = options.text || '';
+  el.modalField.replaceChildren();
+  if (options.input) {
+    const inp = input('', { id: 'modal-input', maxlength: options.input.maxLength, placeholder: options.input.label, 'aria-label': options.input.label });
+    el.modalField.append(field(options.input.label, inp));
+  }
+  el.modalConfirm.textContent = options.confirm;
+  el.modalConfirm.className = `btn ${options.danger ? 'btn--danger' : 'btn--primary'}`;
+  el.modal.querySelector('[data-action="modal-cancel"]').textContent = TEXT.memo.cancel;
+  el.modal.hidden = false;
+  requestAnimationFrame(() => (document.getElementById('modal-input') || el.modalConfirm).focus());
+}
+function closeModal() {
+  state.modal = null;
+  el.modal.hidden = true;
+}
+
+/* ---------- Aktionen ---------- */
+async function memberUpdate(field, value, extra = {}) {
+  const data = await call('faction_member_update', { characterId: state.memberSel, field, value, ...extra });
+  if (data) { state.members = data; toast(TEXT.saved); render(); }
+}
+
+const actions = {
+  close: () => close(),
+  tab: (t) => openTab(t.dataset.tab),
+  sub: (t) => { state.sub = t.dataset.sub; render(); },
+  'memo-edit': () => { state.memoEdit = true; render(); },
+  'memo-cancel': () => { state.memoEdit = false; render(); },
+  'memo-save': async () => {
+    const data = await call('faction_message_save', { text: document.getElementById('memo-text').value });
+    if (data) { state.overview = data; state.memoEdit = false; toast(TEXT.saved); render(); }
+  },
+  cash: async (t) => {
+    const amount = Number(document.getElementById('cash-amount').value);
+    if (!Number.isInteger(amount) || amount <= 0) { toast(TEXT.errors.invalid_amount, true); return; }
+    const data = await call('faction_cash', { action: t.dataset.kind, amount });
+    if (data) { state.overview = data; toast(TEXT.saved); render(); }
+  },
+  'rank-pick': (t) => { state.rankSel = Number(t.dataset.rank); render(); },
+  'rank-save': async () => {
+    const name = document.getElementById('rank-name').value;
+    const permissions = [...el.view.querySelectorAll('input[name="perm"]:checked')].map((cb) => cb.value);
+    const data = await call('faction_rank_save', { rank: state.rankSel, name, permissions });
+    if (data) { state.ranks = data; state.members = null; toast(TEXT.saved); render(); }
+  },
+  'dept-save': async (t) => {
+    const row = t.closest('.dept');
+    const id = Number(row.dataset.id) || undefined;
+    const name = row.querySelector('[data-role="dept-name"]').value;
+    const ranks = [...row.querySelectorAll('[data-role="dept-rank"]')].map((i) => i.value.trim()).filter(Boolean);
+    const data = await call('faction_department_save', { id, name, ranks });
+    if (data) { state.ranks = data; state.members = null; toast(TEXT.saved); render(); }
+  },
+  'dept-delete': async (t) => {
+    const data = await call('faction_department_delete', { id: Number(t.dataset.id) });
+    if (data) { state.ranks = data; state.members = null; render(); }
+  },
+  'exam-save': async (t) => {
+    const row = t.closest('.exam-row');
+    const id = Number(row.dataset.id) || undefined;
+    const data = await call('faction_exam_save', { id, name: row.querySelector('[data-role="exam-name"]').value });
+    if (data) { state.ranks = data; state.members = null; toast(TEXT.saved); render(); }
+  },
+  'exam-delete': async (t) => {
+    const data = await call('faction_exam_delete', { id: Number(t.dataset.id) });
+    if (data) { state.ranks = data; state.members = null; render(); }
+  },
+  'member-pick': (t) => { state.memberSel = Number(t.dataset.id); render(); },
+  'member-save': async () => {
+    const dn = el.view.querySelector('[data-role="member-dn"]');
+    const vac = el.view.querySelector('[data-role="member-vacation"]');
+    const m = state.members.members.find((x) => x.characterId === state.memberSel);
+    if (dn && !dn.disabled && dn.value.trim() !== (m.dn || '')) await memberUpdate('dn', dn.value.trim());
+    if (vac && !vac.disabled && Number(vac.value) !== m.vacationDays) await memberUpdate('vacation', Number(vac.value));
+  },
+  strike: async (t) => {
+    const m = state.members.members.find((x) => x.characterId === state.memberSel);
+    const next = m.strikes + Number(t.dataset.delta);
+    if (next < 0 || next > state.members.limits.strikes) return;
+    await memberUpdate('strikes', next);
+  },
+  'member-fire': () => {
+    const m = state.members.members.find((x) => x.characterId === state.memberSel);
+    openModal({ title: TEXT.lst.fireTitle(m.name), text: TEXT.lst.fireText, confirm: TEXT.lst.fire, danger: true,
+      input: { label: TEXT.lst.reason, maxLength: state.members.limits.reason },
+      onConfirm: async (reason) => {
+        const data = await call('faction_member_fire', { characterId: m.characterId, reason });
+        if (data) { state.members = data; state.memberSel = null; state.archive = null; render(); }
+      } });
+  },
+  hire: async () => {
+    const id = Number(document.getElementById('hire-id').value);
+    if (!Number.isInteger(id) || id <= 0) { toast(TEXT.errors.invalid_input, true); return; }
+    const data = await call('faction_hire', { characterId: id });
+    if (data) { state.members = data; state.memberSel = id; render(); }
+  },
+  'archive-pick': (t) => { state.archiveSel = Number(t.dataset.id); render(); },
+  'archive-more': async () => {
+    const data = await call('faction_archive', { page: state.archivePage + 1, search: state.archiveSearch || undefined });
+    if (data) { state.archivePage = data.page; state.archive = { ...data, entries: [...state.archive.entries, ...data.entries] }; render(); }
+  },
+  'modal-cancel': () => closeModal(),
+  'modal-confirm': async () => {
+    const options = state.modal;
+    if (!options) return;
+    const value = document.getElementById('modal-input')?.value.trim();
+    if (options.input && !value) { toast(TEXT.errors.invalid_input, true); return; }
+    closeModal();
+    await options.onConfirm(value);
+  },
+};
+
+// Ein Listener fuer alles (Event Delegation)
+document.addEventListener('click', (event) => {
+  const target = event.target.closest('[data-action]');
+  if (!target || target.disabled || state.busy) return;
+  const fn = actions[target.dataset.action];
+  if (fn) fn(target);
+});
+
+document.addEventListener('change', async (event) => {
+  const t = event.target;
+  if (!t.dataset || state.busy) return;
+  if (t.dataset.role === 'vehicle-rank') {
+    const data = await call('faction_vehicle_save', { model: t.dataset.model, minRank: Number(t.value) });
+    if (data) { state.vehicles = data; toast(TEXT.saved); render(); }
+  } else if (t.dataset.role === 'member-rank') {
+    const data = await call('faction_member_rank', { characterId: state.memberSel, rank: Number(t.value) });
+    if (data) { state.members = data; toast(TEXT.saved); render(); }
+  } else if (t.dataset.role === 'member-dept') {
+    const m = state.members.members.find((x) => x.characterId === state.memberSel);
+    const id = Number(t.dataset.dept);
+    const rank = Number(t.value);
+    const value = m.departments.filter((d) => d.id !== id).map((d) => ({ id: d.id, rank: d.rank }));
+    if (rank > 0) value.push({ id, rank });
+    await memberUpdate('departments', value);
+  } else if (t.dataset.role === 'member-exam') {
+    await memberUpdate('exams', t.checked ? 'add' : 'remove', { examId: Number(t.dataset.exam) });
+  }
+});
+
+let searchTimer = null;
+document.addEventListener('input', (event) => {
+  if (event.target.id === 'lst-search') {
+    state.search = event.target.value;
+    const pos = event.target.selectionStart;
+    render();
+    const s = document.getElementById('lst-search');
+    s.focus();
+    s.setSelectionRange(pos, pos);
+  } else if (event.target.id === 'archive-search') {
+    state.archiveSearch = event.target.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+      const data = await call('faction_archive', { page: 1, search: state.archiveSearch || undefined });
+      if (data) {
+        state.archive = data;
+        state.archivePage = 1;
+        render();
+        const s = document.getElementById('archive-search');
+        s.focus();
+        s.setSelectionRange(s.value.length, s.value.length);
+      }
+    }, 300);
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (!state.open) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (state.modal) closeModal();
+    else if (state.memoEdit) { state.memoEdit = false; render(); }
+    else close();
+    return;
+  }
+  if (event.key === 'Enter' && event.target.dataset?.action && event.target.tagName === 'TR') {
+    actions[event.target.dataset.action]?.(event.target);
+  }
+  if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && event.target.tagName === 'TR') {
+    event.preventDefault();
+    const next = event.key === 'ArrowDown' ? event.target.nextElementSibling : event.target.previousElementSibling;
+    if (next) { next.focus(); actions[next.dataset.action]?.(next); document.querySelector(`tr[data-id="${next.dataset.id}"]`)?.focus(); }
+  }
+});
+
+function close() {
+  if (!state.open) return;
+  state.open = false;
+  el.panel.hidden = true;
+  closeModal();
+  Bridge.send('orgmenu_close', {});
+}
+
+Bridge.on('orgmenu_open', (data) => {
+  applyColors(data.colors);
+  Object.assign(state, { open: true, overview: data.overview, tab: 'overview', ranks: null, rankSel: null, sub: 'ranks', vehicles: null,
+    members: null, memberSel: null, search: '', archive: null, archiveSel: null, archiveSearch: '', archivePage: 1, memoEdit: false });
+  el.panel.hidden = false;
+  render();
+  el.nav.querySelector('.nav__item')?.focus();
+});
+
+Bridge.on('orgmenu_close', () => {
+  state.open = false;
+  el.panel.hidden = true;
+  closeModal();
+});
+
+(async () => {
+  const res = await Bridge.send('ui_ready', { ui: 'orgmenu', version: CONTRACT_VERSION });
+  if (res && res.ok && res.data) applyColors(res.data.colors);
+  if (Bridge.platform === 'mock') {
+    Mock.push('orgmenu_open', { overview: Mock.overview() });
+    const tab = new URLSearchParams(location.search).get('tab');
+    if (tab) {
+      await openTab(tab);
+      if (tab === 'leitstelle') { state.memberSel = 108; render(); }
+      if (tab === 'archive') { state.archiveSel = 3; render(); }
+      if (tab === 'structure') { state.rankSel = 24; render(); }
+    }
+  }
+})();
+</script>
+</body>
+</html>

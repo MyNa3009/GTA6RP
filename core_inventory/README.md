@@ -1,6 +1,13 @@
-# core_inventory 1.3.0
+# core_inventory 1.4.0
 
 Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in der Hand, Rucksack mit eigenem Inhalt, Schnellzugriff, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`. Eigene Resource, damit man sie neu starten kann, ohne dass alle aus dem Spiel fliegen.
+
+## Update von 1.3.0
+
+1. Den Ordner `core_inventory` ersetzen und neu starten. Keine Migration.
+2. Neue Items für den Rettungsdienst (`core_ems`): `medkit` (Verbandskasten, wird erst nach dem Minigame verbraucht), `pill_cold`, `pill_headache`, `pill_stomach`. Bilder dafür fehlen noch, bis dahin zeigt das Inventar das Ersatzbild.
+3. `ShowDocument(source, typ, ziel, { skipConsent = true })`: Hat die andere Person den Ausweis selbst verlangt (z. B. Rettungsdienst), fragt das Inventar nicht ein zweites Mal.
+4. Dienstausweis kennt die Organisation `EMS` (Emergency Medical Service).
 
 ## Stand
 
