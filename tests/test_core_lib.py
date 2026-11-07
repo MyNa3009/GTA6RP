@@ -204,7 +204,11 @@ early = g.Exports['ShowTextUI']('Vor dem Laden')
 check('Nachricht vor ui_ready wird nicht gesendet', not [a for a in calls(lua, 'UiSend') if a[0] == 'textui_open'])
 for name in ['menu', 'dialog', 'game', 'progress', 'textui']:
     reply = ui(lua, 'ui_ready', {'ui': name})
-check('ui_ready liefert die Farben der Core', reply.ok and reply.data.colors.accent == '214 164 72')
+c = reply.data.colors
+check('ui_ready liefert die Logo-Farben der Lib (TextUI)', reply.ok and (c.base, c.ink, c.accent, c.signal) == ('24 15 36', '253 241 233', '232 64 190', '240 84 96'))
+lua.execute("Config.Lib.Colors.signal = nil")
+check('fehlt ein Wert in Config.Lib.Colors, gilt der der Core', ui(lua, 'ui_ready', {'ui': 'dialog'}).data.colors.signal == '220 82 72')
+lua.execute("Config.Lib.Colors.signal = '240 84 96'")
 menu_colors = ui(lua, 'ui_ready', {'ui': 'menu'}).data.colors
 check('Menue hat die Logo-Farben (Aubergine, Creme, Magenta, Pfirsich)',
       (menu_colors.base, menu_colors.ink, menu_colors.accent, menu_colors.mark) == ('24 15 36', '253 241 233', '232 64 190', '244 152 105'))

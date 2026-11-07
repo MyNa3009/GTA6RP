@@ -1,4 +1,4 @@
--- Einstellungen der core_lib. Farben kommen aus Config.UI.Colors der Core, das Menue hat eigene (Config.Lib.Menu.Colors).
+-- Einstellungen der core_lib. Farben aus dem Server-Logo: Config.Lib.Colors fuer alle Fenster, das Menue hat eigene.
 
 Config.Lib = {
     ------------------------------------------------------------------------
@@ -57,6 +57,17 @@ Config.Lib = {
 
         -- Geld geben: Grenzen nur fuer das Eingabefeld, pruefen tut das Inventar
         GiveCash = { Min = 1, Max = 1000000 },
+    },
+
+    ------------------------------------------------------------------------
+    -- Farben aller Fenster der core_lib ausser dem Menue: Fortschritt, Minigames, Dialoge, TextUI.
+    -- Werte als 'R G B'. Fehlt ein Wert, gilt der aus Config.UI.Colors der Core.
+    ------------------------------------------------------------------------
+    Colors = {
+        base   = '24 15 36',     -- Hintergrund, Aubergine aus dem Logo
+        ink    = '253 241 233',  -- Text, Creme aus dem Logo
+        accent = '232 64 190',   -- Hauptaktion, Zielzone, Fortschritt (Magenta)
+        signal = '240 84 96',    -- Fehler, verfehlt, gefaehrliche Aktion (Korallrot, passt zum Magenta)
     },
 
     ------------------------------------------------------------------------

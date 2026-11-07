@@ -38,10 +38,10 @@
   Signatur: die Taste als grosse Keycap in der Mitte des Rings.
 */
 :root {
-  --rgb-base:   14 15 18;
-  --rgb-ink:    232 234 237;
-  --rgb-accent: 214 164 72;
-  --rgb-signal: 220 82 72;
+  --rgb-base:   24 15 36;
+  --rgb-ink:    253 241 233;
+  --rgb-accent: 232 64 190;
+  --rgb-signal: 240 84 96;
 
   --c-bg:          rgb(var(--rgb-base) / 0.92);
   --c-surface:     rgb(var(--rgb-ink) / 0.05);
@@ -58,6 +58,8 @@
   --c-on-accent:   rgb(var(--rgb-base));
   --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.10);
   --shadow:        0 8px 24px rgb(var(--rgb-base) / 0.5);
+  /* Freier Text ohne Kasten (Skillcheck): enger dunkler Rand plus weicher Schein, lesbar auch vor hellem Himmel */
+  --text-shadow:   0 0 2px rgb(var(--rgb-base)), 0 1px 3px rgb(var(--rgb-base) / 0.95), 0 0 12px rgb(var(--rgb-base) / 0.7);
 
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
   --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
@@ -217,11 +219,14 @@ kbd {
   color: var(--c-text);
   background: var(--c-surface);
 }
+.skill > :not(.skill-ring) { text-shadow: var(--text-shadow); }
+.skill .sub { color: rgb(var(--rgb-ink) / 0.9); }
 .dots { display: flex; gap: var(--space-2); }
 .dots i {
   width: var(--dot); height: var(--dot);
   border-radius: 50%;
   border: 1px solid rgb(var(--rgb-ink) / 0.4);
+  box-shadow: 0 0 0 1px rgb(var(--rgb-base) / 0.6);
 }
 .dots i.is-done { background: var(--c-accent); border-color: var(--c-accent); }
 .dots i.is-current { border-color: rgb(var(--rgb-ink)); }

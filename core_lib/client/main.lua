@@ -158,12 +158,15 @@ Platform.UiOn('ui_ready', function(data)
             end
         end)
     end
-    -- Das Menue (G-Menue, Kontextmenues) hat eigene Farben. Fehlt base oder ink, gelten die der Core.
-    local colors = Config.UI.Colors
+    -- Farben aus dem Logo: das Menue hat eigene (mark statt signal), alle anderen Fenster Config.Lib.Colors.
+    -- Fehlt ein Wert, gilt der aus Config.UI.Colors der Core.
+    local core = Config.UI.Colors
+    local own = ui == 'menu' and Config.Lib.Menu.Colors or Config.Lib.Colors
+    local colors = { base = own.base or core.base, ink = own.ink or core.ink, accent = own.accent or core.accent }
     if ui == 'menu' then
-        local own = Config.Lib.Menu.Colors
-        colors = { base = own.base or Config.UI.Colors.base, ink = own.ink or Config.UI.Colors.ink,
-            accent = own.accent, mark = own.mark }
+        colors.mark = own.mark
+    else
+        colors.signal = own.signal or core.signal
     end
     return { ok = true, data = { colors = colors } }
 end)
@@ -186,5 +189,5 @@ Platform.Export('GetResult', function(id)
 end)
 
 Platform.Export('GetVersion', function()
-    return '1.4.0'
+    return '1.4.1'
 end)

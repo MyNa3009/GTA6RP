@@ -1,8 +1,15 @@
-# core_lib 1.4.0
+# core_lib 1.4.1
 
 Bibliothek für alle Scripts des Servers, ähnlich wie ox_lib, aber im Design des Servers und mit mehr Minigames. Dazu das **G-Menü**: ein Interaktionsmenü, über das später fast alles läuft, immer in Kategorien geteilt (`Person`, `Fahrzeug`, `Organisation > Leader > Entlassen`).
 
 Alles, was die Core schon kann, bleibt in der Core und wird nicht doppelt gebaut: Callbacks (`Network.Call`), Tasten (`Platform.RegisterKeyCommand`), Meldungen (`core:notify`), Logging (`exports.core:Log`).
+
+## Update von 1.4.0
+
+1. Den Ordner `core_lib` ersetzen und neu starten. Die Core bleibt bei 1.9.0.
+2. Alle Fenster der Lib haben jetzt die Farben aus dem Logo, nicht nur das Menü: Fortschritt, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge und TextUI. Einstellbar unter `Config.Lib.Colors` (`base`, `ink`, `accent`, `signal`). Fehlt dort ein Wert, gilt der aus `Config.UI.Colors` der Core.
+3. `signal` (Fehler, verfehlt, gefährliche Aktion wie "Entlassen") ist ein Korallrot, das zum Magenta passt. Das Logo hat kein Rot, und ein Fehler muss nach Fehler aussehen.
+4. Der Hinweis unter dem Skillcheck steht frei im Bild und hat jetzt einen Schatten, damit er auch vor hellem Himmel lesbar ist.
 
 ## Update von 1.3.0
 
@@ -320,7 +327,7 @@ Wer `init.lua` nicht nutzen will, ruft die Exports direkt. Die Start-Exports war
 
 ## Config
 
-Alles in `config.lua` unter `Config.Lib`: Farben des Menüs (`Menu.Colors`, alle vier aus dem Logo), Taste und Befehl des G-Menüs, Reichweite für Personen und Fahrzeuge, Blickziel, Kreis und Umrandung (`Interact.Target`), feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Die anderen UIs der core_lib nehmen ihre Farben aus `Config.UI.Colors` der Core.
+Alles in `config.lua` unter `Config.Lib`: Farben des Menüs (`Menu.Colors`, alle vier aus dem Logo), Taste und Befehl des G-Menüs, Reichweite für Personen und Fahrzeuge, Blickziel, Kreis und Umrandung (`Interact.Target`), feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Alle anderen Fenster der core_lib nehmen `Config.Lib.Colors`, ebenfalls aus dem Logo. Fehlt dort ein Wert, gilt `Config.UI.Colors` der Core.
 
 ## Aufbau
 
