@@ -2,15 +2,15 @@
 -- Alles, was spaeter ein Ergebnis hat (Fortschritt, Minigame, Dialog), bekommt eine Nummer. Das Ergebnis geht als
 -- lokales Ereignis 'core_lib:done' an alle Resources, init.lua in der aufrufenden Resource wartet darauf.
 
--- Braucht Core 1.8.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
-local REQUIRED_CORE = '1.8.0'
+-- Braucht Core 1.9.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
+local REQUIRED_CORE = '1.9.0'
 local missingBridge = {}
 for _, name in ipairs({ 'Async', 'AttachPropToOwnPed', 'ClearOwnTasks', 'CloseAllVehicleDoors', 'DeleteLocalProp',
-    'DisableActionsThisFrame', 'Emit', 'Export', 'GetActionLabel', 'GetCallingResource', 'GetNearbyPlayers',
-    'DrawPlayerRing', 'GetOwnServerId', 'GetOwnVehicleState', 'GetPlayerInSight', 'GetTime', 'GetVehicleInSight', 'HasVehicleDoor', 'HasVehicleWindow',
+    'DisableActionsThisFrame', 'Emit', 'EnterVehicleSeat', 'Export', 'GetActionLabel', 'GetCallingResource', 'GetNearbyPlayers',
+    'DrawPlayerRing', 'GetOwnServerId', 'GetOwnVehicleState', 'GetPlayerInSight', 'GetTime', 'GetVehicleInSightOnFoot', 'GetVehicleOutsideState', 'HasVehicleDoor', 'HasVehicleWindow',
     'GetResourceName', 'IsActionPressed', 'IsOwnPedDead', 'IsPauseMenuOpen', 'IsOwnVehicle', 'IsResourceStarted', 'IsVehicleDoorOpen', 'IsVehicleWindowDown',
     'MoveToSeat', 'OnEvent', 'OnResourceStop', 'PlayOwnAnim', 'PlayOwnScenario', 'Print', 'CallExport',
-    'RegisterKeyCommand', 'SetVehicleDoor', 'SetVehicleEngine', 'SetVehicleLights', 'SetVehicleWindow', 'StopOwnAnim',
+    'RegisterKeyCommand', 'SetEntityOutline', 'SetVehicleDoor', 'SetVehicleDoorFromOutside', 'SetVehicleEngine', 'SetVehicleLights', 'SetVehicleWindow', 'StopOwnAnim',
     'UiFocus', 'UiOn', 'UiSend', 'Wait' }) do
     if type(Platform[name]) ~= 'function' then
         missingBridge[#missingBridge + 1] = name
@@ -158,11 +158,12 @@ Platform.UiOn('ui_ready', function(data)
             end
         end)
     end
-    -- Das Menue (G-Menue, Kontextmenues) hat eigene Akzentfarben, Grund und Schrift kommen von der Core
+    -- Das Menue (G-Menue, Kontextmenues) hat eigene Farben. Fehlt base oder ink, gelten die der Core.
     local colors = Config.UI.Colors
     if ui == 'menu' then
-        colors = { base = Config.UI.Colors.base, ink = Config.UI.Colors.ink,
-            accent = Config.Lib.Menu.Colors.accent, mark = Config.Lib.Menu.Colors.mark }
+        local own = Config.Lib.Menu.Colors
+        colors = { base = own.base or Config.UI.Colors.base, ink = own.ink or Config.UI.Colors.ink,
+            accent = own.accent, mark = own.mark }
     end
     return { ok = true, data = { colors = colors } }
 end)
@@ -185,5 +186,5 @@ Platform.Export('GetResult', function(id)
 end)
 
 Platform.Export('GetVersion', function()
-    return '1.3.0'
+    return '1.4.0'
 end)

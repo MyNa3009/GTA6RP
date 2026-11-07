@@ -9,7 +9,7 @@
   menu_open {
     mode: "interact" | "context",
     title: string,
-    subtitle?: string,                  // angeschaute Person, z. B. "Person: ID 17 · 1,2 m"
+    subtitle?: string,                  // Ziel, z. B. "Person: ID 17 · 1,2 m" oder "Fahrzeug: LS 4821 · 2,1 m"
     tabs?: Tab[],                       // nur interact: die Kategorien im Kreis
     items?: Node[]                      // nur context
   }
@@ -47,13 +47,14 @@
   Oberflaechentyp: Command. Dichte 7, Bewegung 1, Varianz 3.
   Kreis in der Bildmitte fuer die Kategorien, Liste rechts daneben. Kommt oft, darum keine Animation beim Oeffnen.
   Highlight: die gewaehlte Kategorie, voll in der Akzentfarbe. Signatur: Nummern 1 bis 9 an Kreis und Liste.
-  Farben: base und ink aus der Core, accent (Kreis) und mark (Liste, Icons, Fehler) aus Config.Lib.Menu.Colors.
+  Farben aus dem Server-Logo, alle vier aus Config.Lib.Menu.Colors: base (Aubergine), ink (Creme),
+  accent (Magenta, gewaehlte Kategorie), mark (Pfirsich, Liste, Icons, Hinweise).
 */
 :root {
-  --rgb-base:   14 15 18;
-  --rgb-ink:    232 234 237;
-  --rgb-accent: 45 212 191;
-  --rgb-mark:   236 88 140;
+  --rgb-base:   24 15 36;
+  --rgb-ink:    253 241 233;
+  --rgb-accent: 232 64 190;
+  --rgb-mark:   244 152 105;
 
   --c-dim-in:      rgb(var(--rgb-base) / 0.55);
   --c-dim-out:     rgb(var(--rgb-base) / 0.82);
@@ -554,6 +555,7 @@ const TEXT = {
   errors: {
     not_found: 'Das geht gerade nicht mehr. Menü neu öffnen.',
     player_gone: 'Die Person ist nicht mehr in der Nähe. Schau sie an und öffne das Menü neu.',
+    vehicle_gone: 'Das Fahrzeug ist nicht mehr in der Nähe. Schau es an und öffne das Menü neu.',
     not_open: 'Das Menü ist schon zu.',
     bridge_error: 'Keine Verbindung zum Spiel.',
     client_error: 'Das hat nicht geklappt.',
@@ -564,7 +566,7 @@ const TEXT = {
 const MAX_HOTKEYS = 9;
 const CLOSE_KEY = 'g';
 const FULL_TURN = 2 * Math.PI;
-const SUBTITLE_SPLIT = ': ';   // "Person: ID 17 · 1,2 m" -> zwei Zeilen in der Mitte des Kreises
+const SUBTITLE_SPLIT = ': ';   // "Person: ID 17 · 1,2 m" oder "Fahrzeug: LS 4821 · 2,1 m" -> zwei Zeilen in der Mitte
 
 const state = {
   open: false,
@@ -648,7 +650,7 @@ function renderRing() {
   if (!show) return;
   el.ring.classList.toggle('is-ring-level', state.level === 'ring');
 
-  // Mitte: naechste Person
+  // Mitte: angeschaute Person oder angeschautes Fahrzeug
   const [label, value] = state.subtitle.includes(SUBTITLE_SPLIT) ? state.subtitle.split(SUBTITLE_SPLIT) : ['', state.subtitle];
   el.who.hidden = !state.subtitle;
   el.whoLabel.textContent = label;
@@ -1074,6 +1076,25 @@ document.addEventListener('keydown', (e) => {
         ] },
         { id: 'c.2', label: 'Stellplatzgebühr', icon: 'banknote', readOnly: true, metadata: [{ label: 'Preis', value: '150 $' }, { label: 'Fällig', value: 'jeden Montag' }] },
         { id: 'c.3', label: 'Fahrzeug einparken', icon: 'key', disabled: true, description: 'Du sitzt in keinem Fahrzeug.' },
+      ] });
+      return;
+    }
+    if (params.get('mode') === 'vehicle') {
+      Mock.push('menu_open', { mode: 'interact', title: 'Interaktion', subtitle: 'Fahrzeug: LS 4821 · 2,1 m', tabs: [
+        { id: 'g:Fahrzeug', label: 'Fahrzeug', icon: 'car', items: [
+          { id: 'g:Fahrzeug/Einsteigen', label: 'Einsteigen', title: 'Einsteigen', icon: 'seat', children: [
+            { id: 'e:vehicle_enter_-1', label: 'Fahrersitz', icon: 'seat' },
+            { id: 'e:vehicle_enter_0', label: 'Beifahrersitz', icon: 'seat' },
+          ] },
+          { id: 'g:Fahrzeug/Türen', label: 'Türen', title: 'Türen', icon: 'door', children: [
+            { id: 'e:vehicle_outside_door_front_left', label: 'Fahrertür', icon: 'door', badge: 'zu' },
+            { id: 'e:vehicle_outside_door_trunk', label: 'Kofferraum', icon: 'door', badge: 'zu' },
+          ] },
+          { id: 'e:vehicle_trunk', label: 'Kofferraum-Inhalt', description: 'Stell dich direkt ans Heck.', icon: 'package' },
+        ] },
+        { id: 'g:Organisation', label: 'Organisation', icon: 'landmark', items: [
+          { id: 'e:org_duty', label: 'Dienst', icon: 'shield', badge: 'außer Dienst' },
+        ] },
       ] });
       return;
     }

@@ -1,4 +1,4 @@
--- Einstellungen der core_lib. Farben kommen aus Config.UI.Colors der Core, damit alle UIs zusammenpassen.
+-- Einstellungen der core_lib. Farben kommen aus Config.UI.Colors der Core, das Menue hat eigene (Config.Lib.Menu.Colors).
 
 Config.Lib = {
     ------------------------------------------------------------------------
@@ -11,15 +11,22 @@ Config.Lib = {
         Command = 'interaktion',
         -- Ziel ist die Person, die man anschaut, hoechstens so weit weg (Meter)
         PlayerDistance = 3.0,
-        -- Zu Fuss: das Fahrzeug, auf das man schaut, hoechstens so weit weg (z. B. fuer den Kofferraum)
-        VehicleDistance = 5.0,
-        -- Blickziel und Kreis am Boden unter der Person. Aussehen des Kreises in data/target_gta5.lua.
+        -- Zu Fuss: das Fahrzeug, auf das man schaut, hoechstens so weit weg (Meter bis zur Karosserie)
+        VehicleDistance = 3.5,
+        -- Blickziel: Kreis am Boden unter der Person, leuchtende Umrandung um das Fahrzeug.
+        -- Schaut man auf eine Person, gilt die Person. Wer in einem Fahrzeug sitzt, ist kein Personen-Ziel.
+        -- Aussehen von Kreis und Umrandung in data/target_gta5.lua.
         Target = {
             MaxAngle = 12,          -- so viele Grad neben der Bildmitte zaehlt noch als "angeschaut"
             IntervalMs = 150,       -- so oft wird das Blickziel gesucht (nur bei geschlossenem Menue)
             KeepTolerance = 1.0,    -- bei offenem Menue darf sich die Person so viele Meter weiter entfernen
-            Color = '45 212 191',   -- Farbe des Kreises als 'R G B'
+            Color = '232 64 190',   -- Farbe des Kreises als 'R G B' (Magenta aus dem Logo)
             Alpha = 200,            -- Deckkraft 0 bis 255
+            VehicleColor = '232 64 190',  -- Farbe der Umrandung um das Fahrzeug
+            VehicleAlpha = 255,
+            -- Bei offenem Menue bleibt das Fahrzeug Ziel bis zu diesem Abstand zur Fahrzeugmitte.
+            -- Gilt auch fuer Tueren und Einsteigen von aussen.
+            VehicleKeepDistance = 6.0,
         },
         -- Sitz wechseln nur bis zu dieser Geschwindigkeit
         SeatChangeMaxKmh = 5,
@@ -53,13 +60,15 @@ Config.Lib = {
     },
 
     ------------------------------------------------------------------------
-    -- Aussehen des Menues (G-Menue und Kontextmenues). Werte als 'R G B'.
-    -- Hintergrund und Schrift kommen aus Config.UI.Colors der Core.
+    -- Aussehen des Menues (G-Menue und Kontextmenues). Werte als 'R G B', Farben aus dem Logo.
+    -- base oder ink weglassen: dann gelten Hintergrund und Schrift aus Config.UI.Colors der Core.
     ------------------------------------------------------------------------
     Menu = {
         Colors = {
-            accent = '45 212 191',   -- gewaehlte Kategorie im Kreis
-            mark   = '236 88 140',   -- Ueberschrift der Liste, Icons, Fehler
+            base   = '24 15 36',     -- Hintergrund, das dunkle Aubergine aus dem Logo
+            ink    = '253 241 233',  -- Text, das Creme aus dem Logo
+            accent = '232 64 190',   -- gewaehlte Kategorie im Kreis (Magenta)
+            mark   = '244 152 105',  -- Ueberschrift der Liste, Icons, Hinweise (Pfirsich)
         },
     },
 

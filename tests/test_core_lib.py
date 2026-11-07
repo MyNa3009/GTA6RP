@@ -94,7 +94,10 @@ function Platform.GetOwnServerId() return 1 end
 Nearby = {}
 function Platform.GetNearbyPlayers(dist, self) return Nearby end
 Sight = nil        -- Spieler, den man anschaut: { serverId, distance }
-function Platform.GetPlayerInSight(dist, angle) return Sight and { serverId = Sight.serverId, ped = 1, distance = Sight.distance } or nil end
+function Platform.GetPlayerInSight(dist, angle, onFoot)
+    if not Sight or (onFoot and Sight.inVehicle) then return nil end
+    return { serverId = Sight.serverId, ped = 1, distance = Sight.distance }
+end
 function Platform.DrawPlayerRing(serverId, style) record('DrawPlayerRing', serverId, style.type) return true end
 Public = {}
 function Network.GetPlayerPublic(id, key) return Public[id] and Public[id][key] end
@@ -103,11 +106,22 @@ function Network.On(name, fn) NetOn[name] = fn end
 function Network.Call(name, data) record('NetCall', name, data) return { ok = true } end
 
 Vehicle = nil      -- Stand im Fahrzeug
-NearVehicle = nil  -- Fahrzeug zu Fuss in der Naehe
+NearVehicle = nil  -- Fahrzeug, auf das man zu Fuss schaut: { handle, distance, plate, locked, center, freeSeats }
 Doors = {}         -- [index] = { valid, open }
 Windows = {}       -- [index] = { valid, down }
 function Platform.GetOwnVehicleState() return Vehicle end
-function Platform.GetVehicleInSight() return Vehicle and Vehicle.vehicle or NearVehicle end
+function Platform.GetVehicleInSightOnFoot()
+    if Vehicle or not NearVehicle then return nil end
+    return { vehicle = NearVehicle.handle, distance = NearVehicle.distance }
+end
+function Platform.GetVehicleOutsideState(v)
+    if not NearVehicle or v ~= NearVehicle.handle then return nil end
+    return { plate = NearVehicle.plate or '', locked = NearVehicle.locked == true, distance = NearVehicle.center or 2.0,
+        freeSeats = NearVehicle.freeSeats or {} }
+end
+function Platform.SetEntityOutline(e, on) record('Outline', e, on) return true end
+function Platform.SetVehicleDoorFromOutside(v, i, open) record('DoorOutside', v, i, open) Doors[i].open = open return true end
+function Platform.EnterVehicleSeat(v, seat) record('EnterSeat', v, seat) return true end
 function Platform.IsOwnVehicle(v) return Vehicle ~= nil and v == Vehicle.vehicle end
 function Platform.SetVehicleEngine(v, on) record('SetVehicleEngine', v, on) Vehicle.engine = on return true end
 function Platform.SetVehicleLights(v, on) record('SetVehicleLights', v, on) return true end
@@ -191,6 +205,9 @@ check('Nachricht vor ui_ready wird nicht gesendet', not [a for a in calls(lua, '
 for name in ['menu', 'dialog', 'game', 'progress', 'textui']:
     reply = ui(lua, 'ui_ready', {'ui': name})
 check('ui_ready liefert die Farben der Core', reply.ok and reply.data.colors.accent == '214 164 72')
+menu_colors = ui(lua, 'ui_ready', {'ui': 'menu'}).data.colors
+check('Menue hat die Logo-Farben (Aubergine, Creme, Magenta, Pfirsich)',
+      (menu_colors.base, menu_colors.ink, menu_colors.accent, menu_colors.mark) == ('24 15 36', '253 241 233', '232 64 190', '244 152 105'))
 lua.globals().Tick(10)
 check('wartende Nachricht nach ui_ready gesendet', [a for a in calls(lua, 'UiSend') if a[0] == 'textui_open'])
 g.Exports['HideTextUI']()
@@ -330,22 +347,83 @@ check('Mitfahrer: kein Motor, keine Tueren', find(car, 'Motor') is None and find
 check('Mitfahrer: nur das eigene Fenster', [n.label for n in to_list(find(car, 'Fenster').children)] == ['Fenster vorne rechts'])
 g.Menu.Close()
 
-print('G-Menue: zu Fuss neben einem Fahrzeug')
-lua.execute('Vehicle = nil; NearVehicle = 777')
+print('G-Menue: zu Fuss ein Fahrzeug anschauen')
+lua.execute("""Vehicle = nil
+Doors = { [0] = { valid = true, open = false }, [1] = { valid = true, open = false }, [5] = { valid = true, open = false } }
+NearVehicle = { handle = 777, distance = 2.04, plate = 'LS 4821', locked = false, freeSeats = { -1, 1 } }""")
+clear(lua)
+lua.globals().Tick(200)
+check('angeschautes Fahrzeug leuchtet (Umrandung an)', calls(lua, 'Outline') == [[777, True]], calls(lua, 'Outline'))
+check('kein Kreis am Boden fuer ein Fahrzeug', not calls(lua, 'DrawPlayerRing'))
+check('Fahrzeug als Export', g.Exports['GetInteractionVehicle']().handle == 777)
+lua.globals().Tick(600)
+check('Umrandung wird nicht jedes Mal neu gesetzt', len(calls(lua, 'Outline')) == 1)
+g.Interact.Open()
+payload = last_ui(lua, 'menu_open')
+check('Fahrzeug zuerst, dann Organisation', tabs_of(payload) == ['Fahrzeug', 'Organisation'], tabs_of(payload))
+check('Mitte nennt Kennzeichen und Abstand', payload.subtitle == 'Fahrzeug: LS 4821 · 2,0 m', payload.subtitle)
+car = payload.tabs[1]['items']
+check('von aussen: Einsteigen, Tueren, Kofferraum-Inhalt', [n.label for n in to_list(car)] == ['Einsteigen', 'Türen', 'Kofferraum-Inhalt'], [n.label for n in to_list(car)])
+check('keine Bedienung von drinnen (Motor, Licht, Fenster)', find(car, 'Motor') is None and find(car, 'Fenster') is None)
+seats = [n.label for n in to_list(find(car, 'Einsteigen').children)]
+check('Einsteigen nur auf freie Sitze', seats == ['Fahrersitz', 'Hinten links'], seats)
+doors = [(n.label, n.badge) for n in to_list(find(car, 'Türen').children)]
+check('Tueren von aussen mit Zustand, ohne "Alle schließen"', doors == [('Fahrertür', 'zu'), ('Beifahrertür', 'zu'), ('Kofferraum', 'zu')], doors)
+clear(lua)
+reply = ui(lua, 'menu_select', {'id': 'e:vehicle_outside_door_front_left'})
+lua.globals().Tick(10)
+check('Fahrertuer von aussen auf, Menue bleibt offen', reply.data.close is False and calls(lua, 'DoorOutside') == [[777, 0, True]])
+lua.globals().Tick(200)
+update = last_ui(lua, 'menu_update')
+check('Neuaufbau nach der Aktion zeigt "offen"', update and find(find(update.tabs[1]['items'], 'Türen').children, 'Fahrertür').badge == 'offen')
+lua.execute("NearVehicle.center = 9")
+reply = ui(lua, 'menu_select', {'id': 'e:vehicle_outside_door_front_left'})
+check('Fahrzeug zu weit weg: abgelehnt', reply.ok is False and reply.error == 'vehicle_gone', reply.error)
+lua.execute("NearVehicle.center = 2")
+clear(lua)
+reply = ui(lua, 'menu_select', {'id': 'e:vehicle_enter_1'})
+lua.globals().Tick(10)
+check('Einsteigen hinten links, Menue zu', calls(lua, 'EnterSeat') == [[777, 1]] and g.Menu.IsOpen() is False)
+g.Interact.Open()
+ui(lua, 'menu_select', {'id': 'e:vehicle_trunk'})
+lua.globals().Tick(10)
+check('Kofferraum-Inhalt ueber das Inventar', calls(lua, 'CallExport')[-1] == ['core_inventory', 'OpenNearestTrunk'])
+
+print('G-Menue: abgeschlossenes Fahrzeug')
+lua.execute("NearVehicle.locked = true")
 clear(lua)
 g.Interact.Open()
 payload = last_ui(lua, 'menu_open')
-car = payload.tabs[1]['items'] if payload and tabs_of(payload)[0] == 'Fahrzeug' else None
-check('nur Kofferraum oeffnen', car is not None and [n.label for n in to_list(car)] == ['Kofferraum öffnen'], car and [n.label for n in to_list(car)])
-ui(lua, 'menu_select', {'id': 'e:vehicle_trunk'})
-lua.globals().Tick(10)
-check('Kofferraum ueber das Inventar', calls(lua, 'CallExport')[-1] == ['core_inventory', 'OpenNearestTrunk'])
-lua.execute("Started.core_inventory = false")
+check('abgeschlossen: keine Kategorie Fahrzeug', 'Fahrzeug' not in tabs_of(payload), tabs_of(payload))
+check('Mitte sagt "abgeschlossen"', payload.subtitle == 'Fahrzeug: LS 4821 · abgeschlossen · 2,0 m', payload.subtitle)
+g.Menu.Close()
+lua.execute("NearVehicle.locked = false; Started.core_inventory = false")
 clear(lua)
 g.Interact.Open()
-check('ohne Inventar kein Kofferraum', 'Fahrzeug' not in tabs_of(last_ui(lua, 'menu_open')))
+car = last_ui(lua, 'menu_open').tabs[1]['items']
+check('ohne Inventar kein Kofferraum-Inhalt, Tueren bleiben', find(car, 'Kofferraum-Inhalt') is None and find(car, 'Türen') is not None)
 g.Menu.Close()
-lua.execute("Started.core_inventory = true; NearVehicle = nil")
+lua.execute("Started.core_inventory = true")
+
+print('G-Menue: Umrandung wandert mit')
+clear(lua)
+lua.execute("NearVehicle = { handle = 888, distance = 1.5, plate = 'LS 0042', freeSeats = {} }")
+lua.globals().Tick(200)
+check('anderes Fahrzeug: alte Umrandung aus, neue an', calls(lua, 'Outline') == [[777, False], [888, True]], calls(lua, 'Outline'))
+lua.execute("Sight = { serverId = 9, distance = 1.0 }; Public[9] = { coreId = 342 }; Nearby = { { serverId = 9, distance = 1.0 } }")
+clear(lua)
+lua.globals().Tick(200)
+check('Person geht vor: Umrandung aus, Kreis an', calls(lua, 'Outline') == [[888, False]] and calls(lua, 'DrawPlayerRing'))
+lua.execute("Sight.inVehicle = true")
+clear(lua)
+lua.globals().Tick(200)
+check('Person sitzt im Fahrzeug: das Fahrzeug ist das Ziel', g.Exports['GetInteractionTarget']() is None and calls(lua, 'Outline') == [[888, True]], calls(lua, 'Outline'))
+lua.execute("Vehicle = { vehicle = 888, seat = -1, isDriver = true, engine = true, lights = false, speedKmh = 0, freeSeats = {} }")
+clear(lua)
+lua.globals().Tick(200)
+check('selbst eingestiegen: keine Umrandung mehr', calls(lua, 'Outline') == [[888, False]], calls(lua, 'Outline'))
+lua.execute("Vehicle = nil; Sight = nil; Nearby = {}; NearVehicle = nil")
+lua.globals().Tick(200)
 
 print('G-Menue: fehlerhaftes canShow und gestoppte Resource')
 g.Calling = 'kaputt'
@@ -379,7 +457,7 @@ check('erlaubter Eintrag ist da, ohne Schloss', find(payload.tabs[1]['items'], '
 g.Menu.Close()
 for fn in g.StopHandlers.values():
     fn('org2')
-check('Menue holt eigene Farben', ui(lua, 'ui_ready', {'ui': 'menu'}).data.colors.mark == '236 88 140')
+check('Menue holt eigene Farben', ui(lua, 'ui_ready', {'ui': 'menu'}).data.colors.mark == '244 152 105')
 
 print('G-Menue: Pausemenue und Fahrzeug')
 lua.execute("Nearby = { { serverId = 4, distance = 1.0 } }; Sight = { serverId = 4, distance = 1.0 }; Paused = true")
@@ -599,11 +677,11 @@ Waited = nil
 lib.addInteraction({ id = 'werk_repair', path = 'Werkstatt/Service', label = 'Reparieren', vehicle = 'outside',
     onSelect = function(ctx) Results.waitedInAction = lib.progressBar({ duration = 800 }) end })
 ''')
-lua.execute('NearVehicle = 900')
+lua.execute("Sight = nil; NearVehicle = { handle = 900, distance = 2.0, plate = 'WERK 1', freeSeats = {} }")
 clear(lua)
 g.Interact.Open()
 payload = last_ui(lua, 'menu_open')
-check('eigener Reiter Werkstatt mit Unterkategorie Service', 'Werkstatt' in tabs_of(payload))
+check('eigener Reiter Werkstatt mit Unterkategorie Service', 'Werkstatt' in tabs_of(payload), tabs_of(payload))
 ui(lua, 'menu_select', {'id': 'e:werk_repair'})
 lua.globals().Tick(1000)
 check('Aktion laeuft in der eigenen Resource und darf warten (Fortschritt darin)', g.Results.waitedInAction is True)

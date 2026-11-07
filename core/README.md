@@ -1,10 +1,21 @@
-# Core 1.8.3 (Testserver)
+# Core 1.9.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.8.3
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration. Gebraucht von `core_lib` 1.4.0.
+2. Neu in der Client-Bridge (für das Fahrzeug von außen im G-Menü):
+   - `GetVehicleInSightOnFoot(maxDistance)`: Fahrzeug, auf das man zu Fuß schaut, `{ vehicle, distance }` (Abstand zur Karosserie). Wände und Objekte verdecken, Fahrzeuge hinter der eigenen Figur zählen nicht.
+   - `SetEntityOutline(entity, on, style)`: leuchtende Umrandung, nur in der eigenen Ansicht.
+   - `GetVehicleOutsideState(vehicle)`: `{ plate, locked, distance, freeSeats }`.
+   - `SetVehicleDoorFromOutside(vehicle, index, open, maxDistance)`: Tür von außen, nur wenn nicht abgeschlossen. Holt sich kurz die Kontrolle über das Fahrzeug (höchstens 600 ms), damit alle die Tür sehen. Fehler `no_door`, `locked`, `too_far`, `no_control`.
+   - `EnterVehicleSeat(vehicle, seat, maxDistance)`: zu Fuß in einen bestimmten Sitz einsteigen. Fehler `not_found`, `locked`, `too_far`, `seat_taken`.
+3. `GetPlayerInSight(maxDistance, maxAngle, onFootOnly)`: mit `onFootOnly = true` zählen Personen in einem Fahrzeug nicht. Ohne den dritten Wert bleibt alles wie vorher.
 
 ## Update von 1.8.2
 

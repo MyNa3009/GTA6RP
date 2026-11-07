@@ -2,7 +2,8 @@
 -- Scripts haengen Eintraege mit AddInteraction an einen Pfad, z. B. 'Organisation/Leader'. Der erste Teil ist
 -- die Kategorie im Kreis, jeder weitere Teil eine Unterkategorie. Was gerade nicht passt (kein Fahrzeug, keine
 -- Person angeschaut, keine Berechtigung ueber canShow), wird gar nicht angezeigt. Der Server prueft trotzdem selbst.
--- Ziel ist immer die Person, die man anschaut: Unter ihr laeuft ein Kreis am Boden, dann drueckt man G.
+-- Ziel ist, was man anschaut: unter einer Person laeuft ein Kreis am Boden, ein Fahrzeug bekommt eine leuchtende
+-- Umrandung. Dann drueckt man G. Die Person geht vor, wer in einem Fahrzeug sitzt, zaehlt als Fahrzeug.
 if LibDisabled then return end
 
 Interact = {}
@@ -155,8 +156,10 @@ end)
 
 local TARGET = Config.Lib.Interact.Target
 local RING = LibTargetData.Ring
+local OUTLINE = LibTargetData.Outline
 
 local target = nil        -- angeschaute Person { serverId, characterId, distance }, sonst nil
+local targetVehicle = nil -- angeschautes Fahrzeug zu Fuss { handle, distance }, sonst nil
 local ringRunning = false
 
 local function round(distance)
@@ -177,13 +180,19 @@ local RING_STYLE = {
     alpha = TARGET.Alpha,
 }
 
+local OUTLINE_STYLE = {
+    shader = OUTLINE.shader,
+    color = readColor(TARGET.VehicleColor),
+    alpha = TARGET.VehicleAlpha,
+}
+
 -- Wen schaut man gerade an? Nur Spieler mit Charakter (permanente ID), nur zu Fuss.
 -- Aus dem Fahrzeug heraus gibt es keine Interaktion mit Personen.
 local function findTarget()
     if Platform.IsOwnPedDead() or Platform.GetOwnVehicleState() then
         return nil
     end
-    local seen = Platform.GetPlayerInSight(CFG.PlayerDistance, TARGET.MaxAngle)
+    local seen = Platform.GetPlayerInSight(CFG.PlayerDistance, TARGET.MaxAngle, true)
     if not seen then
         return nil
     end
@@ -229,8 +238,47 @@ local function setTarget(value)
     end
 end
 
+-- Auf welches Fahrzeug schaut man zu Fuss?
+local function findVehicle()
+    if Platform.IsOwnPedDead() or Platform.GetOwnVehicleState() then
+        return nil
+    end
+    local seen = Platform.GetVehicleInSightOnFoot(CFG.VehicleDistance)
+    if not seen then
+        return nil
+    end
+    return { handle = seen.vehicle, distance = round(seen.distance) }
+end
+
+-- Ist das Fahrzeug noch nah genug? (bei offenem Menue und vor jeder Aktion von aussen)
+local function vehicleInRange(handle)
+    local state = Platform.GetVehicleOutsideState(handle)
+    return state ~= nil and state.distance <= TARGET.VehicleKeepDistance
+end
+
+-- Umrandung wandert mit dem Ziel: alte aus, neue an. Nur bei einem Wechsel, nicht jedes Mal.
+local function setVehicle(value)
+    local old = targetVehicle and targetVehicle.handle
+    local new = value and value.handle
+    if old and old ~= new then
+        Platform.SetEntityOutline(old, false)
+    end
+    if new and new ~= old then
+        Platform.SetEntityOutline(new, true, OUTLINE_STYLE)
+    end
+    targetVehicle = value
+end
+
+-- Person geht vor. Schaut man auf keine Person, zaehlt das Fahrzeug.
+local function findTargets()
+    local person = findTarget()
+    setTarget(person)
+    setVehicle(not person and findVehicle() or nil)
+end
+
 -- ctx: { player (angeschaute Person), players ({ player } oder leer),
---        vehicle = { handle, inside, seat, isDriver, engine, lights, speedKmh, freeSeats } }
+--        vehicle = { handle, inside = true, seat, isDriver, engine, lights, speedKmh, freeSeats }
+--               oder zu Fuss { handle, inside = false, plate, locked, distance, freeSeats } }
 local function buildContext()
     local ctx = { player = target, players = target and { target } or {} }
     local state = Platform.GetOwnVehicleState()
@@ -245,11 +293,18 @@ local function buildContext()
             speedKmh = state.speedKmh,
             freeSeats = state.freeSeats,
         }
-    else
-        -- Zu Fuss: das Fahrzeug, auf das man schaut
-        local seen = Platform.GetVehicleInSight(CFG.VehicleDistance)
-        if seen then
-            ctx.vehicle = { handle = seen, inside = false }
+    elseif targetVehicle then
+        -- Zu Fuss: das Fahrzeug, auf das man schaut (mit Umrandung)
+        local outside = Platform.GetVehicleOutsideState(targetVehicle.handle)
+        if outside then
+            ctx.vehicle = {
+                handle = targetVehicle.handle,
+                inside = false,
+                plate = outside.plate,
+                locked = outside.locked,
+                distance = targetVehicle.distance,
+                freeSeats = outside.freeSeats,
+            }
         end
     end
     return ctx
@@ -370,8 +425,22 @@ local function buildTree(ctx)
     return tabs, nodes
 end
 
+local function vehicleLabel(vehicle)
+    local parts = { vehicle.plate ~= '' and vehicle.plate or 'ohne Kennzeichen' }
+    if vehicle.locked then
+        parts[#parts + 1] = 'abgeschlossen'
+    end
+    parts[#parts + 1] = (tostring(vehicle.distance):gsub('%.', ',')) .. ' m'
+    return table.concat(parts, ' · ')
+end
+
 local function payload(ctx, tabs)
-    local subtitle = ctx.player and ('Person: ' .. personLabel(ctx.player)) or nil
+    local subtitle = nil
+    if ctx.player then
+        subtitle = 'Person: ' .. personLabel(ctx.player)
+    elseif ctx.vehicle and not ctx.vehicle.inside then
+        subtitle = 'Fahrzeug: ' .. vehicleLabel(ctx.vehicle)
+    end
     return { mode = 'interact', title = 'Interaktion', subtitle = subtitle, tabs = tabs }
 end
 
@@ -409,7 +478,7 @@ function Interact.Open()
         return
     end
     -- Das Ziel beim Druecken auf G gilt, bis das Menue zu ist
-    setTarget(findTarget())
+    findTargets()
     local ctx = buildContext()
     local tabs, nodes = buildTree(ctx)
     if #tabs == 0 then
@@ -443,11 +512,14 @@ onSelectNode = function(data)
     if entry.target == 'player' and (not player or not inRange(player.serverId)) then
         return { ok = false, error = 'player_gone' }
     end
+    if entry.vehicle == 'outside' and (not ctx.vehicle or not vehicleInRange(ctx.vehicle.handle)) then
+        return { ok = false, error = 'vehicle_gone' }
+    end
 
     local value = actionContext(ctx, player)
     if entry.keepOpen then
-        Menu.RunAction(entry.action, value)
-        Platform.Async(function()
+        -- Neu aufbauen, wenn die Aktion fertig ist (z. B. Tuer von aussen wartet kurz auf das Fahrzeug)
+        Menu.RunAction(entry.action, value, function()
             Platform.Wait(CFG.RefreshDelayMs)
             refresh()
         end)
@@ -462,24 +534,41 @@ Platform.RegisterKeyCommand(CFG.Command, 'Interaktionsmenü öffnen', CFG.Key, f
     Interact.Open()
 end)
 
--- Blickziel suchen, solange das Menue zu ist. Bei offenem Menue bleibt das Ziel, bis die Person zu weit weg ist.
+-- Blickziel suchen, solange das Menue zu ist. Bei offenem Menue bleibt das Ziel, bis es zu weit weg ist.
+-- Ist ein anderes Menue offen (Kontextmenue), gibt es kein Ziel.
 Platform.Async(function()
     while true do
         if Menu.IsOpen('interact') then
             if target and not inRange(target.serverId) then
                 target = nil
             end
+            if targetVehicle and not vehicleInRange(targetVehicle.handle) then
+                setVehicle(nil)
+            end
         elseif not Menu.IsOpen() then
-            setTarget(findTarget())
-        elseif target then
+            findTargets()
+        else
             target = nil
+            setVehicle(nil)
         end
         Platform.Wait(TARGET.IntervalMs)
     end
 end)
 
+-- Umrandung nicht stehen lassen, wenn die core_lib gestoppt wird
+Platform.OnResourceStop(function(resource)
+    if resource == Platform.GetResourceName() then
+        setVehicle(nil)
+    end
+end)
+
 Platform.Export('GetInteractionTarget', function()
     return target and { serverId = target.serverId, characterId = target.characterId, distance = target.distance } or nil
+end)
+
+-- Fahrzeug, auf das man zu Fuss schaut (mit Umrandung), sonst nil: { handle, distance }
+Platform.Export('GetInteractionVehicle', function()
+    return targetVehicle and { handle = targetVehicle.handle, distance = targetVehicle.distance } or nil
 end)
 
 Platform.Export('AddInteraction', function(def) return Interact.Add(def) end)

@@ -54,3 +54,5 @@ python3 tests/syntax.py core core_inventory core_lib
 Alles, was nur im Spiel sichtbar ist: Animationen, Positionen (Kofferraum, Spawn), Kleidung am Charakter, Tastenbelegung. Das wird auf dem Testserver geprüft.
 
 `test_noclip.py` braucht keine Datenbank. Er lädt die Client-Bridge mit nachgebauten FiveM-Natives und prüft den Noclip (Richtung, Q und E, Shift und Alt, Nachziehen des Peds, Teleport, Ausschalten mit Fallschutz).
+
+`test_vehicle_target.py` braucht auch keine Datenbank. Er prüft die Bridge-Funktionen für das Fahrzeug von außen: Fahrzeug im Blick (Abstand zur Karosserie, nicht hinter der eigenen Figur, nicht aus dem Fahrzeug), Umrandung, Stand von außen, Türen von außen (Schloss, Abstand, Kontrolle über das Fahrzeug) und Einsteigen.

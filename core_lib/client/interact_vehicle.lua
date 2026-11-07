@@ -1,6 +1,7 @@
--- G-Menue, Kategorie Fahrzeug: Motor, Licht, Tueren, Fenster, Sitz wechseln, Kofferraum.
--- Tueren und Fenster aendert nur, wer drin sitzt (Fahrer alle, Mitfahrer nur das eigene Fenster).
--- Abschliessen gehoert spaeter zum Schluessel-Script, darum nichts von aussen ausser dem Kofferraum.
+-- G-Menue, Kategorie Fahrzeug.
+-- Drin: Motor, Licht, Tueren (Fahrer), Fenster (Fahrer alle, Mitfahrer das eigene), Sitz wechseln.
+-- Von aussen (Fahrzeug anschauen, es leuchtet): Einsteigen auf einen freien Sitz, Tueren, Kofferraum-Inhalt.
+-- Ist das Fahrzeug abgeschlossen, gibt es von aussen nichts. Abschliessen gehoert spaeter zum Schluessel-Script.
 if LibDisabled then return end
 
 local CFG = Config.Lib.Interact
@@ -17,6 +18,25 @@ local function onOff(on)
     return on and 'an' or 'aus'
 end
 
+-- Von aussen nur, wenn nicht abgeschlossen
+local function isOpenFromOutside(ctx)
+    return not ctx.vehicle.locked
+end
+
+local OUTSIDE_ERRORS = {
+    locked = 'Das Fahrzeug ist abgeschlossen.',
+    too_far = 'Du bist zu weit vom Fahrzeug weg.',
+    seat_taken = 'Der Sitz ist nicht mehr frei.',
+    no_control = 'Das geht gerade nicht, versuch es gleich noch einmal.',
+    no_door = 'Die Tür gibt es nicht mehr.',
+    not_found = 'Das Fahrzeug ist weg.',
+}
+
+local function outsideError(code)
+    Lib.Notify(OUTSIDE_ERRORS[code] or OUTSIDE_ERRORS.not_found, 'error')
+end
+
+Interact.SetCategory('Fahrzeug/Einsteigen', { icon = 'seat', order = 10 })
 Interact.SetCategory('Fahrzeug/Türen', { icon = 'door', order = 30 })
 Interact.SetCategory('Fahrzeug/Fenster', { icon = 'window', order = 40 })
 Interact.SetCategory('Fahrzeug/Sitz wechseln', { icon = 'seat', order = 50 })
@@ -88,6 +108,31 @@ Interact.Add({
     end,
 }, OWNER)
 
+-- Tueren von aussen: gleiche Unterkategorie, aber nur zu Fuss und nur, wenn nicht abgeschlossen
+for index, door in ipairs(DATA.Doors) do
+    Interact.Add({
+        id = 'vehicle_outside_door_' .. door.key,
+        path = 'Fahrzeug/Türen',
+        label = door.label,
+        icon = 'door',
+        order = index,
+        vehicle = 'outside',
+        keepOpen = true,
+        canShow = function(ctx)
+            return isOpenFromOutside(ctx) and Platform.HasVehicleDoor(vehicleOf(ctx), door.index)
+        end,
+        state = function(ctx) return Platform.IsVehicleDoorOpen(vehicleOf(ctx), door.index) and 'offen' or 'zu' end,
+        onSelect = function(ctx)
+            local vehicle = vehicleOf(ctx)
+            local open = not Platform.IsVehicleDoorOpen(vehicle, door.index)
+            local ok, err = Platform.SetVehicleDoorFromOutside(vehicle, door.index, open, CFG.Target.VehicleKeepDistance)
+            if not ok then
+                outsideError(err)
+            end
+        end,
+    }, OWNER)
+end
+
 for index, window in ipairs(DATA.Windows) do
     Interact.Add({
         id = 'vehicle_window_' .. window.key,
@@ -145,15 +190,37 @@ for seat = DATA.DriverSeat, MAX_SEAT_INDEX do
     }, OWNER)
 end
 
+-- Einsteigen von aussen: nur freie Sitze, die Figur laeuft selbst zur Tuer
+for seat = DATA.DriverSeat, MAX_SEAT_INDEX do
+    Interact.Add({
+        id = 'vehicle_enter_' .. tostring(seat),
+        path = 'Fahrzeug/Einsteigen',
+        label = seatLabel(seat),
+        icon = 'seat',
+        order = seat,
+        vehicle = 'outside',
+        canShow = function(ctx)
+            return isOpenFromOutside(ctx) and isSeatFree(ctx, seat)
+        end,
+        onSelect = function(ctx)
+            local ok, err = Platform.EnterVehicleSeat(vehicleOf(ctx), seat, CFG.Target.VehicleKeepDistance)
+            if not ok then
+                outsideError(err)
+            end
+        end,
+    }, OWNER)
+end
+
+-- Inhalt ueber das Inventar (das prueft Abstand zum Heck und Schloss selbst)
 Interact.Add({
     id = 'vehicle_trunk',
     path = 'Fahrzeug',
-    label = 'Kofferraum öffnen',
+    label = 'Kofferraum-Inhalt',
     description = 'Stell dich direkt ans Heck.',
     icon = 'package',
     order = 60,
     vehicle = 'outside',
-    canShow = function() return Platform.IsResourceStarted(INVENTORY) end,
+    canShow = function(ctx) return isOpenFromOutside(ctx) and Platform.IsResourceStarted(INVENTORY) end,
     onSelect = function()
         Platform.CallExport(INVENTORY, 'OpenNearestTrunk')
     end,

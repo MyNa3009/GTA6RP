@@ -1,8 +1,17 @@
-# core_lib 1.3.0
+# core_lib 1.4.0
 
 Bibliothek für alle Scripts des Servers, ähnlich wie ox_lib, aber im Design des Servers und mit mehr Minigames. Dazu das **G-Menü**: ein Interaktionsmenü, über das später fast alles läuft, immer in Kategorien geteilt (`Person`, `Fahrzeug`, `Organisation > Leader > Entlassen`).
 
 Alles, was die Core schon kann, bleibt in der Core und wird nicht doppelt gebaut: Callbacks (`Network.Call`), Tasten (`Platform.RegisterKeyCommand`), Meldungen (`core:notify`), Logging (`exports.core:Log`).
+
+## Update von 1.3.0
+
+1. Erst die Core auf 1.9.0 bringen, dann den Ordner `core_lib` ersetzen und neu starten.
+2. **Fahrzeug von außen:** Schaust du zu Fuß auf ein Fahrzeug, leuchtet es mit einer Umrandung. Drückst du dann `G`, gibt es unter Fahrzeug: Einsteigen (nur freie Sitze, die Figur läuft selbst zur Tür), Türen (einzeln auf und zu, auch Motorhaube und Kofferraum) und Kofferraum-Inhalt (vorher "Kofferraum öffnen"). In der Mitte des Kreises stehen Kennzeichen und Abstand. Ist das Fahrzeug abgeschlossen, gibt es von außen nichts, in der Mitte steht "abgeschlossen".
+3. Eine Person, die man anschaut, geht vor. Wer in einem Fahrzeug sitzt, ist kein Personen-Ziel mehr, dann gilt das Fahrzeug.
+4. **Farben aus dem Logo:** Das Menü hat jetzt alle vier Farben selbst (`Config.Lib.Menu.Colors`): Aubergine als Hintergrund, Creme als Schrift, Magenta für die gewählte Kategorie, Pfirsich für Liste und Icons. Kreis am Boden und Umrandung sind Magenta. Wer `base` oder `ink` weglässt, bekommt wieder die Farben der Core.
+5. Config: `Interact.VehicleDistance` ist jetzt der Abstand zur Karosserie (Standard 3,5 m statt 5 m zur Kamera). Neu unter `Interact.Target`: `VehicleColor`, `VehicleAlpha`, `VehicleKeepDistance`. Neu in `data/target_gta5.lua`: `Outline.shader` (0 = weicher Schein, 1 = harte Linie).
+6. Neuer Export `GetInteractionVehicle()` und neuer Fehlercode `vehicle_gone`.
 
 ## Update von 1.2.0
 
@@ -86,6 +95,7 @@ Danach gibt es die Tabelle `lib`. Alles mit Ergebnis (`lib.progressBar`, `lib.sk
 - **Zurück:** Rechte Maustaste, Pfeil links, `Backspace` oder der Pfeil neben der Überschrift. Das geht von der Unterkategorie zur Liste, von der Liste zum Kreis und vom Kreis aus schließt es.
 - `Esc` oder `G` schließt sofort.
 - **Ziel:** Schau die Person an, mit der du etwas machen willst. Unter ihr läuft dann ein Kreis am Boden. Drückst du jetzt `G`, gilt sie als Ziel, bis das Menü zu ist. In der Mitte des Kreises steht, wen du gewählt hast ("ID 17 · 1,2 m"). Schaust du niemanden an, fehlen alle Einträge, die eine Person brauchen.
+- **Fahrzeug als Ziel:** Schaust du zu Fuß auf ein Fahrzeug (bis 3,5 m zur Karosserie), leuchtet es mit einer Umrandung. In der Mitte steht dann das Kennzeichen ("LS 4821 · 2,1 m"). Eine Person geht vor, wer in einem Fahrzeug sitzt, zählt als Fahrzeug.
 - Was du nicht darfst, steht gar nicht im Menü.
 
 Angezeigt wird nur, was gerade passt. Ohne Fahrzeug gibt es keine Kategorie Fahrzeug, ohne angeschaute Person keine Einträge, die eine Person brauchen, ohne Berechtigung (`canShow`) gar nichts. Ist nichts zu tun, kommt die Meldung "Hier gibt es gerade nichts zu tun."
@@ -97,9 +107,9 @@ Angezeigt wird nur, was gerade passt. Ohne Fahrzeug gibt es keine Kategorie Fahr
 | Person | Ausweis zeigen (Personalausweis, Führerschein, Waffenschein, Dienstausweis, Flugschein, Bootsschein, Angelschein), Durchsuchen, Geld geben |
 | Fahrzeug, am Steuer | Motor (an oder aus), Licht, Türen (einzeln und "Alle schließen", nur Türen, die es gibt), Fenster, Sitz wechseln |
 | Fahrzeug, als Mitfahrer | eigenes Fenster, Sitz wechseln |
-| Fahrzeug, zu Fuß (das Fahrzeug, auf das du schaust) | Kofferraum öffnen |
+| Fahrzeug, zu Fuß (das Fahrzeug, auf das du schaust, es leuchtet) | Einsteigen (freie Sitze), Türen (einzeln, auch Motorhaube und Kofferraum), Kofferraum-Inhalt. Abgeschlossen: nichts |
 
-Sitz wechseln geht bis 5 km/h (`Config.Lib.Interact.SeatChangeMaxKmh`). Abschließen gehört später zum Schlüssel-Script.
+Sitz wechseln geht bis 5 km/h (`Config.Lib.Interact.SeatChangeMaxKmh`). Abschließen gehört später zum Schlüssel-Script. Türen und Einsteigen von außen gehen bis 6 m zur Fahrzeugmitte (`Interact.Target.VehicleKeepDistance`), danach kommt `vehicle_gone`.
 
 ### Eigene Einträge
 
@@ -139,7 +149,7 @@ lib.addInteraction({
 | `icon` | | Name aus der Icon-Liste unten |
 | `order` | | Reihenfolge, kleiner = weiter oben (Standard 100) |
 | `target` | | `'player'`: nur, wenn man eine Person anschaut, `ctx.player` ist gesetzt |
-| `vehicle` | | `'inside'` (im Fahrzeug), `'driver'` (am Steuer), `'outside'` (zu Fuß neben einem Fahrzeug) |
+| `vehicle` | | `'inside'` (im Fahrzeug), `'driver'` (am Steuer), `'outside'` (zu Fuß, Fahrzeug angeschaut, es leuchtet) |
 | `canShow` | | `function(ctx) return true end`, schnell und ohne Warten. Auch für Berechtigungen: `false` = Eintrag fehlt ganz |
 | `state` | | `function(ctx) return 'an' end`, kurzer Zustand rechts in der Zeile |
 | `keepOpen` | | Menü bleibt nach der Aktion offen und wird neu aufgebaut (z. B. Türen auf und zu) |
@@ -150,7 +160,7 @@ lib.addInteraction({
 |---|---|
 | `ctx.player` | angeschaute Person `{ serverId, characterId, distance }` oder nil |
 | `ctx.players` | `{ ctx.player }` oder leer (für ältere Scripts) |
-| `ctx.vehicle` | `{ handle, inside, seat, isDriver, engine, lights, speedKmh, freeSeats }` im Fahrzeug, `{ handle, inside = false }` zu Fuß daneben |
+| `ctx.vehicle` | `{ handle, inside, seat, isDriver, engine, lights, speedKmh, freeSeats }` im Fahrzeug, `{ handle, inside = false, plate, locked, distance, freeSeats }` zu Fuß (angeschautes Fahrzeug) |
 
 `lib.setInteractionCategory(pfad, { icon, order })` legt Icon und Reihenfolge einer Kategorie oder Unterkategorie fest. Die Kategorien Person (10), Fahrzeug (20) und Organisation (30) stehen fest in der Config. Im Kreis ist Platz für bis zu 8 Kategorien. Unterkategorien stehen vor den einzelnen Einträgen. Einträge einer Resource verschwinden, wenn sie stoppt.
 
@@ -293,6 +303,7 @@ Wer `init.lua` nicht nutzen will, ruft die Exports direkt. Die Start-Exports war
 | `ShowTextUI(text, optionen)`, `HideTextUI()`, `IsTextUIOpen()` | |
 | `AddInteraction(def)`, `RemoveInteraction(id)`, `SetInteractionCategory(pfad, o)`, `OpenInteractionMenu()`, `CloseInteractionMenu()` | |
 | `GetInteractionTarget()` | angeschaute Person `{ serverId, characterId, distance }` oder nil |
+| `GetInteractionVehicle()` | angeschautes Fahrzeug zu Fuß `{ handle, distance }` oder nil |
 | `Notify(text, typ, dauer)` | |
 
 | Server | Gibt zurück |
@@ -301,7 +312,7 @@ Wer `init.lua` nicht nutzen will, ruft die Exports direkt. Die Start-Exports war
 | `GetMinigameResult(nummer)` | nil (läuft), dann einmal true oder false |
 | `Notify(source, text, typ)` | |
 
-**Fehlercodes:** `player_gone` (Ziel zu weit weg), `busy` (läuft schon etwas), `invalid_input`, `dead`, `no_character`, `not_found`, `id_taken` (ID gehört einer anderen Resource), `invalid_target`, `invalid_vehicle`, `no_action`, `too_many`.
+**Fehlercodes:** `player_gone` (Person zu weit weg), `vehicle_gone` (Fahrzeug zu weit weg), `busy` (läuft schon etwas), `invalid_input`, `dead`, `no_character`, `not_found`, `id_taken` (ID gehört einer anderen Resource), `invalid_target`, `invalid_vehicle`, `no_action`, `too_many`.
 
 ## Icons
 
@@ -309,7 +320,7 @@ Wer `init.lua` nicht nutzen will, ruft die Exports direkt. Die Start-Exports war
 
 ## Config
 
-Alles in `config.lua` unter `Config.Lib`: Farben des Menüs (`Menu.Colors`), Taste und Befehl des G-Menüs, Reichweite für Personen und Fahrzeuge, Blickziel und Kreis (`Interact.Target`), feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Hintergrund und Schrift aller UIs kommen aus `Config.UI.Colors` der Core, das Menü hat dazu eigene Akzentfarben.
+Alles in `config.lua` unter `Config.Lib`: Farben des Menüs (`Menu.Colors`, alle vier aus dem Logo), Taste und Befehl des G-Menüs, Reichweite für Personen und Fahrzeuge, Blickziel, Kreis und Umrandung (`Interact.Target`), feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Die anderen UIs der core_lib nehmen ihre Farben aus `Config.UI.Colors` der Core.
 
 ## Aufbau
 
@@ -319,14 +330,14 @@ core_lib/
   modules/              zones.lua, cache.lua, laufen in der Resource, die sie einbindet
   config.lua            Config.Lib
   data/vehicle_gta5.lua Türen, Fenster, Sitze (GTA-5-Indizes)
-  data/target_gta5.lua  Kreis am Boden unter dem Ziel (GTA-Markertyp)
+  data/target_gta5.lua  Kreis am Boden unter der Person (GTA-Markertyp), Umrandung um das Fahrzeug (Shader)
   client/               main (UI, Fokus, Ergebnisse), progress, minigames, dialogs, textui, menu (Kontextmenüs),
                         interact (G-Menü), interact_person, interact_vehicle
   server/main.lua       Minigames vom Server mit Zeitprüfung
   html/                 index (Shell), menu, progress, game, dialog, textui
 ```
 
-FiveM-Natives stehen nur in der Bridge der Core. Jede UI läuft im Browser mit Beispieldaten: `html/menu.html` (mit `?tab=2` direkt in einer Kategorie, `?mode=context` als Kontextmenü), `html/dialog.html?kind=alert`, `html/game.html?kind=skillcheck` (oder `lockpick`, `hack`, `wires`), `html/progress.html?style=circle`, `html/textui.html?pos=right`.
+FiveM-Natives stehen nur in der Bridge der Core. Jede UI läuft im Browser mit Beispieldaten: `html/menu.html` (mit `?tab=2` direkt in einer Kategorie, `?mode=vehicle` mit Fahrzeug als Ziel, `?mode=context` als Kontextmenü), `html/dialog.html?kind=alert`, `html/game.html?kind=skillcheck` (oder `lockpick`, `hack`, `wires`), `html/progress.html?style=circle`, `html/textui.html?pos=right`.
 
 ## Noch nicht drin
 

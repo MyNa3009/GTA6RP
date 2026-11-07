@@ -650,9 +650,10 @@ end
 -- Spieler, den man gerade anschaut (Mitte der Kamera), in maxDistance Metern. Gibt { serverId, ped, distance } oder nil.
 -- Gewaehlt wird, wer am naechsten an der Blickrichtung steht, hoechstens maxAngle Grad daneben und mit freier Sicht.
 -- Ueber den Winkel statt per Strahl, weil ein duenner Strahl Personen oft verfehlt (seit Core 1.8.0).
+-- onFootOnly (seit Core 1.9.0): Personen in einem Fahrzeug zaehlen nicht, dann gilt das Fahrzeug als Ziel.
 local SIGHT_AIM_HEIGHT = 0.3   -- Brusthoehe ueber dem Mittelpunkt des Peds
 
-function Platform.GetPlayerInSight(maxDistance, maxAngle)
+function Platform.GetPlayerInSight(maxDistance, maxAngle, onFootOnly)
     local me = PlayerId()
     local myPed = PlayerPedId()
     local myCoords = GetEntityCoords(myPed)
@@ -666,7 +667,7 @@ function Platform.GetPlayerInSight(maxDistance, maxAngle)
     for _, player in ipairs(GetActivePlayers()) do
         if player ~= me then
             local ped = GetPlayerPed(player)
-            if ped ~= 0 and IsEntityVisible(ped) then
+            if ped ~= 0 and IsEntityVisible(ped) and not (onFootOnly and IsPedInAnyVehicle(ped, false)) then
                 local coords = GetEntityCoords(ped)
                 local distance = #(coords - myCoords)
                 if distance <= maxDistance then
@@ -699,6 +700,22 @@ function Platform.DrawPlayerRing(serverId, style)
         style.size, style.size, style.size,
         color.r, color.g, color.b, style.alpha,
         false, false, 2, style.rotate == true, nil, nil, false)
+    return true
+end
+
+-- Leuchtende Umrandung um ein Objekt oder Fahrzeug, nur in der eigenen Ansicht (seit Core 1.9.0).
+-- style: { color = { r, g, b }, alpha, shader }. FiveM kennt nur eine Farbe fuer alle Umrandungen,
+-- darum setzt jedes Einschalten Farbe und Shader neu. Zum Ausschalten reicht SetEntityOutline(entity, false).
+function Platform.SetEntityOutline(entity, on, style)
+    if not entity or not DoesEntityExist(entity) then
+        return false
+    end
+    if on then
+        local color = style.color
+        SetEntityDrawOutlineShader(style.shader)
+        SetEntityDrawOutlineColor(color.r, color.g, color.b, style.alpha)
+    end
+    SetEntityDrawOutline(entity, on == true)
     return true
 end
 
@@ -1232,6 +1249,43 @@ function Platform.GetVehicleInSight(maxDistance)
         return entity
     end
     return nil
+end
+
+-- Fahrzeug, auf das man zu Fuss schaut (seit Core 1.9.0, G-Menue der core_lib). Gibt { vehicle, distance } oder nil.
+-- Der Strahl geht aus der Kamera an der eigenen Figur vorbei nach vorne. Waende und Objekte verdecken,
+-- Fahrzeuge hinter der eigenen Figur zaehlen nicht. distance ist der Abstand zur Karosserie, nicht zur Mitte.
+local SIGHT_RAY_FLAGS = 1 + 2 + 16   -- Karte, Fahrzeuge, Objekte
+local SIGHT_BEHIND_TOLERANCE = 1.0   -- so weit hinter der eigenen Figur zaehlt ein Treffer noch
+
+local function dot(a, b)
+    return a.x * b.x + a.y * b.y + a.z * b.z
+end
+
+function Platform.GetVehicleInSightOnFoot(maxDistance)
+    local ped = PlayerPedId()
+    if GetVehiclePedIsIn(ped, false) ~= 0 then
+        return nil
+    end
+    local from = GetGameplayCamCoord()
+    local rotation = GetGameplayCamRot(2)
+    local pitch, yaw = math.rad(rotation.x), math.rad(rotation.z)
+    local direction = vector3(-math.sin(yaw) * math.cos(pitch), math.cos(yaw) * math.cos(pitch), math.sin(pitch))
+    local myCoords = GetEntityCoords(ped)
+    local pedAlong = dot(myCoords - from, direction)
+    local to = from + direction * (math.max(pedAlong, 0.0) + maxDistance + SIGHT_BEHIND_TOLERANCE)
+    local handle = StartExpensiveSynchronousShapeTestLosProbe(from.x, from.y, from.z, to.x, to.y, to.z, SIGHT_RAY_FLAGS, ped, RAY_SEE_THROUGH)
+    local _, hit, hitCoords, _, entity = GetShapeTestResult(handle)
+    if hit ~= 1 or entity == 0 or not IsEntityAVehicle(entity) then
+        return nil
+    end
+    if dot(hitCoords - from, direction) < pedAlong - SIGHT_BEHIND_TOLERANCE then
+        return nil
+    end
+    local distance = #(hitCoords - myCoords)
+    if distance > maxDistance then
+        return nil
+    end
+    return { vehicle = entity, distance = distance }
 end
 
 function Platform.VehicleFromNetId(netId)
@@ -1869,5 +1923,98 @@ function Platform.MoveToSeat(vehicle, seat)
         return false
     end
     SetPedIntoVehicle(PlayerPedId(), vehicle, seat)
+    return true
+end
+
+------------------------------------------------------------------------
+-- Fahrzeug von aussen (seit Core 1.9.0, fuer das G-Menue der core_lib)
+------------------------------------------------------------------------
+
+local CONTROL_TIMEOUT_MS = 600
+local CONTROL_STEP_MS = 50
+local ENTER_TIMEOUT_MS = 10000   -- so lange darf die Figur zur Tuer laufen
+local ENTER_SPEED = 1.0          -- gehen
+local ENTER_FLAGS = 1            -- normal einsteigen, nach Unterbrechung weitermachen
+
+local function distanceToVehicle(vehicle)
+    return #(GetEntityCoords(vehicle) - GetEntityCoords(PlayerPedId()))
+end
+
+-- Stand eines Fahrzeugs von aussen oder nil: { plate, locked, distance (zur Mitte), freeSeats = { seat, ... } }
+function Platform.GetVehicleOutsideState(vehicle)
+    if not vehicle or not DoesEntityExist(vehicle) or not IsEntityAVehicle(vehicle) then
+        return nil
+    end
+    local free = {}
+    for index = DRIVER_SEAT, GetVehicleMaxNumberOfPassengers(vehicle) - 1 do
+        if IsVehicleSeatFree(vehicle, index) then
+            free[#free + 1] = index
+        end
+    end
+    local plate = GetVehicleNumberPlateText(vehicle) or ''
+    return {
+        plate = plate:match('^%s*(.-)%s*$'),
+        locked = GetVehicleDoorLockStatus(vehicle) >= LOCK_LOCKED_FROM,
+        distance = distanceToVehicle(vehicle),
+        freeSeats = free,
+    }
+end
+
+-- Kurz die Kontrolle ueber ein Fahrzeug holen, damit Aenderungen fuer alle sichtbar sind. Wartet, nur im Thread.
+local function requestControl(entity)
+    local waited = 0
+    while not NetworkHasControlOfEntity(entity) do
+        if waited >= CONTROL_TIMEOUT_MS or not DoesEntityExist(entity) then
+            return false
+        end
+        NetworkRequestControlOfEntity(entity)
+        Wait(CONTROL_STEP_MS)
+        waited = waited + CONTROL_STEP_MS
+    end
+    return true
+end
+
+-- Tuer von aussen oeffnen oder schliessen. Nur offen, wenn nicht abgeschlossen und nah genug (Abstand zur Mitte).
+-- Gibt true oder false und 'no_door' | 'locked' | 'too_far' | 'no_control'. Wartet, nur im Thread.
+function Platform.SetVehicleDoorFromOutside(vehicle, index, open, maxDistance)
+    local state = Platform.GetVehicleOutsideState(vehicle)
+    if not state or not Platform.HasVehicleDoor(vehicle, index) then
+        return false, 'no_door'
+    end
+    if state.locked then
+        return false, 'locked'
+    end
+    if state.distance > maxDistance then
+        return false, 'too_far'
+    end
+    if not requestControl(vehicle) then
+        return false, 'no_control'
+    end
+    if open then
+        SetVehicleDoorOpen(vehicle, index, false, false)
+    else
+        SetVehicleDoorShut(vehicle, index, false)
+    end
+    return true
+end
+
+-- Zu Fuss in einen bestimmten Sitz einsteigen. Die Figur laeuft selbst zur passenden Tuer.
+-- Gibt true oder false und 'not_found' | 'locked' | 'too_far' | 'seat_taken'.
+function Platform.EnterVehicleSeat(vehicle, seat, maxDistance)
+    seat = tonumber(seat)
+    local state = Platform.GetVehicleOutsideState(vehicle)
+    if not state or not seat then
+        return false, 'not_found'
+    end
+    if state.locked then
+        return false, 'locked'
+    end
+    if state.distance > maxDistance then
+        return false, 'too_far'
+    end
+    if not IsVehicleSeatFree(vehicle, seat) then
+        return false, 'seat_taken'
+    end
+    TaskEnterVehicle(PlayerPedId(), vehicle, ENTER_TIMEOUT_MS, seat, ENTER_SPEED, ENTER_FLAGS, 0)
     return true
 end

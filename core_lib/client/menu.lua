@@ -107,18 +107,26 @@ function Menu.ReadMetadata(metadata)
 end
 
 -- Fuehrt die Aktion eines Eintrags aus: Funktion, Schluessel aus init.lua oder lokales Ereignis
-function Menu.RunAction(action, value)
+-- done (optional): wird aufgerufen, wenn die Aktion fertig ist. Bei Ereignissen sofort, weil dort niemand Bescheid gibt.
+function Menu.RunAction(action, value, done)
     if type(action.onSelect) == 'function' then
         Platform.Async(function()
             local ok, err = pcall(action.onSelect, value)
             if not ok then
                 Platform.Print('error', ('core_lib: Fehler in einer Menue-Aktion von %s: %s'):format(tostring(action.owner), tostring(err)))
             end
+            if done then
+                done()
+            end
         end)
+        return
     elseif action.selectKey then
         Platform.Emit(SELECT_EVENT, action.selectKey, value)
     elseif action.event then
         Platform.Emit(action.event, value)
+    end
+    if done then
+        Platform.Async(done)
     end
 end
 
