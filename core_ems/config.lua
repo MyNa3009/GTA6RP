@@ -91,7 +91,7 @@ Config.Ems = {
     -- chance: pro Minute online (base), zusaetzlich pro Minute nass (wet), pro Minute Stress (stress: rennen,
     --   zielen, schiessen), pro gegessenem Essen (food). 0.001 pro Minute sind rund 6 Prozent pro Stunde.
     -- contagious: steckt andere an. chance pro Minute, die jemand naeher als distance Meter steht, mal Stadium.
-    --   0.004 im Stadium 1 sind rund 21 Prozent, wenn man eine Stunde direkt daneben steht.
+    --   0.01 im Stadium 1 sind rund 45 Prozent, wenn man eine Stunde direkt daneben steht (Stadium 3: 84 Prozent).
     -- symptoms[stadium]: Liste von Symptomen, every = ungefaehr alle so viele Sekunden (mit Zufall).
     --   cough, headache, nausea, vomit, sneeze: Animation oder Meldung
     --   blur (seconds), shake (seconds, intensity), blackout (ms), stumble (ms), minimap (seconds), forget
@@ -101,7 +101,7 @@ Config.Ems = {
         cold = {
             label = 'Erkältung', cure = 'pill', pill = 'pill_cold', stages = 3, worsenMinutes = 90, price = 150,
             chance = { base = 0.0003, wet = 0.004 },
-            contagious = { chance = 0.004, distance = 3.0 },
+            contagious = { chance = 0.01, distance = 3.0 },
             symptoms = {
                 { { kind = 'cough', every = 300 } },
                 { { kind = 'cough', every = 150 }, { kind = 'sneeze', every = 360 }, { kind = 'blur', every = 420, seconds = 6 } },
@@ -120,7 +120,7 @@ Config.Ems = {
         stomach = {
             label = 'Magen-Darm', cure = 'pill', pill = 'pill_stomach', stages = 3, worsenMinutes = 90, price = 150,
             chance = { base = 0.0002, food = 0.02 },
-            contagious = { chance = 0.002, distance = 2.0 },
+            contagious = { chance = 0.006, distance = 2.0 },
             symptoms = {
                 { { kind = 'nausea', every = 300 } },
                 { { kind = 'nausea', every = 240 }, { kind = 'vomit', every = 360 } },

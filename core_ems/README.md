@@ -1,6 +1,11 @@
-# core_ems 1.2.0
+# core_ems 1.2.1
 
 Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskasten, Verkauf von Verbänden, Verbandskästen und Tabletten, Untersuchen und Behandeln, Krankheiten mit Stadien, Krankenversicherung und die Medizinische Datenbank. Ränge, Rechte, Dienst und Kasse kommen aus `core_factions` (Organisation `ems`).
+
+## Update von 1.2.0
+
+1. Nur `config.lua` hat sich geändert (oder den Ordner `core_ems` ersetzen). Neu starten.
+2. Ansteckung höher: Erkältung 1 % pro Minute (vorher 0,4 %), Magen-Darm 0,6 % pro Minute (vorher 0,2 %), jeweils mal Stadium. Eine Stunde direkt neben jemandem mit Erkältung: rund 45 % im Stadium 1, 84 % im Stadium 3.
 
 ## Update von 1.1.1
 
