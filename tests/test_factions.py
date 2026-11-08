@@ -228,10 +228,107 @@ check('Assistent: nur ansehen', F(9, 'faction_rank_save', {'rank': 2, 'name': 'x
 env.command(0, f'removeorga {ids[5]} Test')
 check('/removeorga: ins Archiv als admin', member(ids[5]) is None and F(1, 'faction_archive', {})['data']['entries'][0]['kind'] == 'admin')
 
+print('Divisionen')
+env.command(0, f'setorga {ids[3]} ems 18')
+env.command(0, f'setorga {ids[4]} ems 5')
+D = lambda src, data: F(src, 'faction_division_save', data)
+check('Leader legt Highcommand an (26 bis 30)', D(1, {'name': 'Highcommand', 'minRank': 26, 'maxRank': 30})['ok'])
+check('Vice legt Command an (15 bis 25)', D(2, {'name': 'Command', 'minRank': 15, 'maxRank': 25})['ok'])
+r = D(1, {'name': 'Supervisor', 'minRank': 10, 'maxRank': 15})
+check('Überschneidung mit Command: abgelehnt', r['error'] == 'division_overlap', r)
+check('Rang 18 (Mira) darf keine anlegen', D(3, {'name': 'Officer', 'minRank': 1, 'maxRank': 9})['error'] == 'no_permission')
+check('falscher Bereich (von > bis): invalid_ranks', D(1, {'name': 'X', 'minRank': 9, 'maxRank': 3})['error'] == 'invalid_ranks')
+for name, lo, hi in (('Supervisor', 10, 14), ('Officer', 5, 9), ('Anwärter', 1, 4)):
+    D(1, {'name': name, 'minRank': lo, 'maxRank': hi})
+check('sechste Division: limit_reached', D(1, {'name': 'Extra', 'minRank': 1, 'maxRank': 1})['error'] == 'limit_reached')
+dv = F(3, 'faction_divisions')['data']
+by = {d['name']: [m['name'] for m in d['members']] for d in dv['divisions']}
+check('Mitglieder pro Division (Highcommand: Lena, Jonas; Command: Mira; Officer: Tom)',
+      by.get('Highcommand') == ['Lena Hoffmann', 'Jonas Weber'] and by.get('Command') == ['Mira Schulz'] and by.get('Officer') == ['Tom Becker'], by)
+check('Mira darf ansehen, aber nicht bearbeiten', dv['canEdit'] is False)
+ov = F(1, 'faction_menu_open')['data']
+summary = {d['name']: d['count'] for d in ov['divisions']}
+check('Übersicht: 4 Mitglieder, Anzahl pro Division', ov['counts']['members'] == 4 and summary['Highcommand'] == 2 and summary['Command'] == 1, (ov['counts'], summary))
+check('Übersicht: Logo und Farben der Organisation', ov['org']['logo'] == 'logos/ems.png' and ov['org']['theme']['mark'] == '237 28 36')
+anw = [d for d in dv['divisions'] if d['name'] == 'Anwärter'][0]
+check('Division umbenennen', D(1, {'id': anw['id'], 'name': 'Anwärterinnen', 'minRank': 1, 'maxRank': 4})['ok'])
+check('Division löschen', F(1, 'faction_division_delete', {'id': anw['id']})['ok'] and len(F(1, 'faction_divisions')['data']['divisions']) == 4)
+
+print('Gehalt pro Rang')
+def rank_row(src, rank):
+    return [r for r in F(src, 'faction_ranks')['data']['ranks'] if r['rank'] == rank][0]
+row = rank_row(1, 18)
+r = F(1, 'faction_rank_save', {'rank': 18, 'name': row['name'], 'permissions': row['permissions'], 'salary': 500, 'tasks': 'Leitet Einsätze, bildet aus.'})
+check('Leader setzt Gehalt 500 $ und Aufgaben für Rang 18', r['ok'] and rank_row(1, 18)['salary'] == 500 and rank_row(1, 18)['tasks'] == 'Leitet Einsätze, bildet aus.', r)
+check('Rangname und Rechte bleiben', rank_row(1, 18)['name'] == row['name'] and rank_row(1, 18)['permissions'] == row['permissions'])
+check('über 1.000 $: invalid_salary', F(1, 'faction_rank_save', {'rank': 18, 'name': row['name'], 'permissions': row['permissions'], 'salary': 1500})['error'] == 'invalid_salary')
+top = rank_row(2, 30)
+check('Vice darf das Gehalt des Leaders nicht setzen', F(2, 'faction_rank_save', {'rank': 30, 'name': top['name'], 'permissions': top['permissions'], 'salary': 1000})['error'] == 'no_permission')
+env.sql("UPDATE faction_settings SET balance = 5000 WHERE faction = 'ems'")
+fac.execute(f'Factions.SetDuty(3, true)')
+bank = lambda src: env.to_py(env.lua.eval(f"Core.GetMoney({src}, 'bank')"))
+b0 = bank(3)
+fac.execute('Factions.PaySalary(3, "ems")')
+env.tick(100)
+check('Gehalt: 500 $ aus der Kasse aufs Konto', bank(3) == b0 + 500 and env.to_py(fac.eval("Factions.GetBalance('ems')")) == 4500, (bank(3), b0))
+env.sql("UPDATE faction_settings SET balance = 100 WHERE faction = 'ems'")
+fac.execute('Factions.PaySalary(3, "ems")')
+check('Kasse reicht nicht: kein Gehalt, Hinweis', bank(3) == b0 + 500 and any('Kasse' in t for t in notes(3)))
+fac.execute('Factions.ForgetPay(3)')
+env.sql("UPDATE faction_settings SET balance = 5000 WHERE faction = 'ems'")
+env.tick(60 * 60 * 1000 + 1000)
+check('nach 60 Minuten im Dienst automatisch', bank(3) == b0 + 1000, bank(3) - b0)
+fac.execute('Factions.SetDuty(3, false)')
+
+print('Bonus')
+env.sql("UPDATE faction_settings SET balance = 5000 WHERE faction = 'ems'")
+B = lambda src, data: F(src, 'faction_member_bonus', data)
+b0 = bank(3)
+r = B(1, {'characterId': ids[3], 'amount': 800, 'reason': 'Gute Arbeit beim Großeinsatz'})
+check('Leader zahlt Mira 800 $ Bonus', r['ok'] and bank(3) == b0 + 800 and env.to_py(fac.eval("Factions.GetBalance('ems')")) == 4200, r)
+check('Mira bekommt eine Meldung', any('Bonus' in t and '800' in t for t in notes(3)))
+check('zweiter Bonus am selben Tag: bonus_today', B(2, {'characterId': ids[3], 'amount': 100})['error'] == 'bonus_today')
+check('über 1.000 $: invalid_amount', B(1, {'characterId': ids[4], 'amount': 1200})['error'] == 'invalid_amount')
+check('Mira (Rang 18) darf keinen Bonus zahlen', B(3, {'characterId': ids[4], 'amount': 100})['error'] == 'no_permission')
+check('sich selbst: no_permission', B(1, {'characterId': ids[1], 'amount': 100})['error'] == 'no_permission')
+env.sql("UPDATE faction_settings SET balance = 50 WHERE faction = 'ems'")
+check('Kasse zu leer: not_enough_money', B(1, {'characterId': ids[4], 'amount': 100})['error'] == 'not_enough_money')
+check('dann ist der Tag nicht verbraucht', member(ids[4])['last_bonus_at'] is None)
+env.sql("UPDATE faction_settings SET balance = 5000 WHERE faction = 'ems'")
+r = B(1, {'characterId': ids[4], 'amount': 250})
+check('Bonus an Tom', r['ok'], r)
+rows = {m['name']: m for m in F(1, 'faction_members')['data']['members']}
+check('Leitstelle: Bonus heute, Division, Einstellungsdatum', rows['Mira Schulz'].get('bonusToday') is True and rows['Mira Schulz']['division'] == 'Command' and rows['Mira Schulz']['hiredAt'])
+check('Leitstelle: Mira nie befördert, kein Uprank-Datum', rows['Mira Schulz'].get('lastPromotedAt') is None)
+F(1, 'faction_member_rank', {'characterId': ids[4], 'rank': 6})
+tom = [m for m in F(1, 'faction_members')['data']['members'] if m['name'] == 'Tom Becker'][0]
+check('Tom befördert: letzter Uprank heute', tom.get('lastPromotedAt') == tom['hiredAt'], tom)
+check('Leitstelle: Bonus-Recht nur für Leitung', F(1, 'faction_members')['data']['edit'].get('bonus') is True and not F(3, 'faction_members')['data']['edit'].get('bonus'))
+
+print('Erklärungen')
+I = lambda src, data: F(src, 'faction_info_save', data)
+r = I(1, {'category': 'rules', 'title': 'Funkdisziplin', 'body': 'Kurz und klar funken. Statusmeldungen immer mit Dienstnummer.'})
+check('Leader legt eine Regel an', r['ok'] and r['data']['sections'][0]['title'] == 'Funkdisziplin', r)
+check('Vice legt einen Ablauf an', I(2, {'category': 'process', 'title': 'Einstellung', 'body': 'Bewerbung, Gespräch, Probetag.'})['ok'])
+check('unbekannter Bereich: invalid_input', I(1, {'category': 'xyz', 'title': 'a', 'body': 'b'})['error'] == 'invalid_input')
+check('Mira darf nichts anlegen', I(3, {'category': 'rules', 'title': 'a', 'body': 'b'})['error'] == 'no_permission')
+exams = F(1, 'faction_ranks')['data']['exams']
+r = F(1, 'faction_exam_save', {'id': exams[0]['id'], 'name': exams[0]['name'], 'description': 'Theorie und Praxis zur Herz-Lungen-Wiederbelebung.'})
+check('Prüfung bekommt eine Beschreibung', r['ok'], r)
+info = F(3, 'faction_info')['data']
+check('Mira liest: Regeln, Abläufe, Prüfungen mit Beschreibung', len(info['sections']) == 2 and info['exams'][0]['description'].startswith('Theorie') and info['canEdit'] is False, info['sections'])
+r18 = [r for r in info['ranks'] if r['rank'] == 18][0]
+r1 = [r for r in info['ranks'] if r['rank'] == 1][0]
+check('Rang 18: Aufgaben und Gehalt', r18['tasks'] == 'Leitet Einsätze, bildet aus.' and r18['salary'] == 500)
+check('Rang 1 schaltet "Leitstelle ansehen" frei', 'Leitstelle ansehen' in r1['newPermissions'], r1)
+sec = info['sections'][0]
+check('Abschnitt bearbeiten', I(1, {'id': sec['id'], 'category': sec['category'], 'title': sec['title'], 'body': 'Neu.'})['ok'])
+check('Abschnitt löschen', F(1, 'faction_info_delete', {'id': sec['id']})['ok'] and len(F(1, 'faction_info')['data']['sections']) == 1)
+
 print('Log')
 env.flush_log()
 actions = {r['action'] for r in env.sql("SELECT action FROM audit_log WHERE category = 'faction'")}
-check('Einstellen, Rang, Entlassen, Kasse, Dienst geloggt', {'hire', 'rank', 'fire', 'cash_in', 'cash_out', 'duty_on', 'rank_settings'} <= actions, actions)
+check('Einstellen, Rang, Entlassen, Kasse, Dienst, Bonus, Divisionen, Erklärungen geloggt', {'hire', 'rank', 'fire', 'cash_in', 'cash_out', 'duty_on', 'rank_settings', 'bonus', 'division_save', 'info_save'} <= actions, actions)
 
 print(f'\n{ok} ok, {fail} Fehler')
 sys.exit(1 if fail else 0)

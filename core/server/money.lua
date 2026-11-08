@@ -427,6 +427,14 @@ end)
 
 Platform.Export('GetMoney', Core.GetMoney)
 Platform.Export('AddMoney', Core.AddMoney)
+-- Aufs Bankkonto eines Charakters buchen, auch wenn er offline ist (seit Core 1.11.0, z. B. Bonus einer Organisation)
+Platform.Export('AddBankByCharacter', function(characterId, amount, reason, options)
+    characterId = tonumber(characterId)
+    if not characterId then
+        return nil, 'no_character'
+    end
+    return Money.AddByCharacter(characterId, 'bank', amount, reason, options)
+end)
 Platform.Export('RemoveMoney', Core.RemoveMoney)
 Platform.Export('TransferMoney', Core.TransferMoney)
 

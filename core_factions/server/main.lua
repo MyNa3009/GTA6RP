@@ -2,8 +2,8 @@
 -- Der Server entscheidet alles. Der Client bekommt nur seinen eigenen Stand (Organisation, Rang, Dienst, Rechte).
 -- Andere Scripts (z. B. core_ems) fragen ueber die Exports am Ende dieser Datei.
 
--- Braucht Core 1.10.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
-local REQUIRED_CORE = '1.10.0'
+-- Braucht Core 1.11.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
+local REQUIRED_CORE = '1.11.0'
 local missingBridge = {}
 for _, name in ipairs({ 'Async', 'CallExport', 'Emit', 'Export', 'GetPlayerPosition', 'GetVehicleInfo', 'DeleteNetworkedVehicle',
     'JsonDecode', 'JsonEncode', 'Notify', 'OnEvent', 'OnResourceStop', 'Print', 'RegisterCommand', 'SetInterval', 'Wait' }) do
@@ -44,6 +44,8 @@ for id, def in pairs(CFG.Organizations) do
             platePrefix = def.platePrefix or id:upper():sub(1, 4),
             rankNames = def.rankNames or {},
             vehicles = def.vehicles or {},
+            logo = def.logo,
+            theme = def.theme or {},
         }
     end
 end
@@ -153,16 +155,17 @@ end
 -- Raenge: Namen und Rechte (Datenbank, sonst Config)
 ------------------------------------------------------------------------
 
-local rankRows = {}   -- [faction][rank] = { name, permissions = { [key] = bool } }
+local rankRows = {}   -- [faction][rank] = { name, permissions = { [key] = bool }, salary, tasks }
 
 function Factions.LoadRanks()
     rankRows = {}
     for id in pairs(Orgs) do
         rankRows[id] = {}
     end
-    for _, row in ipairs(DB.Query('SELECT faction, `rank`, name, permissions FROM faction_ranks') or {}) do
+    for _, row in ipairs(DB.Query('SELECT faction, `rank`, name, permissions, salary, tasks FROM faction_ranks') or {}) do
         if rankRows[row.faction] then
-            rankRows[row.faction][row.rank] = { name = row.name, permissions = Factions.Decode(row.permissions, {}) }
+            rankRows[row.faction][row.rank] = { name = row.name, permissions = Factions.Decode(row.permissions, {}),
+                salary = tonumber(row.salary) or 0, tasks = row.tasks }
         end
     end
 end
@@ -203,13 +206,33 @@ function Factions.RankPermissions(faction, rank)
     return set
 end
 
-function Factions.SaveRank(faction, rank, name, permissions)
-    local ok = DB.Update('INSERT INTO faction_ranks (faction, `rank`, name, permissions) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), permissions = VALUES(permissions)',
-        { faction, rank, name, Factions.Encode(permissions) })
+-- Gehalt pro Auszahlung und Aufgaben (Text fuer Erklaerungen) eines Rangs
+function Factions.RankSalary(faction, rank)
+    local row = rankRows[faction] and rankRows[faction][rank]
+    return row and row.salary or 0
+end
+
+function Factions.RankTasks(faction, rank)
+    local row = rankRows[faction] and rankRows[faction][rank]
+    return row and row.tasks or nil
+end
+
+-- extra (optional): { salary, tasks }. Fehlt ein Wert, bleibt der bisherige.
+function Factions.SaveRank(faction, rank, name, permissions, extra)
+    extra = extra or {}
+    local salary = extra.salary or Factions.RankSalary(faction, rank)
+    local tasks = extra.tasks
+    if tasks == nil then
+        tasks = Factions.RankTasks(faction, rank)
+    elseif tasks == false then
+        tasks = nil
+    end
+    local ok = DB.Update('INSERT INTO faction_ranks (faction, `rank`, name, permissions, salary, tasks) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), permissions = VALUES(permissions), salary = VALUES(salary), tasks = VALUES(tasks)',
+        DB.Args(faction, rank, name, Factions.Encode(permissions), salary, tasks))
     if ok == nil then
         return false
     end
-    rankRows[faction][rank] = { name = name, permissions = permissions }
+    rankRows[faction][rank] = { name = name, permissions = permissions, salary = salary, tasks = tasks }
     return true
 end
 
@@ -238,11 +261,12 @@ local function decodeMember(row)
         exams = Factions.Decode(row.exams, {}),
         hiredAt = row.hired_at,
         hiredBy = row.hired_by,
+        lastBonusAt = row.last_bonus_at,
     }
 end
 Factions.DecodeMember = decodeMember
 
-local MEMBER_COLUMNS = "character_id, faction, `rank`, name, dn, strikes, vacation_days, departments, exams, DATE_FORMAT(hired_at, '%Y-%m-%d') AS hired_at, hired_by"
+local MEMBER_COLUMNS = "character_id, faction, `rank`, name, dn, strikes, vacation_days, departments, exams, DATE_FORMAT(hired_at, '%Y-%m-%d') AS hired_at, hired_by, DATE_FORMAT(last_bonus_at, '%Y-%m-%d') AS last_bonus_at"
 Factions.MemberColumns = MEMBER_COLUMNS
 
 -- Mitglied laden (online aus dem Speicher, sonst aus der Datenbank). nil, wenn in keiner Organisation.
@@ -366,6 +390,7 @@ local function onCharacterUnloaded(source, characterId)
         bySource[characterId] = nil
         members[characterId] = nil
     end
+    Factions.ForgetPay(source)
     Factions.OnUnloaded(source)
 end
 
@@ -423,6 +448,58 @@ function Factions.SetDuty(source, on, reason)
     end
     return true
 end
+
+------------------------------------------------------------------------
+-- Gehalt: nach je Salary.IntervalMinutes im Dienst, aus der Kasse aufs Konto
+------------------------------------------------------------------------
+
+local PAY_TICK_SECONDS = 60
+local paySeconds = {}   -- [source] = Sekunden im Dienst seit dem letzten Gehalt (Pause beim Dienstende, weg beim Ausloggen)
+
+function Factions.ForgetPay(source)
+    if source then
+        paySeconds[source] = nil
+    end
+end
+
+local function money(amount)
+    local text = tostring(math.floor(amount)):reverse():gsub('(%d%d%d)', '%1.'):reverse():gsub('^%.', '')
+    return text .. ' $'
+end
+Factions.Money = money
+
+function Factions.PaySalary(source, faction)
+    local member = Factions.MemberOf(source)
+    local org = Orgs[faction]
+    if not member or member.faction ~= faction then
+        return false, 'not_member'
+    end
+    local amount = Factions.RankSalary(faction, member.rank)
+    if amount <= 0 then
+        return false, 'no_salary'
+    end
+    if not Factions.Withdraw(faction, amount, { actorSource = source, reason = 'Gehalt', data = { rank = member.rank } }) then
+        Platform.Notify(source, ('Kein Gehalt: Die Kasse von %s reicht nicht.'):format(org.short), 'warning')
+        return false, 'not_enough_money'
+    end
+    if not Factions.Core('AddMoney', source, 'bank', amount, ('Gehalt %s'):format(org.short), { data = { faction = faction, rank = member.rank } }) then
+        Factions.Deposit(faction, amount, { reason = 'Gehalt fehlgeschlagen, zurück' })
+        return false, 'server_error'
+    end
+    Platform.Notify(source, ('Gehalt von %s: %s aufs Konto.'):format(org.short, money(amount)), 'success')
+    return true
+end
+
+Platform.SetInterval(PAY_TICK_SECONDS * 1000, function()
+    local interval = CFG.Salary.IntervalMinutes * 60
+    for source, faction in pairs(duty) do
+        paySeconds[source] = (paySeconds[source] or 0) + PAY_TICK_SECONDS
+        if paySeconds[source] >= interval then
+            paySeconds[source] = paySeconds[source] - interval
+            Factions.PaySalary(source, faction)
+        end
+    end
+end)
 
 function Factions.OnDutyList(faction)
     local list = {}

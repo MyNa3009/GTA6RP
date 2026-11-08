@@ -1,36 +1,46 @@
 <!DOCTYPE html>
 <!--
   UI: Organisationsmenue (core_factions)
-  CONTRACT_VERSION: 1
-  Fuenf Tabs: Uebersicht, Anpassung (Raenge, Rechte, Abteilungen, Pruefungen), Fahrzeuge, Leitstelle, Archiv.
+  CONTRACT_VERSION: 2
+  Tabs: Uebersicht, Divisionen, Erklaerungen, Anpassung, Fahrzeuge, Leitstelle, Archiv.
   Tabs ohne Zugriff fehlen ganz. Die UI zeigt nur an, jede Aenderung prueft der Server.
+  Farben und Logo kommen pro Organisation (overview.org.theme, overview.org.logo).
 
   EINGEHEND (Lua -> UI)
   orgmenu_open  { colors: { base, ink, accent, signal }, overview: Overview }
   orgmenu_close {}
 
   Overview {
-    org: { id, label, short, ranks, leaderRank, viceRank },
-    me: { name, rank?, rankName?, dn?, hiredAt?, admin?, readOnly? },
+    org: { id, label, short, ranks, leaderRank, viceRank, logo?, theme?: { base, ink, accent, mark } },
+    me: { name, rank?, rankName?, dn?, hiredAt?, lastPromotedAt?, salary?, admin?, readOnly? },
+    salaryInterval: number,                 // Minuten im Dienst pro Gehalt
     leader?: string,
     message?: { text, by, at },
     balance?: number,                       // nur mit Recht cash.view
     onDuty: [{ name, dn, rank, rankName }], // gerade im Dienst
-    access: { structure, leitstelle, archive, message, cash }
+    counts: { members, onDuty },
+    divisions: [{ id, name, minRank, maxRank, minRankName, maxRankName, count, onDuty }],
+    access: { structure, leitstelle, archive, message, cash, divisions, info }
   }
 
   AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
-  ui_ready      { ui: "orgmenu", version: 1 }                -> data.colors
+  ui_ready      { ui: "orgmenu", version: 2 }                -> data.colors
   orgmenu_close {}
   orgmenu_call  { name, data }                               // name aus der Liste unten, geht unveraendert an den Server
     faction_menu_open {}                                     -> Overview
     faction_message_save { text }                            -> Overview
     faction_cash { action: "deposit" | "withdraw", amount }  -> Overview
+    faction_divisions {}                                     -> Divisions
+    faction_division_save { id?, name, minRank, maxRank }    -> Divisions
+    faction_division_delete { id }                           -> Divisions
+    faction_info {}                                          -> Info
+    faction_info_save { id?, category, title, body, sort? }  -> Info
+    faction_info_delete { id }                               -> Info
     faction_ranks {}                                         -> Ranks
-    faction_rank_save { rank, name, permissions: string[] }  -> Ranks
+    faction_rank_save { rank, name, permissions: string[], salary?, tasks? } -> Ranks
     faction_department_save { id?, name, ranks: string[] }   -> Ranks
     faction_department_delete { id }                         -> Ranks
-    faction_exam_save { id?, name }                          -> Ranks
+    faction_exam_save { id?, name, description? }            -> Ranks
     faction_exam_delete { id }                               -> Ranks
     faction_vehicles {}                                      -> { vehicles: [{ model, label, minRank, rankName }], canEdit }
     faction_vehicle_save { model, minRank }                  -> wie faction_vehicles
@@ -38,23 +48,32 @@
     faction_member_update { characterId, field: "dn"|"strikes"|"vacation"|"departments"|"exams", value, examId? } -> Members
     faction_member_rank { characterId, rank }                -> Members
     faction_member_fire { characterId, reason }              -> Members
+    faction_member_bonus { characterId, amount, reason? }    -> Members (Leader und Vice, einmal pro Tag je Person)
     faction_hire { characterId }                             -> Members (Person muss online sein und zustimmen)
     faction_archive { page, search? }                        -> { entries: Archived[], page, hasMore }
 
-  Ranks   { ranks: [{ rank, name, permissions: string[], editable, fixedPermissions? }],
+  Divisions { divisions: [{ id, name, minRank, maxRank, minRankName, maxRankName,
+              members: [{ characterId, name, dn, rank, rankName, online?, onDuty? }] }],  // id 0 = Ohne Division
+              ranks: [{ rank, name }], canEdit, limits: { divisions, name } }
+  Info    { categories: [{ key, label }], sections: [{ id, category, title, body, sort, updatedBy, updatedAt }],
+            exams: [{ id, name, description? }], ranks: [{ rank, name, tasks?, salary, newPermissions: string[] }],
+            divisions: [{ id, name, minRank, maxRank }], salaryInterval, canEdit,
+            limits: { sections, title, body, examDescription, rankTasks } }
+  Ranks   { ranks: [{ rank, name, permissions: string[], salary, tasks?, editable, fixedPermissions? }],
             permissions: [{ key, group, label, grantable }], departments: [{ id, name, ranks: string[] }],
-            exams: [{ id, name }], limits: { departments, departmentRanks, exams, rankName, department, exam }, canEdit }
+            exams: [{ id, name, description? }], canEdit,
+            limits: { departments, departmentRanks, exams, rankName, department, exam, examDescription, rankTasks, salary, salaryInterval } }
   Members { members: [{ characterId, name, dn, rank, rankName, strikes, vacationDays, departments: [{ id, name, rank, rankName }],
-            exams: [{ id, name, at, by }], hiredAt, online?, onDuty?, above?, self? }],
-            edit: { hire?, fire?, rank?, dn?, strikes?, vacation?, departments?, exams? },
+            exams: [{ id, name, at, by }], hiredAt, lastPromotedAt?, division?, bonusToday?, online?, onDuty?, above?, self? }],
+            edit: { hire?, fire?, rank?, dn?, strikes?, vacation?, departments?, exams?, bonus? },
             departments: [{ id, name, ranks }], exams: [{ id, name }], leads: number[], ranks: [{ rank, name, assignable? }],
-            limits: { strikes, vacation, dn, reason } }
+            limits: { strikes, vacation, dn, reason, bonus } }
   Archived { id, characterId, name, dn, lastRank, ranks: [{ rank, name, at, leader }], exams: [{ name, at, by }],
              hiredAt, leftAt, reason, by, kind: "fire" | "leave" | "admin" }
 
   FEHLERCODES: not_member, no_permission, invalid_input, invalid_rank, invalid_name, invalid_ranks, invalid_amount,
-  not_enough_money, limit_reached, not_found, dn_taken, already_member, target_offline, consent_declined, consent_timeout,
-  target_busy, db_error, server_error, timeout
+  invalid_salary, not_enough_money, limit_reached, not_found, dn_taken, already_member, target_offline, consent_declined,
+  consent_timeout, target_busy, division_overlap, bonus_today, db_error, server_error, timeout
 -->
 <html lang="de">
 <head>
@@ -67,40 +86,48 @@
 
 <style>
 /*
-  Oberflaechentyp: Operate (Leitstelle) mit Inspect (Mitarbeiter, Archiv). Dichte 7, Bewegung 2, Varianz 3.
+  Oberflaechentyp: Operate (Leitstelle) mit Inspect (Mitarbeiter, Archiv) und Present (Erklaerungen).
+  Dichte 7, Bewegung 3, Varianz 4. Fabian will es ausdruecklich "mehr" als clean: Farben der Organisation,
+  Logo, Leuchten und kraeftige Kennzahlen sind gewollt.
   Richtung
-    Zweck: Leitung und Mitarbeiter einer Organisation verwalten ihre Leute, Raenge und Fahrzeuge.
-    Charakter: dienstlich, ordentlich, schnell.
-    Welt: Verwaltung einer Wache, Dienstplan an der Wand, Personalakte, Funk.
-    Highlight: die eigene Dienstkarte in der Uebersicht und die Leitstelle als dichte Liste.
-    Signatur: Funkpunkt vor jedem Namen (Magenta = im Dienst, gedaempft = online, leer = offline).
+    Zweck: Leitung und Mitarbeiter einer Organisation verwalten Leute, Raenge, Divisionen und Regeln.
+    Charakter: dienstlich, stolz, kraeftig.
+    Welt: Wache der Organisation, Wappen an der Wand, Dienstplan, Funk.
+    Highlight: Kopf mit Logo und Farbverlauf der Organisation, Kennzahlen und Divisionen in der Uebersicht.
+    Signatur: Funkpunkt vor jedem Namen (Akzent = im Dienst, gedaempft = online, leer = offline).
+  Farben: base, ink, accent, mark kommen pro Organisation aus der Config (theme). mark ist auch die Warnfarbe.
   Flaeche: grosses Panel fast im Vollbild, Seitenleiste links, Inhalt fuellt den Rest.
 */
 :root {
-  --rgb-base:   24 15 36;
-  --rgb-ink:    253 241 233;
-  --rgb-accent: 232 64 190;
-  --rgb-signal: 240 84 96;
+  --rgb-base:   9 14 28;
+  --rgb-ink:    240 244 250;
+  --rgb-accent: 37 94 190;
+  --rgb-signal: 237 28 36;
+  --rgb-on-accent: 255 255 255;
 
-  --c-bg:          rgb(var(--rgb-base) / 0.96);
-  --c-side:        rgb(var(--rgb-ink) / 0.03);
+  --c-bg:          rgb(var(--rgb-base) / 0.97);
+  --c-side:        rgb(var(--rgb-base) / 0.72);
   --c-surface:     rgb(var(--rgb-ink) / 0.05);
   --c-surface-hi:  rgb(var(--rgb-ink) / 0.09);
-  --c-border:      rgb(var(--rgb-ink) / 0.08);
-  --c-text:        rgb(var(--rgb-ink) / 0.94);
-  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-border:      rgb(var(--rgb-ink) / 0.09);
+  --c-border-hi:   rgb(var(--rgb-ink) / 0.16);
+  --c-text:        rgb(var(--rgb-ink) / 0.95);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.74);
   --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
   --c-accent:      rgb(var(--rgb-accent));
-  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
-  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
+  --c-accent-hi:   rgb(var(--rgb-accent) / 0.85);
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.18);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.55);
   --c-signal:      rgb(var(--rgb-signal));
-  --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
-  --c-on-accent:   rgb(var(--rgb-base));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.16);
+  --c-on-accent:   rgb(var(--rgb-on-accent));
+  --brand-band:    linear-gradient(90deg, rgb(var(--rgb-accent)), rgb(var(--rgb-signal)));
+  --glow-accent:   0 0 0 1px rgb(var(--rgb-accent) / 0.5), 0 8px 28px rgb(var(--rgb-accent) / 0.35);
   --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.08);
-  --shadow:        0 16px 48px rgb(var(--rgb-base) / 0.6);
+  --shadow:        0 24px 64px rgb(0 0 0 / 0.55);
 
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
-  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+  --radius-xs: 4px; --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px; --radius-xl: 20px;
 
   --fs-xs: clamp(11px, 0.55vw, 13px);
   --fs-sm: clamp(12px, 0.65vw, 14px);
@@ -108,18 +135,21 @@
   --fs-lg: clamp(17px, 0.95vw, 20px);
   --fs-xl: clamp(21px, 1.25vw, 26px);
   --fs-xxl: clamp(28px, 1.9vw, 40px);
+  --fs-hero: clamp(34px, 2.4vw, 52px);
 
-  --dur-fast: 120ms; --dur-base: 180ms;
+  --dur-fast: 120ms; --dur-base: 200ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 
-  --panel-w: min(96vw, 1760px);
-  --panel-h: min(92dvh, 1040px);
-  --side-w: 256px;
-  --head-h: 64px;
-  --row-h: 44px;
-  --nav-h: 40px;
-  --field-h: 36px;
-  --detail-w: clamp(320px, 24vw, 420px);
+  --panel-w: min(96vw, 1800px);
+  --panel-h: min(92dvh, 1060px);
+  --side-w: 272px;
+  --head-h: 76px;
+  --row-h: 48px;
+  --nav-h: 44px;
+  --field-h: 38px;
+  --detail-w: clamp(320px, 21vw, 400px);
+  --logo: 64px;
+  --mark-size: min(44vw, 640px);
   --dot: 8px;
   --icon: 18px;
 
@@ -146,7 +176,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .num { font-variant-numeric: tabular-nums; }
 .icon { width: var(--icon); height: var(--icon); flex: none; }
 
-/* ---------- Panel ---------- */
+/* ---------- Panel mit Farben der Organisation ---------- */
 .panel {
   position: fixed;
   left: 50%;
@@ -157,11 +187,37 @@ button, input, select, textarea { font: inherit; color: inherit; }
   transform: translate(-50%, -50%);
   display: grid;
   grid-template-columns: var(--side-w) 1fr;
-  background: var(--c-bg);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
+  background:
+    radial-gradient(1100px 620px at 0% 0%, rgb(var(--rgb-accent) / 0.24), transparent 62%),
+    radial-gradient(900px 520px at 100% 100%, rgb(var(--rgb-signal) / 0.12), transparent 60%),
+    repeating-linear-gradient(135deg, rgb(var(--rgb-ink) / 0.02) 0 2px, transparent 2px 14px),
+    var(--c-bg);
+  border: 1px solid var(--c-border-hi);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow), 0 0 0 1px rgb(var(--rgb-accent) / 0.18);
   overflow: hidden;
+  isolation: isolate;
+}
+.panel::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 4px;
+  background: var(--brand-band);
+  z-index: 2;
+}
+/* Wasserzeichen: Logo gross und blass rechts unten */
+.watermark {
+  position: absolute;
+  right: calc(var(--mark-size) * -0.18);
+  bottom: calc(var(--mark-size) * -0.2);
+  width: var(--mark-size);
+  height: var(--mark-size);
+  opacity: 0.05;
+  transform: rotate(-12deg);
+  pointer-events: none;
+  z-index: -1;
+  object-fit: contain;
 }
 
 /* ---------- Seitenleiste ---------- */
@@ -169,49 +225,102 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: var(--space-5) var(--space-4) var(--space-4);
+  padding: var(--space-6) var(--space-4) var(--space-4);
   background: var(--c-side);
   border-right: 1px solid var(--c-border);
 }
-.brand { padding: 0 var(--space-2) var(--space-5); }
-.brand__short { font-size: var(--fs-xxl); font-weight: 700; letter-spacing: 0.02em; line-height: 1; }
-.brand__label { margin-top: var(--space-2); font-size: var(--fs-sm); color: var(--c-text-muted); }
+.brand { display: grid; grid-template-columns: var(--logo) 1fr; gap: var(--space-3); align-items: center; padding: 0 var(--space-1) var(--space-5); }
+.brand__logo {
+  width: var(--logo);
+  height: var(--logo);
+  border-radius: 50%;
+  object-fit: contain;
+  background: rgb(var(--rgb-ink) / 0.96);
+  box-shadow: 0 0 0 3px rgb(var(--rgb-accent) / 0.6), 0 0 32px rgb(var(--rgb-accent) / 0.55);
+}
+.brand__logo--none { display: grid; place-items: center; background: var(--brand-band); color: var(--c-on-accent); font-weight: 700; font-size: var(--fs-lg); }
+.brand__short { font-size: var(--fs-xxl); font-weight: 700; letter-spacing: 0.04em; line-height: 1; }
+.brand__label { margin-top: var(--space-1); font-size: var(--fs-xs); color: var(--c-text-muted); text-transform: uppercase; letter-spacing: 0.08em; line-height: 1.35; }
 
 .nav { display: grid; gap: var(--space-1); }
 .nav__item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   height: var(--nav-h);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-3) 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--c-text-2);
   font-size: var(--fs-sm);
-  font-weight: 500;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
+.nav__tile { display: grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-sm); background: var(--c-surface); }
 .nav__item:hover { background: var(--c-surface); color: var(--c-text); }
-.nav__item[aria-current="page"] { background: var(--c-surface-hi); color: var(--c-text); box-shadow: var(--edge-light); }
-.nav__item[aria-current="page"] .icon { color: var(--c-accent); }
-.nav__count { margin-left: auto; color: var(--c-text-muted); font-size: var(--fs-xs); }
+.nav__item[aria-current="page"] {
+  background: linear-gradient(90deg, rgb(var(--rgb-accent) / 0.32), rgb(var(--rgb-accent) / 0.04));
+  color: var(--c-text);
+}
+.nav__item[aria-current="page"]::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--space-4) * -1);
+  top: 8px; bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--c-accent);
+  box-shadow: 0 0 12px rgb(var(--rgb-accent));
+}
+.nav__item[aria-current="page"] .nav__tile { background: var(--c-accent); color: var(--c-on-accent); box-shadow: 0 4px 14px rgb(var(--rgb-accent) / 0.55); }
+.nav__count {
+  margin-left: auto;
+  min-width: 24px;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  background: var(--c-surface-hi);
+  color: var(--c-text-2);
+  font-size: var(--fs-xs);
+  text-align: center;
+}
 
 .side__me {
   margin-top: auto;
-  padding: var(--space-4) var(--space-2) 0;
-  border-top: 1px solid var(--c-border);
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
 }
-.side__name { font-size: var(--fs-sm); font-weight: 600; }
-.side__rank { margin-top: var(--space-1); font-size: var(--fs-xs); color: var(--c-text-muted); }
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--brand-band);
+  color: var(--c-on-accent);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  letter-spacing: 0.04em;
+}
+.side__name { font-size: var(--fs-sm); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side__rank { margin-top: 2px; font-size: var(--fs-xs); color: var(--c-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge-admin {
-  display: inline-block;
-  margin-top: var(--space-2);
+  grid-column: 1 / -1;
+  justify-self: start;
   padding: 2px var(--space-2);
   border: 1px solid var(--c-accent-line);
   border-radius: var(--radius-xs);
-  color: var(--c-accent);
+  color: var(--c-text);
+  background: var(--c-accent-soft);
   font-size: var(--fs-xs);
   font-weight: 600;
 }
@@ -222,17 +331,18 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding: 0 var(--space-5);
+  padding: var(--space-2) var(--space-6) 0;
   border-bottom: 1px solid var(--c-border);
 }
-.head__title { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
-.head__meta { color: var(--c-text-muted); font-size: var(--fs-sm); }
+.head__eyebrow { font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--c-accent-hi); }
+.head__title { margin: 2px 0 0; font-size: var(--fs-xl); font-weight: 700; }
+.head__meta { align-self: flex-end; margin-bottom: var(--space-4); color: var(--c-text-muted); font-size: var(--fs-sm); }
 .head__actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
 
-.view { min-height: 0; overflow: auto; padding: var(--space-5); }
+.view { min-height: 0; overflow: auto; padding: var(--space-6); }
 .view--split { display: grid; grid-template-columns: 1fr var(--detail-w); gap: 0; padding: 0; overflow: hidden; }
-.view--split > .scroll { min-height: 0; overflow: auto; padding: var(--space-5); }
-.view--split > .detail { min-height: 0; overflow: auto; padding: var(--space-5); border-left: 1px solid var(--c-border); background: var(--c-side); }
+.view--split > .scroll { min-height: 0; overflow: auto; padding: var(--space-5) var(--space-6); }
+.view--split > .detail { min-height: 0; overflow: auto; padding: var(--space-5); border-left: 1px solid var(--c-border); background: rgb(var(--rgb-base) / 0.5); }
 
 /* ---------- Bedienelemente ---------- */
 .btn {
@@ -242,7 +352,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   gap: var(--space-2);
   height: var(--field-h);
   padding: 0 var(--space-4);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-border-hi);
   border-radius: var(--radius-sm);
   background: var(--c-surface);
   color: var(--c-text);
@@ -250,30 +360,32 @@ button, input, select, textarea { font: inherit; color: inherit; }
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
 .btn:hover:not(:disabled) { background: var(--c-surface-hi); }
 .btn:disabled { opacity: 0.45; cursor: default; }
-.btn--primary { background: rgb(var(--rgb-ink) / 0.92); border-color: transparent; color: var(--c-on-accent); }
-.btn--primary:hover:not(:disabled) { background: rgb(var(--rgb-ink)); }
-.btn--danger { border-color: rgb(var(--rgb-signal) / 0.4); color: var(--c-signal); background: transparent; }
+.btn--primary { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); box-shadow: 0 6px 18px rgb(var(--rgb-accent) / 0.35); }
+.btn--primary:hover:not(:disabled) { background: var(--c-accent); box-shadow: var(--glow-accent); }
+.btn--danger { border-color: rgb(var(--rgb-signal) / 0.5); color: var(--c-signal); background: transparent; }
 .btn--danger:hover:not(:disabled) { background: var(--c-signal-soft); }
 .btn--ghost { border-color: transparent; background: transparent; color: var(--c-text-2); }
 .btn--icon { width: var(--field-h); padding: 0; }
+.btn--sm { height: 30px; padding: 0 var(--space-3); font-size: var(--fs-xs); }
 
 .field { display: grid; gap: var(--space-2); }
-.field__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+.field__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.02em; }
 .input, .select, .textarea {
   width: 100%;
   height: var(--field-h);
   padding: 0 var(--space-3);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-border-hi);
   border-radius: var(--radius-sm);
-  background: rgb(var(--rgb-base) / 0.6);
+  background: rgb(var(--rgb-base) / 0.7);
   font-size: var(--fs-sm);
   outline: none;
 }
-.textarea { height: auto; min-height: 160px; padding: var(--space-3); resize: vertical; line-height: 1.5; }
-.input:focus, .select:focus, .textarea:focus { border-color: var(--c-accent-line); }
+.textarea { height: auto; min-height: 120px; padding: var(--space-3); resize: vertical; line-height: 1.55; }
+.input:focus, .select:focus, .textarea:focus { border-color: var(--c-accent-line); box-shadow: 0 0 0 3px rgb(var(--rgb-accent) / 0.18); }
 .input:disabled, .select:disabled, .textarea:disabled { opacity: 0.6; }
 .select option { background: rgb(var(--rgb-base)); }
 
@@ -294,75 +406,135 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .check--locked { cursor: default; color: var(--c-text-muted); }
 .check--locked:hover { background: transparent; }
 
-.section-title { margin: 0 0 var(--space-3); font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.04em; }
+.section-title { margin: 0 0 var(--space-3); font-size: var(--fs-xs); font-weight: 700; color: var(--c-text-muted); letter-spacing: 0.1em; text-transform: uppercase; }
 .muted { color: var(--c-text-muted); }
 .empty { padding: var(--space-6) 0; color: var(--c-text-muted); font-size: var(--fs-sm); }
+.note { margin-top: var(--space-3); font-size: var(--fs-xs); color: var(--c-text-muted); line-height: 1.5; }
 
-/* ---------- Tab 1: Uebersicht ---------- */
-.overview { display: grid; grid-template-columns: minmax(360px, 0.9fr) 1.1fr; gap: var(--space-5); align-items: start; }
-.stack { display: grid; gap: var(--space-5); }
-
-/* Dienstkarte: das Highlight */
-.card-id {
-  position: relative;
+.box {
   padding: var(--space-5);
   border: 1px solid var(--c-border);
   border-radius: var(--radius-lg);
-  background: var(--c-surface);
+  background: linear-gradient(180deg, rgb(var(--rgb-ink) / 0.06), rgb(var(--rgb-ink) / 0.025));
   box-shadow: var(--edge-light);
+}
+.box__head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.box__head .section-title { margin: 0; }
+.box__head > :last-child:not(:first-child) { margin-left: auto; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 3px var(--space-3);
+  border-radius: 999px;
+  background: var(--c-accent-soft);
+  border: 1px solid var(--c-accent-line);
+  color: var(--c-text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pill--mark { background: var(--c-signal-soft); border-color: rgb(var(--rgb-signal) / 0.5); }
+.pill--plain { background: var(--c-surface); border-color: var(--c-border); color: var(--c-text-2); }
+
+/* ---------- Uebersicht ---------- */
+.overview { display: grid; gap: var(--space-5); }
+.hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-5);
+  align-items: center;
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-xl);
+  border: 1px solid rgb(var(--rgb-accent) / 0.45);
+  background:
+    linear-gradient(110deg, rgb(var(--rgb-accent) / 0.42), rgb(var(--rgb-accent) / 0.08) 55%, rgb(var(--rgb-signal) / 0.18)),
+    rgb(var(--rgb-base) / 0.6);
+  box-shadow: 0 16px 40px rgb(var(--rgb-accent) / 0.22), var(--edge-light);
   overflow: hidden;
 }
-.card-id::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 4px;
-  background: var(--c-accent);
+.hero__logo { width: 96px; height: 96px; border-radius: 50%; object-fit: contain; background: rgb(var(--rgb-ink) / 0.96); box-shadow: 0 0 0 4px rgb(var(--rgb-ink) / 0.18), 0 10px 30px rgb(0 0 0 / 0.4); }
+.hero__org { font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: rgb(var(--rgb-ink) / 0.8); }
+.hero__name { margin-top: var(--space-1); font-size: var(--fs-hero); font-weight: 700; line-height: 1.05; }
+.hero__rank { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+.hero__facts { display: grid; grid-template-columns: repeat(2, auto); gap: var(--space-3) var(--space-6); margin: 0; }
+.hero__facts dt { font-size: var(--fs-xs); color: rgb(var(--rgb-ink) / 0.66); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.hero__facts dd { margin: 2px 0 0; font-size: var(--fs-md); font-weight: 700; }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); }
+.stat {
+  position: relative;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgb(var(--rgb-ink) / 0.07), rgb(var(--rgb-ink) / 0.02));
+  overflow: hidden;
 }
-.card-id__org { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.06em; }
-.card-id__name { margin-top: var(--space-2); font-size: var(--fs-xl); font-weight: 700; }
-.card-id__rank { margin-top: var(--space-1); font-size: var(--fs-md); color: var(--c-accent); font-weight: 600; }
-.facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-4) var(--space-5); margin: var(--space-5) 0 0; }
-.facts dt { font-size: var(--fs-xs); color: var(--c-text-muted); font-weight: 600; }
-.facts dd { margin: var(--space-1) 0 0; font-size: var(--fs-md); font-weight: 500; }
+.stat::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--c-accent); opacity: 0.8; }
+.stat--mark::after { background: var(--c-signal); }
+.stat__label { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-xs); font-weight: 700; color: var(--c-text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
+.stat__label .icon { color: var(--c-accent-hi); }
+.stat__value { margin-top: var(--space-2); font-size: var(--fs-xxl); font-weight: 700; line-height: 1.1; }
+.stat__sub { margin-top: var(--space-1); font-size: var(--fs-xs); color: var(--c-text-muted); }
 
-.box { padding: var(--space-5); border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-surface); }
+.overview__grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: var(--space-5); align-items: start; }
+.stack { display: grid; gap: var(--space-5); }
+
+.div-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-3); }
+.div-card {
+  position: relative;
+  padding: var(--space-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: rgb(var(--rgb-base) / 0.45);
+  overflow: hidden;
+}
+.div-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--div-color, var(--c-accent)); }
+.div-card__name { font-weight: 700; }
+.div-card__ranks { margin-top: 2px; font-size: var(--fs-xs); color: var(--c-text-muted); }
+.div-card__count { display: flex; align-items: baseline; gap: var(--space-2); margin-top: var(--space-3); }
+.div-card__count strong { font-size: var(--fs-xl); }
+.bar { height: 6px; margin-top: var(--space-3); border-radius: 999px; background: var(--c-surface-hi); overflow: hidden; }
+.bar > span { display: block; height: 100%; border-radius: inherit; background: var(--div-color, var(--c-accent)); }
+
 .cash__value { font-size: var(--fs-xxl); font-weight: 700; }
-.cash__row { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-2); margin-top: var(--space-4); }
-
-.memo__text { margin: 0; white-space: pre-wrap; line-height: 1.6; font-size: var(--fs-md); color: var(--c-text); max-width: 72ch; }
+.cash__row { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-2); }
+.memo { border-left: 4px solid var(--c-accent); }
+.memo__text { margin: 0; white-space: pre-wrap; line-height: 1.65; font-size: var(--fs-md); color: var(--c-text); max-width: 72ch; }
 .memo__by { margin-top: var(--space-4); font-size: var(--fs-xs); color: var(--c-text-muted); }
 .memo__actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-3); }
 .duty-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .duty-list li { display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr); gap: var(--space-3); align-items: center; height: 40px; border-top: 1px solid var(--c-border); font-size: var(--fs-sm); }
 .duty-list li:first-child { border-top: 0; }
 
-/* ---------- Tab 2: Anpassung ---------- */
-.seg { display: inline-flex; gap: var(--space-1); padding: var(--space-1); border: 1px solid var(--c-border); border-radius: var(--radius-sm); }
+/* ---------- Anpassung ---------- */
+.seg { display: inline-flex; gap: var(--space-1); padding: var(--space-1); border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: rgb(var(--rgb-base) / 0.5); }
 .seg button {
-  height: 28px;
+  height: 30px;
   padding: 0 var(--space-3);
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--c-text-2);
   font-size: var(--fs-xs);
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
 }
-.seg button[aria-pressed="true"] { background: var(--c-surface-hi); color: var(--c-text); }
+.seg button[aria-pressed="true"] { background: var(--c-accent); color: var(--c-on-accent); box-shadow: 0 4px 12px rgb(var(--rgb-accent) / 0.4); }
 
-.ranks { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: var(--space-5); min-height: 100%; }
+.ranks { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: var(--space-5); min-height: 100%; }
 .rank-list { display: grid; gap: 2px; align-content: start; }
 .rank-item {
   display: grid;
-  grid-template-columns: 40px 1fr auto;
+  grid-template-columns: 36px 1fr auto;
   align-items: center;
   gap: var(--space-2);
-  height: 36px;
+  height: 38px;
   padding: 0 var(--space-3);
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--c-text-2);
   font-size: var(--fs-sm);
@@ -370,15 +542,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .rank-item:hover { background: var(--c-surface); color: var(--c-text); }
-.rank-item[aria-selected="true"] { background: var(--c-surface-hi); color: var(--c-text); box-shadow: var(--edge-light); }
-.rank-item__no { color: var(--c-text-muted); font-size: var(--fs-xs); }
+.rank-item[aria-selected="true"] { background: linear-gradient(90deg, rgb(var(--rgb-accent) / 0.3), rgb(var(--rgb-accent) / 0.05)); color: var(--c-text); }
+.rank-item__no { display: grid; place-items: center; width: 28px; height: 22px; border-radius: var(--radius-xs); background: var(--c-surface-hi); color: var(--c-text-2); font-size: var(--fs-xs); font-weight: 700; }
+.rank-item[aria-selected="true"] .rank-item__no { background: var(--c-accent); color: var(--c-on-accent); }
 .rank-item__count { color: var(--c-text-muted); font-size: var(--fs-xs); }
 
 .perm-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-5); margin-top: var(--space-5); }
-.perm-group h4 { margin: 0 0 var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--c-border); font-size: var(--fs-sm); font-weight: 600; }
-.editor-head { display: flex; align-items: end; gap: var(--space-3); }
-.editor-head .field { flex: 1; max-width: 420px; }
-.note { margin-top: var(--space-3); font-size: var(--fs-xs); color: var(--c-text-muted); }
+.perm-group h4 { margin: 0 0 var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--c-border); font-size: var(--fs-sm); font-weight: 700; }
+.editor-head { display: flex; align-items: end; gap: var(--space-3); flex-wrap: wrap; }
+.editor-head .field { flex: 1; min-width: 220px; max-width: 420px; }
+.editor-head .field--small { flex: 0 0 180px; min-width: 0; }
+.editor-tasks { margin-top: var(--space-4); max-width: 860px; }
 
 .dept-list { display: grid; gap: var(--space-3); }
 .dept {
@@ -389,61 +563,162 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding: var(--space-4);
   border: 1px solid var(--c-border);
   border-radius: var(--radius-md);
+  background: rgb(var(--rgb-base) / 0.35);
 }
 .dept__ranks { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-2); }
 .dept__actions { display: flex; gap: var(--space-2); }
 .exam-list { display: grid; gap: var(--space-2); max-width: 720px; }
 .exam-row { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-2); }
 
-/* ---------- Tab 3: Fahrzeuge ---------- */
+/* ---------- Tabellen ---------- */
 .table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .table th {
   position: sticky;
   top: 0;
   z-index: 1;
-  height: 36px;
+  height: 38px;
   padding: 0 var(--space-3);
   background: rgb(var(--rgb-base));
-  border-bottom: 1px solid var(--c-border);
+  border-bottom: 2px solid var(--c-accent-line);
   color: var(--c-text-muted);
   font-size: var(--fs-xs);
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   text-align: left;
   white-space: nowrap;
 }
-.table td { height: var(--row-h); padding: 0 var(--space-3); border-bottom: 1px solid var(--c-border); vertical-align: middle; }
+.table td { height: var(--row-h); padding: 0 var(--space-3); border-bottom: 1px solid var(--c-border); vertical-align: middle; white-space: nowrap; }
+.table td.wrap { white-space: normal; min-width: 120px; max-width: 220px; padding-top: var(--space-2); padding-bottom: var(--space-2); }
+.table--lst th, .table--lst td { padding: 0 var(--space-2); }
 .table tbody tr { cursor: pointer; }
+.table tbody tr:nth-child(even) td { background: rgb(var(--rgb-ink) / 0.018); }
 .table tbody tr:hover td { background: var(--c-surface); }
-.table tbody tr[aria-selected="true"] td { background: var(--c-surface-hi); }
+.table tbody tr[aria-selected="true"] td { background: rgb(var(--rgb-accent) / 0.16); }
+.table tbody tr[aria-selected="true"] td:first-child { box-shadow: inset 3px 0 0 var(--c-accent); }
 .table--static tbody tr { cursor: default; }
 .table .r { text-align: right; }
 .vehicles .select { max-width: 320px; }
 
-/* ---------- Tab 4: Leitstelle ---------- */
-.toolbar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); }
-.toolbar .input { max-width: 320px; }
+/* ---------- Leitstelle ---------- */
+.toolbar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4); }
+.search { position: relative; flex: 1; min-width: 260px; max-width: 480px; }
+.search .icon { position: absolute; left: var(--space-3); top: 50%; transform: translateY(-50%); color: var(--c-text-muted); }
+.search .input { height: 44px; padding-left: 40px; font-size: var(--fs-md); border-color: var(--c-accent-line); }
+.filters { display: flex; flex-wrap: wrap; gap: var(--space-1); width: 100%; margin-bottom: var(--space-4); }
+.filter {
+  height: 30px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--c-text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.filter[aria-pressed="true"] { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); }
 .toolbar__count { color: var(--c-text-muted); font-size: var(--fs-sm); }
 .toolbar__right { margin-left: auto; display: flex; gap: var(--space-2); }
 .hire .input { width: 120px; }
 
 .who { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
 .dot { width: var(--dot); height: var(--dot); flex: none; border-radius: 50%; border: 1px solid rgb(var(--rgb-ink) / 0.3); }
-.dot--online { background: rgb(var(--rgb-ink) / 0.45); border-color: transparent; }
-.dot--duty { background: var(--c-accent); border-color: transparent; }
+.dot--online { background: rgb(var(--rgb-ink) / 0.5); border-color: transparent; }
+.dot--duty { background: var(--c-accent); border-color: transparent; box-shadow: 0 0 8px rgb(var(--rgb-accent)); }
 .who__name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .chip { padding: 2px var(--space-2); border: 1px solid var(--c-border); border-radius: var(--radius-xs); font-size: var(--fs-xs); color: var(--c-text-2); white-space: nowrap; }
-.strikes--hot { color: var(--c-signal); font-weight: 600; }
+.chip--division { border-color: var(--c-accent-line); color: var(--c-text); background: var(--c-accent-soft); }
+.strikes--hot { color: var(--c-signal); font-weight: 700; }
 
+.detail__head { display: grid; grid-template-columns: 52px 1fr; gap: var(--space-3); align-items: center; }
+.detail__head .avatar { width: 52px; height: 52px; font-size: var(--fs-md); }
 .detail__name { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
-.detail__meta { margin-top: var(--space-1); color: var(--c-text-muted); font-size: var(--fs-sm); }
+.detail__meta { margin-top: 2px; color: var(--c-text-muted); font-size: var(--fs-sm); }
+.detail__dates { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-2); margin-top: var(--space-4); }
+.date-tile { padding: var(--space-3); border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: var(--c-surface); }
+.date-tile dt { font-size: var(--fs-xs); color: var(--c-text-muted); font-weight: 600; }
+.date-tile dd { margin: 2px 0 0; font-weight: 700; }
 .detail__block { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--c-border); display: grid; gap: var(--space-3); }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 .stepper { display: grid; grid-template-columns: var(--field-h) 1fr var(--field-h); gap: var(--space-1); }
 .stepper .input { text-align: center; }
 .dept-pick { display: grid; grid-template-columns: 1fr 140px; gap: var(--space-2); align-items: center; }
+.bonus { padding: var(--space-4); border: 1px solid var(--c-accent-line); border-radius: var(--radius-md); background: var(--c-accent-soft); display: grid; gap: var(--space-3); }
+.bonus__row { display: grid; grid-template-columns: 140px 1fr; gap: var(--space-2); }
 
-/* ---------- Tab 5: Archiv ---------- */
+/* ---------- Divisionen ---------- */
+.divisions { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--space-4); align-items: start; }
+.division {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: rgb(var(--rgb-base) / 0.5);
+  overflow: hidden;
+}
+.division__head {
+  padding: var(--space-4) var(--space-5);
+  background: linear-gradient(110deg, var(--div-tint, rgb(var(--rgb-accent) / 0.4)), transparent 85%);
+  border-bottom: 1px solid var(--c-border);
+}
+.division__top { display: flex; align-items: center; gap: var(--space-3); }
+.division__name { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
+.division__count { margin-left: auto; font-size: var(--fs-xl); font-weight: 700; }
+.division__ranks { margin-top: 2px; font-size: var(--fs-xs); color: rgb(var(--rgb-ink) / 0.72); }
+.division__list { list-style: none; margin: 0; padding: var(--space-2) var(--space-3); display: grid; max-height: 360px; overflow: auto; }
+.division__list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; height: 38px; padding: 0 var(--space-2); border-radius: var(--radius-xs); font-size: var(--fs-sm); }
+.division__list li:hover { background: var(--c-surface); }
+.division__edit { padding: var(--space-3) var(--space-4) var(--space-4); border-top: 1px solid var(--c-border); background: rgb(var(--rgb-ink) / 0.025); display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2) var(--space-3); align-items: end; }
+.division__edit > .field:first-child { grid-column: 1 / -1; }
+.division__buttons { grid-column: 1 / -1; display: flex; gap: var(--space-2); justify-content: flex-end; }
+.division-new { margin-bottom: var(--space-5); padding: var(--space-4); border: 1px dashed var(--c-accent-line); border-radius: var(--radius-lg); display: grid; grid-template-columns: 1fr 160px 160px auto; gap: var(--space-3); align-items: end; }
+
+/* ---------- Erklaerungen ---------- */
+.info { display: grid; grid-template-columns: 240px 1fr; gap: var(--space-6); min-height: 100%; }
+.info__nav { display: grid; gap: var(--space-1); align-content: start; position: sticky; top: 0; }
+.info__nav button {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 40px; padding: 0 var(--space-3);
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: var(--c-text-2); font-size: var(--fs-sm); font-weight: 600; text-align: left; cursor: pointer;
+}
+.info__nav button:hover { background: var(--c-surface); color: var(--c-text); }
+.info__nav button[aria-pressed="true"] { background: var(--c-accent-soft); border-color: var(--c-accent-line); color: var(--c-text); }
+.info__content { display: grid; gap: var(--space-4); align-content: start; max-width: 1100px; }
+.info__intro { margin: 0 0 var(--space-2); color: var(--c-text-2); line-height: 1.6; max-width: 80ch; }
+.article {
+  position: relative;
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgb(var(--rgb-ink) / 0.06), rgb(var(--rgb-ink) / 0.02));
+}
+.article::before { content: ''; position: absolute; left: 0; top: var(--space-5); bottom: var(--space-5); width: 3px; border-radius: 0 3px 3px 0; background: var(--c-accent); }
+.article__title { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
+.article__body { margin: var(--space-3) 0 0; white-space: pre-wrap; line-height: 1.7; color: var(--c-text-2); max-width: 85ch; }
+.article__meta { margin-top: var(--space-3); font-size: var(--fs-xs); color: var(--c-text-muted); }
+.article__actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); }
+.article-form { display: grid; gap: var(--space-3); }
+.article-form__row { display: grid; grid-template-columns: 1fr 160px 120px; gap: var(--space-3); }
+
+.ladder { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.ladder li {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  align-items: start;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: rgb(var(--rgb-base) / 0.4);
+}
+.ladder__no { display: grid; place-items: center; height: 36px; border-radius: var(--radius-sm); background: var(--brand-band); color: var(--c-on-accent); font-weight: 700; }
+.ladder__name { font-weight: 700; }
+.ladder__tasks { margin-top: 2px; font-size: var(--fs-sm); color: var(--c-text-2); line-height: 1.5; }
+.ladder__salary { font-weight: 700; white-space: nowrap; }
+.ladder .chips { margin-top: var(--space-2); }
+
+/* ---------- Archiv ---------- */
 .timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 .timeline li { display: grid; grid-template-columns: 96px 1fr; gap: var(--space-3); font-size: var(--fs-sm); }
 .timeline time { color: var(--c-text-muted); }
@@ -451,8 +726,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .pager { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
 
 /* ---------- Modal und Meldung ---------- */
-.modal-back { position: fixed; inset: 0; z-index: var(--z-modal); background: rgb(var(--rgb-base) / 0.6); display: grid; place-items: center; }
-.modal { width: min(92vw, 480px); padding: var(--space-5); border: 1px solid var(--c-border); border-radius: var(--radius-lg); background: rgb(var(--rgb-base)); box-shadow: var(--shadow); }
+.modal-back { position: fixed; inset: 0; z-index: var(--z-modal); background: rgb(var(--rgb-base) / 0.7); display: grid; place-items: center; }
+.modal { width: min(92vw, 500px); padding: var(--space-5); border: 1px solid var(--c-border-hi); border-top: 3px solid var(--c-accent); border-radius: var(--radius-lg); background: rgb(var(--rgb-base)); box-shadow: var(--shadow); }
 .modal h3 { margin: 0 0 var(--space-2); font-size: var(--fs-lg); }
 .modal p { margin: 0 0 var(--space-4); color: var(--c-text-2); font-size: var(--fs-sm); line-height: 1.5; }
 .modal__actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
@@ -463,15 +738,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
   bottom: calc((100dvh - var(--panel-h)) / 2 + var(--space-5));
   z-index: var(--z-toast);
   transform: translateX(-50%);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm);
-  background: rgb(var(--rgb-ink));
+  padding: var(--space-3) var(--space-5);
+  border-radius: 999px;
+  background: var(--c-accent);
   color: var(--c-on-accent);
   font-size: var(--fs-sm);
-  font-weight: 600;
-  box-shadow: var(--shadow);
+  font-weight: 700;
+  box-shadow: var(--glow-accent);
 }
-.toast--error { background: var(--c-signal); color: rgb(var(--rgb-base)); }
+.toast--error { background: var(--c-signal); box-shadow: 0 8px 28px rgb(var(--rgb-signal) / 0.4); }
 
 kbd {
   display: inline-flex; align-items: center; justify-content: center;
@@ -480,9 +755,16 @@ kbd {
   color: var(--c-text-2); font-family: inherit; font-size: var(--fs-xs); font-weight: 600;
 }
 
+@media (max-width: 1400px) {
+  .overview__grid { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .hero { grid-template-columns: auto 1fr; }
+  .hero__facts { grid-column: 1 / -1; grid-template-columns: repeat(4, auto); justify-content: start; }
+}
 @media (max-width: 1280px) {
-  :root { --side-w: 216px; }
-  .overview { grid-template-columns: 1fr; }
+  :root { --side-w: 228px; --logo: 48px; }
+  .info { grid-template-columns: 1fr; }
+  .info__nav { position: static; grid-auto-flow: column; overflow-x: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
@@ -502,25 +784,42 @@ kbd {
     <g id="i-plus" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></g>
     <g id="i-minus" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14"/></g>
     <g id="i-trash" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></g>
+    <g id="i-users" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M17.5 14.2A6.5 6.5 0 0 1 21.5 20"/></g>
+    <g id="i-layers" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></g>
+    <g id="i-book" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5Z"/><path d="M4 19a2 2 0 0 1 2-2h13M9 7h6M9 11h6"/></g>
+    <g id="i-search" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></g>
+    <g id="i-pulse" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-5 4 10 2-5h6"/></g>
+    <g id="i-cash" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M7 12h0M17 12h0"/></g>
   </defs>
 </svg>
 
 <div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="brand-short" hidden>
+  <img class="watermark" id="watermark" alt="" hidden>
   <aside class="side">
     <div class="brand">
-      <div class="brand__short" id="brand-short"></div>
-      <div class="brand__label" id="brand-label"></div>
+      <img class="brand__logo" id="brand-logo" alt="" hidden>
+      <div class="brand__logo brand__logo--none" id="brand-logo-none" aria-hidden="true"></div>
+      <div>
+        <div class="brand__short" id="brand-short"></div>
+        <div class="brand__label" id="brand-label"></div>
+      </div>
     </div>
     <nav class="nav" id="nav" aria-label="Bereiche"></nav>
     <div class="side__me">
-      <div class="side__name" id="me-name"></div>
-      <div class="side__rank" id="me-rank"></div>
+      <div class="avatar" id="me-avatar" aria-hidden="true"></div>
+      <div>
+        <div class="side__name" id="me-name"></div>
+        <div class="side__rank" id="me-rank"></div>
+      </div>
       <span class="badge-admin" id="me-admin" hidden></span>
     </div>
   </aside>
   <section class="main">
     <header class="head">
-      <h1 class="head__title" id="head-title"></h1>
+      <div>
+        <div class="head__eyebrow" id="head-eyebrow"></div>
+        <h1 class="head__title" id="head-title"></h1>
+      </div>
       <span class="head__meta" id="head-meta"></span>
       <div class="head__actions" id="head-actions"></div>
       <button class="btn btn--ghost btn--icon" type="button" data-action="close" aria-label="Schließen"><svg class="icon" viewBox="0 0 24 24"><use href="#i-close"/></svg></button>
@@ -544,7 +843,7 @@ kbd {
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script id="bridge">
-const CONTRACT_VERSION = 1;
+const CONTRACT_VERSION = 2;
 
 const Bridge = (() => {
   const handlers = {};
@@ -606,7 +905,7 @@ const Mock = (() => {
     { key: 'cash.view', group: 'Verwaltung', label: 'Kasse ansehen', min: 25 },
     { key: 'cash.manage', group: 'Verwaltung', label: 'Kasse ein- und auszahlen', min: 28 },
     { key: 'ems.revive', group: 'Rettungsdienst', label: 'Hochholen', min: 1 },
-    { key: 'ems.medkit', group: 'Rettungsdienst', label: 'Verbandskasten anwenden', min: 1 },
+    { key: 'ems.heal', group: 'Rettungsdienst', label: 'Versorgen (heilen)', min: 1 },
     { key: 'ems.sell', group: 'Rettungsdienst', label: 'Verbände, Kästen und Tabletten verkaufen', min: 2 },
     { key: 'ems.treat', group: 'Rettungsdienst', label: 'Behandeln', min: 3 },
     { key: 'ems.insurance', group: 'Rettungsdienst', label: 'Krankenversicherung verkaufen', min: 5 },
@@ -619,15 +918,35 @@ const Mock = (() => {
     balance: 48250,
     ranks: {},
     departments: [{ id: 1, name: 'Ausbildung', ranks: ['Mitglied', 'Ausbilder', 'Leitung'] }, { id: 2, name: 'Luftrettung', ranks: ['Pilot', 'Leitung'] }],
-    exams: [{ id: 1, name: 'Erste-Hilfe-Ausbilder' }, { id: 2, name: 'Notfallsanitäter' }, { id: 3, name: 'Hubschrauber' }],
+    exams: [
+      { id: 1, name: 'Erste-Hilfe-Ausbilder', description: 'Berechtigt, Erste-Hilfe-Kurse für Bürger zu geben.\n\nAblauf: 20 Minuten Theorie (Notruf, stabile Seitenlage, Herzdruckmassage), dann ein Kurs unter Aufsicht eines Ausbilders. Bestanden ab 80 Prozent.' },
+      { id: 2, name: 'Notfallsanitäter', description: 'Pflicht ab Rang 6. Theorie zu Krankheiten und Behandlungsserien, Praxis an einem Patienten mit Bluthochdruck. Prüfer: Rang 15 oder höher.' },
+      { id: 3, name: 'Hubschrauber', description: '' },
+    ],
+    divisions: [
+      { id: 1, name: 'Highcommand', minRank: 26, maxRank: 30 },
+      { id: 2, name: 'Command', minRank: 18, maxRank: 25 },
+      { id: 3, name: 'Supervisor', minRank: 10, maxRank: 17 },
+      { id: 4, name: 'Officer', minRank: 1, maxRank: 9 },
+    ],
+    info: [
+      { id: 1, category: 'rules', title: 'Funkdisziplin', body: 'Kurz und klar funken. Jede Statusmeldung beginnt mit der Dienstnummer.\nStatus 1: frei, Status 3: Einsatz übernommen, Status 4: am Einsatzort, Status 8: im Krankenhaus.', sort: 0, updatedBy: 'Lena Hoffmann', updatedAt: '2026-11-07' },
+      { id: 2, category: 'rules', title: 'Dienstkleidung', body: 'Im Dienst nur Dienstkleidung aus der Umkleide. Private Fahrzeuge bleiben auf dem Parkplatz.', sort: 1, updatedBy: 'Jonas Weber', updatedAt: '2026-11-06' },
+      { id: 3, category: 'process', title: 'Einstellung', body: '1. Bewerbung per Funk oder persönlich am Empfang\n2. Gespräch mit Rang 24 oder höher\n3. Probetag mit einem Praxisanleiter\n4. Einstellung über das G-Menü (Organisation, Leitung, Einstellen)', sort: 0, updatedBy: 'Lena Hoffmann', updatedAt: '2026-11-05' },
+      { id: 4, category: 'info', title: 'Gehalt', body: 'Gehalt gibt es nach je 60 Minuten im Dienst aus der Kasse. Ist die Kasse leer, meldet euch beim Leader.', sort: 0, updatedBy: 'Lena Hoffmann', updatedAt: '2026-11-08' },
+    ],
+    salaries: { 1: 150, 2: 180, 3: 220, 7: 320, 10: 420, 18: 600, 24: 800, 29: 950, 30: 1000 },
+    tasks: { 1: 'Fährt mit, unterstützt beim Versorgen, keine eigenen Behandlungen.', 3: 'Darf behandeln und Tabletten verkaufen.', 18: 'Leitet Einsätze vor Ort, bildet aus.', 24: 'Stellt ein, befördert bis Rang 23.', 30: 'Leitung der Organisation.' },
     vehicles: [{ model: 'ambulance', label: 'Rettungswagen', minRank: 1 }, { model: 'lguard', label: 'Einsatzfahrzeug', minRank: 7 }, { model: 'firetruk', label: 'Großraum-Rettung', minRank: 18 }],
     members: [
-      { characterId: 17, name: 'Lena Hoffmann', dn: 'EMS-001', rank: 30, strikes: 0, vacationDays: 12, departments: [{ id: 1, rank: 3 }], exams: [{ id: 1, at: '2026-10-02', by: 'Admin' }], hiredAt: '2026-09-14', online: true, onDuty: true, self: true },
-      { characterId: 42, name: 'Jonas Weber', dn: 'EMS-002', rank: 29, strikes: 0, vacationDays: 5, departments: [{ id: 2, rank: 2 }], exams: [{ id: 2, at: '2026-10-11', by: 'Lena Hoffmann' }, { id: 3, at: '2026-10-20', by: 'Lena Hoffmann' }], hiredAt: '2026-09-15', online: true },
-      { characterId: 108, name: 'Mira Schulz', dn: 'EMS-004', rank: 18, strikes: 1, vacationDays: 0, departments: [{ id: 1, rank: 2 }], exams: [{ id: 2, at: '2026-10-28', by: 'Jonas Weber' }], hiredAt: '2026-09-22', online: true, onDuty: true },
-      { characterId: 233, name: 'Tom Becker', dn: 'EMS-007', rank: 7, strikes: 2, vacationDays: 3, departments: [], exams: [], hiredAt: '2026-10-03' },
-      { characterId: 256, name: 'Fabian Nandes', dn: 'EMS-009', rank: 3, strikes: 0, vacationDays: 0, departments: [{ id: 1, rank: 1 }], exams: [], hiredAt: '2026-10-19', online: true },
+      { characterId: 17, name: 'Lena Hoffmann', dn: 'EMS-001', rank: 30, strikes: 0, vacationDays: 12, departments: [{ id: 1, rank: 3 }], exams: [{ id: 1, at: '2026-10-02', by: 'Admin' }], hiredAt: '2026-09-14', lastPromotedAt: '2026-09-14', online: true, onDuty: true, self: true },
+      { characterId: 42, name: 'Jonas Weber', dn: 'EMS-002', rank: 29, strikes: 0, vacationDays: 5, departments: [{ id: 2, rank: 2 }], exams: [{ id: 2, at: '2026-10-11', by: 'Lena Hoffmann' }, { id: 3, at: '2026-10-20', by: 'Lena Hoffmann' }], hiredAt: '2026-09-15', lastPromotedAt: '2026-10-30', online: true },
+      { characterId: 108, name: 'Mira Schulz', dn: 'EMS-004', rank: 18, strikes: 1, vacationDays: 0, departments: [{ id: 1, rank: 2 }], exams: [{ id: 2, at: '2026-10-28', by: 'Jonas Weber' }], hiredAt: '2026-09-22', lastPromotedAt: '2026-11-03', online: true, onDuty: true, bonusToday: true },
+      { characterId: 233, name: 'Tom Becker', dn: 'EMS-007', rank: 7, strikes: 2, vacationDays: 3, departments: [], exams: [], hiredAt: '2026-10-03', lastPromotedAt: '2026-10-25' },
+      { characterId: 256, name: 'Fabian Nandes', dn: 'EMS-009', rank: 3, strikes: 0, vacationDays: 0, departments: [{ id: 1, rank: 1 }], exams: [], hiredAt: '2026-10-19', online: true, onDuty: true },
       { characterId: 311, name: 'Sara Yilmaz', dn: 'EMS-011', rank: 1, strikes: 3, vacationDays: 0, departments: [], exams: [], hiredAt: '2026-11-02' },
+      { characterId: 402, name: 'Murat Demir', dn: 'EMS-012', rank: 12, strikes: 0, vacationDays: 2, departments: [{ id: 2, rank: 1 }], exams: [{ id: 2, at: '2026-11-01', by: 'Mira Schulz' }], hiredAt: '2026-09-29', lastPromotedAt: '2026-11-06', online: true },
+      { characterId: 415, name: 'Hanna Wolf', dn: 'EMS-013', rank: 22, strikes: 0, vacationDays: 0, departments: [{ id: 1, rank: 2 }], exams: [], hiredAt: '2026-09-17', lastPromotedAt: '2026-10-19', online: true, onDuty: true },
     ],
     archive: [
       { id: 3, characterId: 87, name: 'Kevin Lorenz', dn: 'EMS-003', lastRank: 'Notarzt', ranks: [{ rank: 1, name: 'Praktikant', at: '2026-09-16', leader: 'Lena Hoffmann' }, { rank: 7, name: 'Notfallsanitäter', at: '2026-09-30', leader: 'Lena Hoffmann' }, { rank: 18, name: 'Notarzt', at: '2026-10-21', leader: 'Lena Hoffmann' }], exams: [{ name: 'Notfallsanitäter', at: '2026-09-29', by: 'Jonas Weber' }], hiredAt: '2026-09-16', leftAt: '2026-11-04', reason: 'Dreimal unentschuldigt gefehlt', by: 'Jonas Weber', kind: 'fire' },
@@ -635,41 +954,107 @@ const Mock = (() => {
     ],
   };
   const rankName = (r) => (db.ranks[r] && db.ranks[r].name) || RANK_NAMES[r - 1];
+  const divisionOf = (r) => db.divisions.find((d) => r >= d.minRank && r <= d.maxRank);
+  const theme = { base: '9 14 28', ink: '240 244 250', accent: '37 94 190', mark: '237 28 36' };
   const has = (r, key) => r >= 30 || (db.ranks[r] && db.ranks[r].perms ? db.ranks[r].perms.includes(key) : r >= PERMS.find((p) => p.key === key).min);
   const overview = () => ({
-    org: { id: 'ems', label: 'Emergency Medical Service', short: 'EMS', ranks: 30, leaderRank: 30, viceRank: 29 },
-    me: { name: 'Lena Hoffmann', rank: ME_RANK, rankName: rankName(ME_RANK), dn: 'EMS-001', hiredAt: '2026-09-14' },
+    org: { id: 'ems', label: 'Emergency Medical Service', short: 'EMS', ranks: 30, leaderRank: 30, viceRank: 29, logo: 'logos/ems.png', theme },
+    me: { name: 'Lena Hoffmann', rank: ME_RANK, rankName: rankName(ME_RANK), dn: 'EMS-001', hiredAt: '2026-09-14', lastPromotedAt: '2026-09-14', salary: db.salaries[ME_RANK] || 0 },
+    salaryInterval: 60,
     leader: 'Lena Hoffmann',
     message: db.message,
     balance: db.balance,
     onDuty: db.members.filter((m) => m.onDuty).map((m) => ({ name: m.name, dn: m.dn, rank: m.rank, rankName: rankName(m.rank) })),
-    access: { structure: true, leitstelle: true, archive: true, message: true, cash: true },
+    counts: { members: db.members.length, onDuty: db.members.filter((m) => m.onDuty).length },
+    divisions: db.divisions.map((d) => ({ ...d, minRankName: rankName(d.minRank), maxRankName: rankName(d.maxRank),
+      count: db.members.filter((m) => m.rank >= d.minRank && m.rank <= d.maxRank).length,
+      onDuty: db.members.filter((m) => m.onDuty && m.rank >= d.minRank && m.rank <= d.maxRank).length })),
+    access: { structure: true, leitstelle: true, archive: true, message: true, cash: true, divisions: true, info: true },
   });
+  const divisionsPayload = () => {
+    const groups = [...db.divisions].sort((a, b) => b.maxRank - a.maxRank).map((d) => ({ ...d, minRankName: rankName(d.minRank), maxRankName: rankName(d.maxRank),
+      members: db.members.filter((m) => m.rank >= d.minRank && m.rank <= d.maxRank).sort((a, b) => b.rank - a.rank)
+        .map((m) => ({ characterId: m.characterId, name: m.name, dn: m.dn, rank: m.rank, rankName: rankName(m.rank), online: m.online, onDuty: m.onDuty })) }));
+    const rest = db.members.filter((m) => !divisionOf(m.rank));
+    if (rest.length) groups.push({ id: 0, name: 'Ohne Division', members: rest.map((m) => ({ characterId: m.characterId, name: m.name, dn: m.dn, rank: m.rank, rankName: rankName(m.rank) })) });
+    return { divisions: groups, ranks: Array.from({ length: 30 }, (_, i) => ({ rank: 30 - i, name: rankName(30 - i) })), canEdit: true, limits: { divisions: 5, name: 32 } };
+  };
+  const infoPayload = () => {
+    let previous = [];
+    const ranks = Array.from({ length: 30 }, (_, i) => i + 1).map((r) => {
+      const current = PERMS.filter((p) => has(r, p.key)).map((p) => p.key);
+      const fresh = current.filter((k) => !previous.includes(k)).map((k) => PERMS.find((p) => p.key === k).label);
+      previous = current;
+      return { rank: r, name: rankName(r), tasks: db.tasks[r], salary: db.salaries[r] || 0, newPermissions: fresh };
+    });
+    return { categories: [{ key: 'rules', label: 'Regeln' }, { key: 'process', label: 'Abläufe' }, { key: 'info', label: 'Wichtig' }],
+      sections: db.info, exams: db.exams, ranks, divisions: db.divisions, salaryInterval: 60, canEdit: true,
+      limits: { sections: 30, title: 60, body: 3000, examDescription: 1500, rankTasks: 300 } };
+  };
   const ranksPayload = () => ({
-    ranks: Array.from({ length: 30 }, (_, i) => 30 - i).map((r) => ({ rank: r, name: rankName(r), permissions: PERMS.filter((p) => has(r, p.key)).map((p) => p.key), editable: true, fixedPermissions: r === 30 || undefined })),
+    ranks: Array.from({ length: 30 }, (_, i) => 30 - i).map((r) => ({ rank: r, name: rankName(r), permissions: PERMS.filter((p) => has(r, p.key)).map((p) => p.key), salary: db.salaries[r] || 0, tasks: db.tasks[r], editable: true, fixedPermissions: r === 30 || undefined })),
     permissions: PERMS.map((p) => ({ key: p.key, group: p.group, label: p.label, grantable: true })),
     departments: db.departments, exams: db.exams,
-    limits: { departments: 12, departmentRanks: 5, exams: 30, rankName: 32, department: 32, exam: 40 }, canEdit: true,
+    limits: { departments: 12, departmentRanks: 5, exams: 30, rankName: 32, department: 32, exam: 40, examDescription: 1500, rankTasks: 300, salary: 1000, salaryInterval: 60 }, canEdit: true,
   });
   const membersPayload = () => ({
     members: db.members.map((m) => ({ ...m, rankName: rankName(m.rank),
       departments: m.departments.map((d) => { const dep = db.departments.find((x) => x.id === d.id); return dep ? { id: d.id, name: dep.name, rank: d.rank, rankName: dep.ranks[d.rank - 1] } : null; }).filter(Boolean),
       exams: m.exams.map((e) => ({ ...e, name: (db.exams.find((x) => x.id === e.id) || {}).name || '?' })),
+      division: (divisionOf(m.rank) || {}).name,
       above: m.rank < ME_RANK || undefined })),
-    edit: { hire: true, fire: true, rank: true, dn: true, strikes: true, vacation: true, departments: true, exams: true },
+    edit: { hire: true, fire: true, rank: true, dn: true, strikes: true, vacation: true, departments: true, exams: true, bonus: true },
     departments: db.departments, exams: db.exams, leads: [1],
     ranks: Array.from({ length: 30 }, (_, i) => ({ rank: i + 1, name: rankName(i + 1), assignable: i + 1 < ME_RANK || undefined })),
-    limits: { strikes: 10, vacation: 365, dn: 12, reason: 120 },
+    limits: { strikes: 10, vacation: 365, dn: 12, reason: 120, bonus: 1000 },
   });
   const calls = {
     faction_menu_open: () => ({ ok: true, data: overview() }),
     faction_message_save: (d) => { db.message = d.text ? { text: d.text, by: 'Lena Hoffmann', at: '2026-11-07 17:50' } : null; return { ok: true, data: overview() }; },
     faction_cash: (d) => { if (d.action === 'withdraw' && d.amount > db.balance) return { ok: false, error: 'not_enough_money' }; db.balance += d.action === 'deposit' ? d.amount : -d.amount; return { ok: true, data: overview() }; },
     faction_ranks: () => ({ ok: true, data: ranksPayload() }),
-    faction_rank_save: (d) => { db.ranks[d.rank] = { name: d.name, perms: d.permissions }; return { ok: true, data: ranksPayload() }; },
+    faction_rank_save: (d) => {
+      if (d.salary !== undefined && (d.salary < 0 || d.salary > 1000)) return { ok: false, error: 'invalid_salary' };
+      db.ranks[d.rank] = { name: d.name, perms: d.permissions };
+      if (d.salary !== undefined) db.salaries[d.rank] = d.salary;
+      if (d.tasks !== undefined) db.tasks[d.rank] = d.tasks || undefined;
+      return { ok: true, data: ranksPayload() };
+    },
+    faction_divisions: () => ({ ok: true, data: divisionsPayload() }),
+    faction_division_save: (d) => {
+      if (!d.name) return { ok: false, error: 'invalid_name' };
+      if (!(d.minRank <= d.maxRank)) return { ok: false, error: 'invalid_ranks' };
+      if (!d.id && db.divisions.length >= 5) return { ok: false, error: 'limit_reached' };
+      const clash = db.divisions.find((x) => x.id !== d.id && d.minRank <= x.maxRank && d.maxRank >= x.minRank);
+      if (clash) return { ok: false, error: 'division_overlap' };
+      if (d.id) Object.assign(db.divisions.find((x) => x.id === d.id), { name: d.name, minRank: d.minRank, maxRank: d.maxRank });
+      else db.divisions.push({ id: Date.now(), name: d.name, minRank: d.minRank, maxRank: d.maxRank });
+      return { ok: true, data: divisionsPayload() };
+    },
+    faction_division_delete: (d) => { db.divisions = db.divisions.filter((x) => x.id !== d.id); return { ok: true, data: divisionsPayload() }; },
+    faction_info: () => ({ ok: true, data: infoPayload() }),
+    faction_info_save: (d) => {
+      if (!d.title || !d.body) return { ok: false, error: 'invalid_input' };
+      const entry = { category: d.category, title: d.title, body: d.body, sort: d.sort || 0, updatedBy: 'Lena Hoffmann', updatedAt: '2026-11-08' };
+      if (d.id) Object.assign(db.info.find((x) => x.id === d.id), entry); else db.info.push({ id: Date.now(), ...entry });
+      return { ok: true, data: infoPayload() };
+    },
+    faction_info_delete: (d) => { db.info = db.info.filter((x) => x.id !== d.id); return { ok: true, data: infoPayload() }; },
+    faction_member_bonus: (d) => {
+      const m = db.members.find((x) => x.characterId === d.characterId);
+      if (m.bonusToday) return { ok: false, error: 'bonus_today' };
+      if (!(d.amount >= 1 && d.amount <= 1000)) return { ok: false, error: 'invalid_amount' };
+      if (d.amount > db.balance) return { ok: false, error: 'not_enough_money' };
+      db.balance -= d.amount; m.bonusToday = true;
+      return { ok: true, data: membersPayload() };
+    },
     faction_department_save: (d) => { if (d.id) Object.assign(db.departments.find((x) => x.id === d.id), { name: d.name, ranks: d.ranks }); else db.departments.push({ id: Date.now(), name: d.name, ranks: d.ranks }); return { ok: true, data: ranksPayload() }; },
     faction_department_delete: (d) => { db.departments = db.departments.filter((x) => x.id !== d.id); return { ok: true, data: ranksPayload() }; },
-    faction_exam_save: (d) => { if (d.id) db.exams.find((x) => x.id === d.id).name = d.name; else db.exams.push({ id: Date.now(), name: d.name }); return { ok: true, data: ranksPayload() }; },
+    faction_exam_save: (d) => {
+      if (d.id) { const e = db.exams.find((x) => x.id === d.id); e.name = d.name; if (d.description !== undefined) e.description = d.description; }
+      else db.exams.push({ id: Date.now(), name: d.name, description: d.description || '' });
+      return { ok: true, data: ranksPayload() };
+    },
     faction_exam_delete: (d) => { db.exams = db.exams.filter((x) => x.id !== d.id); return { ok: true, data: ranksPayload() }; },
     faction_vehicles: () => ({ ok: true, data: { vehicles: db.vehicles.map((v) => ({ ...v, rankName: rankName(v.minRank) })), canEdit: true } }),
     faction_vehicle_save: (d) => { db.vehicles.find((v) => v.model === d.model).minRank = d.minRank; return calls.faction_vehicles(); },
@@ -707,6 +1092,8 @@ const Mock = (() => {
 const TEXT = {
   tabs: {
     overview: 'Übersicht',
+    divisions: 'Divisionen',
+    info: 'Erklärungen',
     structure: 'Anpassung',
     vehicles: 'Fahrzeuge',
     leitstelle: 'Leitstelle',
@@ -714,42 +1101,68 @@ const TEXT = {
   },
   admin: (readOnly) => readOnly ? 'Admin, nur ansehen' : 'Admin, bearbeiten',
   close: 'Schließen',
-  card: { org: (short) => `DIENSTKARTE ${short}`, rank: 'Rang', dn: 'Dienstnummer', hired: 'Eingestellt am', leader: 'Leader', none: 'Keiner eingetragen', noRank: 'Kein Mitglied' },
-  cash: { title: 'Kasse', deposit: 'Einzahlen', withdraw: 'Auszahlen', amount: 'Betrag in $', hint: 'Einzahlen aus deinem Bargeld, Auszahlen in dein Bargeld.' },
-  duty: { title: 'Gerade im Dienst', none: 'Gerade ist niemand im Dienst.', count: (n) => `${n} im Dienst` },
+  hero: { rank: (r, total) => `Rang ${r} von ${total}`, dn: 'Dienstnummer', hired: 'Eingestellt', promoted: 'Letzter Uprank', leader: 'Leader', salary: 'Gehalt', none: 'Keiner eingetragen', noRank: 'Kein Mitglied', never: 'Noch keiner', perHour: (min) => `pro ${min} Min Dienst` },
+  stats: { members: 'Mitglieder', duty: 'Im Dienst', divisions: 'Divisionen', cash: 'Kasse', ofMembers: (n) => `von ${n} Mitgliedern`, max: (n) => `höchstens ${n}`, hidden: 'Nur mit Recht sichtbar' },
+  cash: { title: 'Kasse', deposit: 'Einzahlen', withdraw: 'Auszahlen', amount: 'Betrag in $', hint: 'Einzahlen aus deinem Bargeld, Auszahlen in dein Bargeld. Gehälter und Boni gehen auch aus der Kasse.' },
+  duty: { title: 'Gerade im Dienst', none: 'Gerade ist niemand im Dienst.' },
   memo: { title: 'Nachricht vom Leader', empty: 'Gerade keine Nachricht.', edit: 'Bearbeiten', save: 'Speichern', cancel: 'Abbrechen', by: (by, at) => `${by}, ${at}` },
+  divisions: {
+    title: 'Divisionen', summary: 'Divisionen im Überblick', none: 'Noch keine Divisionen. Leader und Vice Leader legen sie unter Divisionen an.',
+    members: (n) => `${n} ${n === 1 ? 'Mitglied' : 'Mitglieder'}`, duty: (n) => `${n} im Dienst`, ranks: (from, to) => `Rang ${from} bis ${to}`,
+    name: 'Name, z. B. Highcommand', nameShort: 'Name', from: 'Ab Rang', to: 'Bis Rang', add: 'Division anlegen', save: 'Speichern', del: 'Löschen',
+    count: (n, max) => `${n} von ${max} Divisionen`, empty: 'Noch niemand in dieser Division.', limit: 'Mehr als fünf Divisionen gehen nicht.',
+    hint: 'Jede Division umfasst einen Rangbereich. Wer einen Rang darin hat, gehört automatisch dazu.',
+  },
+  info: {
+    exams: 'Prüfungen', ranks: 'Ränge und Rechte',
+    examsIntro: 'Was jede Prüfung bedeutet und wie sie abläuft.',
+    ranksIntro: 'Ab welchem Rang welche Aufgaben dazukommen und welche Rechte freigeschaltet werden.',
+    noExams: 'Noch keine Prüfungen angelegt (Anpassung, Prüfungen).', noDescription: 'Noch keine Beschreibung.',
+    description: 'Beschreibung', saveDescription: 'Beschreibung speichern',
+    newPermissions: 'Neu freigeschaltet', salary: (amount, min) => `${amount} pro ${min} Min`, noTasks: 'Keine Aufgaben eingetragen.',
+    empty: 'Hier steht noch nichts.', add: 'Abschnitt anlegen', edit: 'Bearbeiten', del: 'Löschen', save: 'Speichern', cancel: 'Abbrechen',
+    titleLabel: 'Überschrift', bodyLabel: 'Text', categoryLabel: 'Bereich', sortLabel: 'Reihenfolge',
+    meta: (by, at) => `Zuletzt geändert von ${by || 'unbekannt'} am ${at}`,
+    onlyLeaders: 'Nur Leader und Vice Leader können hier etwas eintragen.',
+    tasksHint: 'Aufgaben und Gehalt pro Rang trägst du unter Anpassung, Ränge und Rechte ein.',
+  },
   structure: {
     sub: { ranks: 'Ränge und Rechte', departments: 'Abteilungen', exams: 'Prüfungen' },
     rankName: 'Name des Rangs', save: 'Speichern',
-    fixed: 'Der höchste Rang hat immer alle Rechte. Hier lässt sich nur der Name ändern.',
+    salary: (max, min) => `Gehalt in $ (höchstens ${max}, pro ${min} Min Dienst)`,
+    tasks: 'Aufgaben dieses Rangs (steht unter Erklärungen)',
+    fixed: 'Der höchste Rang hat immer alle Rechte. Name, Gehalt und Aufgaben lassen sich ändern.',
     readonly: 'Diesen Rang darfst du nicht ändern. Der Vice Leader ändert nur Ränge unter sich, seine eigenen Rechte nur der Leader.',
     notGrantable: 'Rechte, die du selbst nicht hast, kannst du nicht vergeben.',
     perms: (n) => `${n} Rechte`,
     deptName: 'Name der Abteilung', deptRanks: 'Interne Ränge, von unten nach oben (bis zu 5)', deptRankPlaceholder: (i) => `Rang ${i}`,
     addDept: 'Abteilung anlegen', deleteDept: 'Löschen', saveDept: 'Speichern', noDepts: 'Noch keine Abteilungen. Lege die erste an, z. B. Ausbildung.',
     examName: 'Name der Prüfung', addExam: 'Prüfung anlegen', noExams: 'Noch keine Prüfungen angelegt.',
+    examHint: 'Die Beschreibung jeder Prüfung trägst du unter Erklärungen, Prüfungen ein.',
     deptLead: 'Du leitest diese Abteilung und kannst die Rangnamen ändern.',
   },
   vehicles: { vehicle: 'Fahrzeug', model: 'Modell', from: 'Erlaubt ab Rang', info: 'Wer den Rang hat, kann das Fahrzeug in der Garage ausparken. Nur im Dienst.' },
   lst: {
-    search: 'Name, ID oder DN suchen', count: (n) => `${n} Mitarbeiter`, hire: 'Einstellen', hireId: 'ID', hireHint: 'Die Person muss online sein und zustimmen.',
-    cols: { name: 'Name', id: 'ID', dn: 'DN', rank: 'Rang', strikes: 'Strikes', vacation: 'Urlaub', departments: 'Abteilungen', exams: 'Prüfungen' },
+    search: 'Name, ID oder Dienstnummer suchen', count: (n) => `${n} Mitarbeiter`, shown: (n, total) => `${n} von ${total}`,
+    hire: 'Einstellen', hireId: 'ID', hireHint: 'Die Person muss online sein und zustimmen.',
+    filters: { all: 'Alle', duty: 'Im Dienst', online: 'Online' },
+    cols: { name: 'Name', id: 'ID', dn: 'DN', rank: 'Rang', division: 'Division', strikes: 'Strikes', vacation: 'Urlaub', departments: 'Abteilungen', exams: 'Prüfungen', hired: 'Eingestellt', promoted: 'Uprank' },
     empty: 'Keine Treffer.', pick: 'Wähle links einen Mitarbeiter aus.',
     status: { duty: 'Im Dienst', online: 'Online', offline: 'Offline' },
-    since: (d) => `Seit ${d}`,
+    dates: { hired: 'Eingestellt am', promoted: 'Letzter Uprank' }, never: 'Noch keiner',
     fields: { rank: 'Rang', dn: 'Dienstnummer', strikes: 'Strikes', vacation: 'Urlaubstage', departments: 'Abteilungen', exams: 'Prüfungen' },
     none: 'Keine', save: 'Speichern', fire: 'Entlassen', noDept: 'Nicht dabei',
     fireTitle: (name) => `${name} entlassen?`, fireText: 'Rang, Dienstausweis und Zugriff auf die Fahrzeuge gehen verloren. Der Eintrag kommt ins Archiv.',
     reason: 'Grund (steht im Archiv)',
     above: 'Diese Person steht nicht unter deinem Rang. Ändern kannst du nur Mitarbeiter unter dir.',
-    days: (n) => `${n} ${n === 1 ? 'Tag' : 'Tage'}`,
+    bonus: { title: 'Bonus', amount: (max) => `Betrag (bis ${max} $)`, reason: 'Grund (optional)', pay: 'Bonus auszahlen', today: 'Heute hat diese Person schon einen Bonus bekommen.', hint: 'Aus der Kasse aufs Konto, einmal pro Tag je Person.', done: 'Bonus ausgezahlt.' },
   },
   archive: {
     search: 'Name oder ID suchen', empty: 'Keine ehemaligen Mitarbeiter gefunden.', pick: 'Wähle links einen Eintrag aus.',
-    cols: { name: 'Name', id: 'ID', last: 'Letzter Rang', left: 'Ausgetreten', kind: 'Art' },
+    cols: { name: 'Name', id: 'ID', last: 'Letzter Rang', hired: 'Eingestellt', left: 'Gekündigt', kind: 'Art' },
     kind: { fire: 'Entlassen', leave: 'Gekündigt', admin: 'Vom Admin entfernt' },
     ranks: 'Ränge', exams: 'Prüfungen', none: 'Keine', under: (leader) => leader ? `unter ${leader}` : 'kein Leader eingetragen',
-    left: (at, by) => `Ausgetreten am ${at}${by ? `, durch ${by}` : ''}`, hired: (at) => `Eingestellt am ${at}`, reason: 'Grund',
+    dates: { hired: 'Einstellungsdatum', left: 'Kündigungsdatum' }, by: (by) => `durch ${by}`, reason: 'Grund',
     more: 'Mehr laden',
   },
   saved: 'Gespeichert.',
@@ -759,9 +1172,10 @@ const TEXT = {
     invalid_input: 'Die Eingabe passt nicht.',
     invalid_rank: 'Diesen Rang gibt es nicht.',
     invalid_name: 'Bitte einen Namen eingeben.',
-    invalid_ranks: 'Die Abteilung braucht mindestens einen Rang.',
+    invalid_ranks: 'Der Rangbereich passt nicht (von muss kleiner oder gleich bis sein).',
     invalid_amount: 'Bitte einen gültigen Betrag eingeben.',
-    not_enough_money: 'Dafür reicht das Geld nicht.',
+    invalid_salary: 'Das Gehalt darf höchstens 1.000 $ sein.',
+    not_enough_money: 'Dafür reicht das Geld in der Kasse nicht.',
     limit_reached: 'Das Limit ist erreicht.',
     not_found: 'Den Eintrag gibt es nicht mehr.',
     dn_taken: 'Diese Dienstnummer ist schon vergeben.',
@@ -770,6 +1184,8 @@ const TEXT = {
     consent_declined: 'Die Person hat abgelehnt.',
     consent_timeout: 'Die Person hat nicht geantwortet.',
     target_busy: 'Die Person entscheidet gerade etwas anderes.',
+    division_overlap: 'Der Rangbereich überschneidet sich mit einer anderen Division.',
+    bonus_today: 'Diese Person hat heute schon einen Bonus bekommen.',
     db_error: 'Datenbankfehler. Bitte einem Admin melden.',
     server_error: 'Fehler auf dem Server. Bitte nochmal versuchen.',
     timeout: 'Der Server antwortet nicht.',
@@ -779,14 +1195,20 @@ const TEXT = {
 
 const TABS = [
   { id: 'overview', icon: 'i-home', access: () => true },
+  { id: 'divisions', icon: 'i-layers', access: (a) => a.divisions },
+  { id: 'info', icon: 'i-book', access: (a) => a.info },
   { id: 'structure', icon: 'i-sliders', access: (a) => a.structure },
   { id: 'vehicles', icon: 'i-car', access: (a) => a.structure },
   { id: 'leitstelle', icon: 'i-radio', access: (a) => a.leitstelle },
   { id: 'archive', icon: 'i-archive', access: (a) => a.archive },
 ];
+// Farben der Divisionen: abwechselnd Akzent und zweite Farbe der Organisation, in Deckkraft abgestuft
+const DIVISION_TINTS = ['var(--rgb-accent)', 'var(--rgb-signal)', 'var(--rgb-accent)', 'var(--rgb-signal)', 'var(--rgb-accent)'];
+const DIVISION_ALPHA = [1, 1, 0.7, 0.7, 0.5];
 const TOAST_MS = 2600;
 const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
 const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const THEME_KEYS = { base: 'base', ink: 'ink', accent: 'accent', mark: 'signal' };
 const MONEY = new Intl.NumberFormat('de-DE');
 
 const state = {
@@ -798,6 +1220,9 @@ const state = {
   vehicles: null,
   members: null, memberSel: null, search: '',
   archive: null, archiveSel: null, archiveSearch: '', archivePage: 1,
+  divisions: null,
+  info: null, infoSub: 'exams', infoEdit: null,
+  filter: 'all',
   memoEdit: false,
   modal: null,
 };
@@ -811,6 +1236,11 @@ const el = {
   meRank: document.getElementById('me-rank'),
   meAdmin: document.getElementById('me-admin'),
   headTitle: document.getElementById('head-title'),
+  headEyebrow: document.getElementById('head-eyebrow'),
+  brandLogo: document.getElementById('brand-logo'),
+  brandLogoNone: document.getElementById('brand-logo-none'),
+  watermark: document.getElementById('watermark'),
+  meAvatar: document.getElementById('me-avatar'),
   headMeta: document.getElementById('head-meta'),
   headActions: document.getElementById('head-actions'),
   view: document.getElementById('view'),
@@ -877,6 +1307,36 @@ function applyColors(colors) {
     }
   });
 }
+// Farben der Organisation (theme) ueberschreiben die allgemeinen. mark ist die zweite Farbe und die Warnfarbe.
+function applyTheme(theme) {
+  if (!theme) return;
+  Object.entries(THEME_KEYS).forEach(([from, to]) => {
+    if (typeof theme[from] === 'string' && COLOR_PATTERN.test(theme[from])) {
+      document.documentElement.style.setProperty(`--rgb-${to}`, theme[from]);
+    }
+  });
+}
+function initials(name) {
+  return String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join('');
+}
+function applyLogo(org) {
+  const src = typeof org.logo === 'string' && /^[\w/.-]+\.(png|webp|jpg|jpeg|svg)$/i.test(org.logo) ? org.logo : null;
+  [el.brandLogo, el.watermark].forEach((img) => {
+    img.hidden = !src;
+    if (src && img.getAttribute('src') !== src) img.src = src;
+  });
+  el.brandLogoNone.hidden = !!src;
+  el.brandLogoNone.textContent = src ? '' : (org.short || '').slice(0, 3);
+}
+function money(n) {
+  return `${MONEY.format(n || 0)} $`;
+}
+function datesTile(pairs) {
+  const dl = make('dl', 'detail__dates');
+  pairs.forEach(([k, v]) => { const d = make('div', 'date-tile'); d.append(make('dt', '', k), make('dd', 'num', v)); dl.append(d); });
+  return dl;
+}
+
 let toastTimer = null;
 function toast(text, error = false) {
   el.toast.textContent = text;
@@ -912,6 +1372,8 @@ function renderFrame() {
   const ov = state.overview;
   el.brandShort.textContent = ov.org.short;
   el.brandLabel.textContent = ov.org.label;
+  applyLogo(ov.org);
+  el.meAvatar.textContent = initials(ov.me.name);
   el.meName.textContent = ov.me.name;
   el.meRank.textContent = ov.me.rankName ? `${ov.me.rankName} · ${ov.me.dn || ''}`.replace(/ · $/, '') : '';
   el.meAdmin.hidden = !ov.me.admin;
@@ -922,13 +1384,18 @@ function renderFrame() {
     item.dataset.action = 'tab';
     item.dataset.tab = t.id;
     if (state.tab === t.id) item.setAttribute('aria-current', 'page');
-    item.append(icon(t.icon), make('span', '', TEXT.tabs[t.id]));
-    if (t.id === 'leitstelle' && state.members) item.append(make('span', 'nav__count num', state.members.members.length));
+    const tile = make('span', 'nav__tile');
+    tile.append(icon(t.icon));
+    item.append(tile, make('span', '', TEXT.tabs[t.id]));
+    if (t.id === 'leitstelle' && ov.counts) item.append(make('span', 'nav__count num', ov.counts.members));
+    if (t.id === 'divisions' && ov.divisions) item.append(make('span', 'nav__count num', ov.divisions.length));
     return item;
   }));
 }
 
 function setHead(title, meta = '', actions = []) {
+  const ov = state.overview;
+  el.headEyebrow.textContent = ov ? `${ov.org.short} · ${ov.org.label}` : '';
   el.headTitle.textContent = title;
   el.headMeta.textContent = meta;
   el.headActions.replaceChildren(...actions);
@@ -940,6 +1407,8 @@ async function openTab(tab) {
   if (tab === 'vehicles' && !state.vehicles) state.vehicles = await call('faction_vehicles');
   if (tab === 'leitstelle' && !state.members) state.members = await call('faction_members');
   if (tab === 'archive' && !state.archive) state.archive = await call('faction_archive', { page: 1 });
+  if (tab === 'divisions' && !state.divisions) state.divisions = await call('faction_divisions');
+  if (tab === 'info' && !state.info) state.info = await call('faction_info');
   render();
 }
 
@@ -947,39 +1416,94 @@ function render() {
   if (!state.open || !state.overview) return;
   renderFrame();
   el.view.className = 'view';
-  ({ overview: renderOverview, structure: renderStructure, vehicles: renderVehicles, leitstelle: renderLeitstelle, archive: renderArchive })[state.tab]();
+  ({ overview: renderOverview, divisions: renderDivisions, info: renderInfo, structure: renderStructure, vehicles: renderVehicles,
+    leitstelle: renderLeitstelle, archive: renderArchive })[state.tab]();
 }
 
-/* ---------- Tab 1: Uebersicht ---------- */
+/* ---------- Uebersicht ---------- */
+function statTile(iconId, label, value, sub, mark = false) {
+  const tile = make('div', `stat${mark ? ' stat--mark' : ''}`);
+  const head = make('div', 'stat__label');
+  head.append(icon(iconId), make('span', '', label));
+  tile.append(head, make('div', 'stat__value num', value));
+  if (sub) tile.append(make('div', 'stat__sub', sub));
+  return tile;
+}
+
+function divisionColor(index) {
+  return `rgb(${DIVISION_TINTS[index % DIVISION_TINTS.length]} / ${DIVISION_ALPHA[index % DIVISION_ALPHA.length]})`;
+}
+
 function renderOverview() {
   const ov = state.overview;
-  setHead(TEXT.tabs.overview, ov.org.label);
+  setHead(TEXT.tabs.overview);
   const wrap = make('div', 'overview');
-  const left = make('div', 'stack');
 
-  const card = make('article', 'card-id');
-  card.append(make('div', 'card-id__org', TEXT.card.org(ov.org.short)), make('div', 'card-id__name', ov.me.name),
-    make('div', 'card-id__rank', ov.me.rankName || TEXT.card.noRank));
-  const facts = make('dl', 'facts');
-  [[TEXT.card.dn, ov.me.dn || '-'], [TEXT.card.hired, ov.me.hiredAt || '-'], [TEXT.card.leader, ov.leader || TEXT.card.none], [TEXT.card.rank, ov.me.rank ? `${ov.me.rank} von ${ov.org.ranks}` : '-']]
+  // Kopf: Logo, Name, Rang, Daten
+  const hero = make('section', 'hero');
+  if (ov.org.logo) {
+    const logo = make('img', 'hero__logo');
+    logo.src = ov.org.logo;
+    logo.alt = '';
+    hero.append(logo);
+  } else hero.append(make('div', 'avatar', initials(ov.me.name)));
+  const who = make('div');
+  who.append(make('div', 'hero__org', ov.org.label), make('div', 'hero__name', ov.me.name));
+  const pills = make('div', 'hero__rank');
+  pills.append(make('span', 'pill', ov.me.rankName || TEXT.hero.noRank));
+  if (ov.me.rank) pills.append(make('span', 'pill pill--plain num', TEXT.hero.rank(ov.me.rank, ov.org.ranks)));
+  if (ov.me.dn) pills.append(make('span', 'pill pill--mark num', ov.me.dn));
+  who.append(pills);
+  const facts = make('dl', 'hero__facts');
+  [[TEXT.hero.leader, ov.leader || TEXT.hero.none], [TEXT.hero.hired, ov.me.hiredAt || '-'],
+    [TEXT.hero.promoted, ov.me.lastPromotedAt || TEXT.hero.never], [TEXT.hero.salary, ov.me.salary !== undefined && ov.me.salary !== null ? `${money(ov.me.salary)} / ${ov.salaryInterval || 60} Min` : '-']]
     .forEach(([k, v]) => { const d = make('div'); d.append(make('dt', '', k), make('dd', 'num', v)); facts.append(d); });
-  card.append(facts);
-  left.append(card);
+  hero.append(who, facts);
+  wrap.append(hero);
 
-  if (typeof ov.balance === 'number') {
-    const cash = make('section', 'box');
-    cash.append(make('h2', 'section-title', TEXT.cash.title.toUpperCase()), make('div', 'cash__value num', `${MONEY.format(ov.balance)} $`));
-    if (ov.access.cash && !readOnly()) {
-      const row = make('div', 'cash__row');
-      const amount = input('', { type: 'number', min: 1, step: 1, placeholder: TEXT.cash.amount, id: 'cash-amount', 'aria-label': TEXT.cash.amount });
-      row.append(amount, button(TEXT.cash.deposit, 'cash', '', { kind: 'deposit' }), button(TEXT.cash.withdraw, 'cash', '', { kind: 'withdraw' }));
-      cash.append(row, make('div', 'note', TEXT.cash.hint));
-    }
-    left.append(cash);
+  // Kennzahlen
+  const counts = ov.counts || { members: 0, onDuty: 0 };
+  const stats = make('div', 'stats');
+  stats.append(
+    statTile('i-users', TEXT.stats.members, counts.members, `${(ov.divisions || []).length} ${TEXT.tabs.divisions}`),
+    statTile('i-pulse', TEXT.stats.duty, counts.onDuty, TEXT.stats.ofMembers(counts.members), true),
+    statTile('i-layers', TEXT.stats.divisions, (ov.divisions || []).length, TEXT.stats.max(5)),
+    statTile('i-cash', TEXT.stats.cash, typeof ov.balance === 'number' ? money(ov.balance) : '-', typeof ov.balance === 'number' ? '' : TEXT.stats.hidden, true));
+  wrap.append(stats);
+
+  const grid = make('div', 'overview__grid');
+  const left = make('div', 'stack');
+  const right = make('div', 'stack');
+
+  // Divisionen im Ueberblick
+  const divBox = make('section', 'box');
+  const divHead = make('div', 'box__head');
+  divHead.append(make('h2', 'section-title', TEXT.divisions.summary));
+  if (ov.access.divisions) divHead.append(button(TEXT.tabs.divisions, 'tab', 'btn--sm', { tab: 'divisions' }));
+  divBox.append(divHead);
+  const divisions = ov.divisions || [];
+  if (!divisions.length) divBox.append(make('div', 'muted', TEXT.divisions.none));
+  else {
+    const grid2 = make('div', 'div-grid');
+    divisions.forEach((d, i) => {
+      const card = make('article', 'div-card');
+      card.style.setProperty('--div-color', divisionColor(i));
+      const count = make('div', 'div-card__count');
+      count.append(make('strong', 'num', d.count), make('span', 'muted', TEXT.divisions.duty(d.onDuty)));
+      const bar = make('div', 'bar');
+      const fill = make('span');
+      fill.style.width = `${counts.members ? Math.round((d.count / counts.members) * 100) : 0}%`;
+      bar.append(fill);
+      card.append(make('div', 'div-card__name', d.name), make('div', 'div-card__ranks', TEXT.divisions.ranks(d.minRank, d.maxRank)), count, bar);
+      grid2.append(card);
+    });
+    divBox.append(grid2);
   }
+  left.append(divBox);
 
-  const memo = make('section', 'box');
-  memo.append(make('h2', 'section-title', TEXT.memo.title.toUpperCase()));
+  // Nachricht vom Leader
+  const memo = make('section', 'box memo');
+  memo.append(make('h2', 'section-title', TEXT.memo.title));
   if (state.memoEdit) {
     const area = make('textarea', 'textarea');
     area.id = 'memo-text';
@@ -998,26 +1522,212 @@ function renderOverview() {
       memo.append(actions);
     }
   }
-  const right = make('div', 'stack');
-  right.append(memo);
+  left.append(memo);
+
+  // Im Dienst
   const duty = make('section', 'box');
   const list = ov.onDuty || [];
-  duty.append(make('h2', 'section-title', `${TEXT.duty.title.toUpperCase()} · ${list.length}`));
+  duty.append(make('h2', 'section-title', `${TEXT.duty.title} · ${list.length}`));
   if (!list.length) duty.append(make('div', 'muted', TEXT.duty.none));
   else {
     const ul = make('ul', 'duty-list');
     list.forEach((p) => {
       const li = make('li');
-      const who = make('div', 'who');
-      who.append(make('span', 'dot dot--duty'), make('span', 'who__name', p.name));
-      li.append(who, make('span', 'muted num', p.dn || ''), make('span', 'muted', `${p.rank} · ${p.rankName}`));
+      const w = make('div', 'who');
+      w.append(make('span', 'dot dot--duty'), make('span', 'who__name', p.name));
+      li.append(w, make('span', 'muted num', p.dn || ''), make('span', 'muted', `${p.rank} · ${p.rankName}`));
       ul.append(li);
     });
     duty.append(ul);
   }
   right.append(duty);
-  wrap.append(left, right);
+
+  // Kasse: der Stand steht oben bei den Kennzahlen, hier nur Ein- und Auszahlen
+  if (typeof ov.balance === 'number' && ov.access.cash && !readOnly()) {
+    const cash = make('section', 'box');
+    cash.append(make('h2', 'section-title', TEXT.cash.title));
+    const row = make('div', 'cash__row');
+    const amount = input('', { type: 'number', min: 1, step: 1, placeholder: TEXT.cash.amount, id: 'cash-amount', 'aria-label': TEXT.cash.amount });
+    row.append(amount, button(TEXT.cash.deposit, 'cash', '', { kind: 'deposit' }), button(TEXT.cash.withdraw, 'cash', '', { kind: 'withdraw' }));
+    cash.append(row, make('div', 'note', TEXT.cash.hint));
+    right.append(cash);
+  }
+  grid.append(left, right);
+  wrap.append(grid);
   el.view.replaceChildren(wrap);
+}
+
+/* ---------- Divisionen ---------- */
+function rankSelect(value, role, extra = {}) {
+  const ranks = state.divisions?.ranks || [];
+  return select([...ranks].sort((a, b) => a.rank - b.rank).map((r) => ({ value: r.rank, label: `${r.rank} · ${r.name}` })), value, { 'data-role': role, ...extra });
+}
+
+function renderDivisions() {
+  const data = state.divisions;
+  if (!data) { setHead(TEXT.tabs.divisions); el.view.replaceChildren(make('div', 'empty', TEXT.errors.default)); return; }
+  const real = data.divisions.filter((d) => d.id);
+  setHead(TEXT.tabs.divisions, TEXT.divisions.count(real.length, data.limits.divisions));
+  const wrap = make('div');
+  if (data.canEdit) {
+    if (real.length < data.limits.divisions) {
+      const form = make('div', 'division-new');
+      form.append(field(TEXT.divisions.name, input('', { id: 'div-new-name', maxlength: data.limits.name })),
+        field(TEXT.divisions.from, rankSelect(1, 'div-new-from', { id: 'div-new-from' })),
+        field(TEXT.divisions.to, rankSelect(1, 'div-new-to', { id: 'div-new-to' })),
+        button(TEXT.divisions.add, 'division-add', 'btn--primary'));
+      wrap.append(form);
+    } else wrap.append(make('div', 'note', TEXT.divisions.limit));
+  }
+  wrap.append(make('p', 'info__intro', TEXT.divisions.hint));
+  const grid = make('div', 'divisions');
+  data.divisions.forEach((d, i) => {
+    const card = make('section', 'division');
+    if (d.id) card.style.setProperty('--div-tint', divisionColor(i).replace(/\/ [\d.]+\)$/, '/ 0.45)'));
+    else card.style.setProperty('--div-tint', 'rgb(var(--rgb-ink) / 0.08)');
+    const head = make('header', 'division__head');
+    const top = make('div', 'division__top');
+    top.append(make('h2', 'division__name', d.name), make('span', 'division__count num', d.members.length));
+    head.append(top, make('div', 'division__ranks', d.id ? `${TEXT.divisions.ranks(d.minRank, d.maxRank)} · ${d.minRankName} bis ${d.maxRankName}` : TEXT.divisions.members(d.members.length)));
+    card.append(head);
+    const ul = make('ul', 'division__list');
+    d.members.forEach((m) => {
+      const li = make('li');
+      const w = make('div', 'who');
+      const st = statusOf(m);
+      const dot = make('span', st.cls);
+      dot.title = st.label;
+      w.append(dot, make('span', 'who__name', m.name));
+      li.append(w, make('span', 'muted num', `${m.rank} · ${m.rankName}`));
+      ul.append(li);
+    });
+    if (!d.members.length) ul.append(make('li', 'muted', TEXT.divisions.empty));
+    card.append(ul);
+    if (data.canEdit && d.id) {
+      const edit = make('div', 'division__edit');
+      edit.dataset.id = d.id;
+      const buttons = make('div', 'division__buttons');
+      buttons.append(button(TEXT.divisions.del, 'division-delete', 'btn--danger btn--sm', { id: d.id }), button(TEXT.divisions.save, 'division-save', 'btn--sm', { id: d.id }));
+      edit.append(field(TEXT.divisions.nameShort, input(d.name, { 'data-role': 'div-name', maxlength: data.limits.name })),
+        field(TEXT.divisions.from, rankSelect(d.minRank, 'div-from')), field(TEXT.divisions.to, rankSelect(d.maxRank, 'div-to')), buttons);
+      card.append(edit);
+    }
+    grid.append(card);
+  });
+  if (!data.divisions.length) grid.append(make('div', 'empty', TEXT.divisions.none));
+  wrap.append(grid);
+  el.view.replaceChildren(wrap);
+}
+
+/* ---------- Erklaerungen ---------- */
+function renderInfo() {
+  const data = state.info;
+  setHead(TEXT.tabs.info, data && !data.canEdit ? TEXT.info.onlyLeaders : '');
+  if (!data) { el.view.replaceChildren(make('div', 'empty', TEXT.errors.default)); return; }
+  const wrap = make('div', 'info');
+  const nav = make('nav', 'info__nav');
+  nav.setAttribute('aria-label', TEXT.tabs.info);
+  const subs = [{ key: 'exams', label: TEXT.info.exams, count: data.exams.length }, { key: 'ranks', label: TEXT.info.ranks, count: data.ranks.length },
+    ...data.categories.map((c) => ({ key: c.key, label: c.label, count: data.sections.filter((x) => x.category === c.key).length }))];
+  if (!subs.some((x) => x.key === state.infoSub)) state.infoSub = 'exams';
+  subs.forEach((sub) => {
+    const b = make('button');
+    b.type = 'button';
+    b.dataset.action = 'info-sub';
+    b.dataset.sub = sub.key;
+    b.setAttribute('aria-pressed', String(state.infoSub === sub.key));
+    b.append(make('span', '', sub.label), make('span', 'nav__count num', sub.count));
+    nav.append(b);
+  });
+  const content = make('div', 'info__content');
+  if (state.infoSub === 'exams') renderInfoExams(content, data);
+  else if (state.infoSub === 'ranks') renderInfoRanks(content, data);
+  else renderInfoSections(content, data, state.infoSub);
+  wrap.append(nav, content);
+  el.view.replaceChildren(wrap);
+}
+
+function renderInfoExams(box, data) {
+  box.append(make('p', 'info__intro', TEXT.info.examsIntro));
+  if (!data.exams.length) { box.append(make('div', 'empty', TEXT.info.noExams)); return; }
+  data.exams.forEach((e) => {
+    const art = make('article', 'article');
+    art.dataset.id = e.id;
+    art.append(make('h3', 'article__title', e.name));
+    if (data.canEdit) {
+      const area = make('textarea', 'textarea');
+      area.value = e.description || '';
+      area.maxLength = data.limits.examDescription;
+      area.dataset.role = 'exam-desc';
+      area.setAttribute('aria-label', `${TEXT.info.description}: ${e.name}`);
+      area.placeholder = TEXT.info.noDescription;
+      const actions = make('div', 'article__actions');
+      actions.append(button(TEXT.info.saveDescription, 'exam-desc-save', 'btn--primary btn--sm', { id: e.id }));
+      art.append(field(TEXT.info.description, area), actions);
+    } else {
+      art.append(make('p', `article__body${e.description ? '' : ' muted'}`, e.description || TEXT.info.noDescription));
+    }
+    box.append(art);
+  });
+}
+
+function renderInfoRanks(box, data) {
+  box.append(make('p', 'info__intro', TEXT.info.ranksIntro));
+  if (data.canEdit) box.append(make('div', 'note', TEXT.info.tasksHint));
+  const ol = make('ol', 'ladder');
+  [...data.ranks].reverse().forEach((r) => {
+    const li = make('li');
+    const body = make('div');
+    body.append(make('div', 'ladder__name', r.name), make('div', `ladder__tasks${r.tasks ? '' : ' muted'}`, r.tasks || TEXT.info.noTasks));
+    if (r.newPermissions.length) {
+      const chips = make('div', 'chips');
+      r.newPermissions.forEach((p) => chips.append(make('span', 'chip chip--division', p)));
+      body.append(chips);
+    }
+    li.append(make('span', 'ladder__no num', r.rank), body, make('span', 'ladder__salary num', r.salary ? TEXT.info.salary(money(r.salary), data.salaryInterval) : ''));
+    ol.append(li);
+  });
+  box.append(ol);
+}
+
+function sectionForm(data, category, entry) {
+  const form = make('div', 'article article-form');
+  form.dataset.id = entry?.id || '';
+  const row = make('div', 'article-form__row');
+  row.append(field(TEXT.info.titleLabel, input(entry?.title || '', { 'data-role': 'info-title', maxlength: data.limits.title })),
+    field(TEXT.info.categoryLabel, select(data.categories.map((c) => ({ value: c.key, label: c.label })), entry?.category || category, { 'data-role': 'info-category' })),
+    field(TEXT.info.sortLabel, input(entry?.sort ?? 0, { type: 'number', min: -999, max: 999, 'data-role': 'info-sort' })));
+  const area = make('textarea', 'textarea');
+  area.value = entry?.body || '';
+  area.maxLength = data.limits.body;
+  area.dataset.role = 'info-body';
+  area.rows = 8;
+  const actions = make('div', 'article__actions');
+  actions.append(button(TEXT.info.save, 'info-save', 'btn--primary btn--sm'), button(TEXT.info.cancel, 'info-cancel', 'btn--ghost btn--sm'));
+  form.append(row, field(TEXT.info.bodyLabel, area), actions);
+  return form;
+}
+
+function renderInfoSections(box, data, category) {
+  const list = data.sections.filter((x) => x.category === category);
+  if (data.canEdit && state.infoEdit === 'new') box.append(sectionForm(data, category, null));
+  else if (data.canEdit && list.length + 0 < data.limits.sections) {
+    const add = make('div');
+    add.append(button(TEXT.info.add, 'info-new', 'btn--primary'));
+    box.append(add);
+  }
+  if (!list.length && state.infoEdit !== 'new') box.append(make('div', 'empty', TEXT.info.empty));
+  list.forEach((x) => {
+    if (data.canEdit && state.infoEdit === x.id) { box.append(sectionForm(data, category, x)); return; }
+    const art = make('article', 'article');
+    art.append(make('h3', 'article__title', x.title), make('p', 'article__body', x.body), make('div', 'article__meta', TEXT.info.meta(x.updatedBy, x.updatedAt)));
+    if (data.canEdit) {
+      const actions = make('div', 'article__actions');
+      actions.append(button(TEXT.info.edit, 'info-edit', 'btn--sm', { id: x.id }), button(TEXT.info.del, 'info-delete', 'btn--danger btn--sm', { id: x.id }));
+      art.append(actions);
+    }
+    box.append(art);
+  });
 }
 
 /* ---------- Tab 2: Anpassung ---------- */
@@ -1062,8 +1772,21 @@ function renderRanks(data) {
   const head = make('div', 'editor-head');
   const name = input(rank.name, { id: 'rank-name', maxlength: data.limits.rankName, disabled: !rank.editable });
   head.append(field(TEXT.structure.rankName, name));
+  const salary = input(rank.salary || 0, { id: 'rank-salary', type: 'number', min: 0, max: data.limits.salary, step: 1, disabled: !rank.editable });
+  const salaryField = field(TEXT.structure.salary(MONEY.format(data.limits.salary), data.limits.salaryInterval), salary);
+  salaryField.classList.add('field--small');
+  head.append(salaryField);
   if (rank.editable) head.append(button(TEXT.structure.save, 'rank-save', 'btn--primary'));
   editor.append(head);
+  const tasks = make('textarea', 'textarea');
+  tasks.id = 'rank-tasks';
+  tasks.rows = 3;
+  tasks.maxLength = data.limits.rankTasks;
+  tasks.value = rank.tasks || '';
+  tasks.disabled = !rank.editable;
+  const tasksField = field(TEXT.structure.tasks, tasks);
+  tasksField.classList.add('editor-tasks');
+  editor.append(tasksField);
   if (rank.fixedPermissions) editor.append(make('div', 'note', TEXT.structure.fixed));
   else if (!rank.editable) editor.append(make('div', 'note', TEXT.structure.readonly));
   else if (data.permissions.some((p) => !p.grantable)) editor.append(make('div', 'note', TEXT.structure.notGrantable));
@@ -1142,6 +1865,7 @@ function renderExams(data) {
     wrap.append(row);
   });
   if (!data.exams.length) wrap.append(make('div', 'empty', TEXT.structure.noExams));
+  wrap.append(make('div', 'note', TEXT.structure.examHint));
   if (data.canEdit && data.exams.length < data.limits.exams) {
     const row = make('div', 'exam-row');
     row.dataset.id = '';
@@ -1190,7 +1914,10 @@ function statusOf(m) {
 
 function filteredMembers() {
   const q = state.search.trim().toLowerCase();
-  const list = state.members.members;
+  let list = state.members.members;
+  if (state.filter === 'duty') list = list.filter((m) => m.onDuty);
+  else if (state.filter === 'online') list = list.filter((m) => m.online);
+  else if (state.filter.startsWith('div:')) list = list.filter((m) => m.division === state.filter.slice(4));
   if (!q) return list;
   return list.filter((m) => m.name.toLowerCase().includes(q) || String(m.characterId) === q || (m.dn || '').toLowerCase().includes(q));
 }
@@ -1198,12 +1925,14 @@ function filteredMembers() {
 function renderLeitstelle() {
   const data = state.members;
   if (!data) { setHead(TEXT.tabs.leitstelle); el.view.replaceChildren(make('div', 'empty', TEXT.errors.default)); return; }
-  setHead(TEXT.tabs.leitstelle, TEXT.lst.count(data.members.length));
+  const list = filteredMembers();
+  setHead(TEXT.tabs.leitstelle, list.length === data.members.length ? TEXT.lst.count(data.members.length) : TEXT.lst.shown(list.length, data.members.length));
   el.view.className = 'view view--split';
 
   const scroll = make('div', 'scroll');
   const bar = make('div', 'toolbar');
-  const search = input(state.search, { type: 'search', placeholder: TEXT.lst.search, id: 'lst-search', 'aria-label': TEXT.lst.search });
+  const search = make('div', 'search');
+  search.append(icon('i-search'), input(state.search, { type: 'search', placeholder: TEXT.lst.search, id: 'lst-search', 'aria-label': TEXT.lst.search }));
   bar.append(search);
   if (data.edit.hire) {
     const hire = make('div', 'toolbar__right hire');
@@ -1211,16 +1940,27 @@ function renderLeitstelle() {
       button(TEXT.lst.hire, 'hire', 'btn--primary'));
     bar.append(hire);
   }
+  const filters = make('div', 'filters');
+  filters.setAttribute('role', 'group');
+  const divisionNames = [...new Set(data.members.map((m) => m.division).filter(Boolean))];
+  [['all', TEXT.lst.filters.all], ['duty', TEXT.lst.filters.duty], ['online', TEXT.lst.filters.online], ...divisionNames.map((n) => [`div:${n}`, n])]
+    .forEach(([key, label]) => {
+      const b = make('button', 'filter', label);
+      b.type = 'button';
+      b.dataset.action = 'filter';
+      b.dataset.filter = key;
+      b.setAttribute('aria-pressed', String(state.filter === key));
+      filters.append(b);
+    });
 
-  const table = make('table', 'table');
+  const table = make('table', 'table table--lst');
   const head = make('thead');
   const hr = make('tr');
   const c = TEXT.lst.cols;
-  [[c.name, ''], [c.id, 'r'], [c.dn, ''], [c.rank, ''], [c.strikes, 'r'], [c.vacation, 'r'], [c.departments, ''], [c.exams, '']]
+  [[c.name, ''], [c.id, 'r'], [c.dn, ''], [c.rank, ''], [c.division, ''], [c.strikes, 'r'], [c.vacation, 'r'], [c.hired, ''], [c.promoted, ''], [c.departments, ''], [c.exams, '']]
     .forEach(([t, cls]) => hr.append(make('th', cls, t)));
   head.append(hr);
   const body = make('tbody');
-  const list = filteredMembers();
   list.forEach((m) => {
     const tr = make('tr');
     tr.dataset.action = 'member-pick';
@@ -1235,20 +1975,23 @@ function renderLeitstelle() {
     who.append(dot, make('span', 'who__name', m.name));
     const tdWho = make('td');
     tdWho.append(who);
+    const tdDiv = make('td');
+    tdDiv.append(m.division ? make('span', 'chip chip--division', m.division) : make('span', 'muted', '-'));
     const deps = make('div', 'chips');
     m.departments.forEach((d) => deps.append(make('span', 'chip', d.rankName ? `${d.name} · ${d.rankName}` : d.name)));
     const exams = make('div', 'chips');
     m.exams.forEach((e) => exams.append(make('span', 'chip', e.name)));
-    const tdDeps = make('td');
+    const tdDeps = make('td', 'wrap');
     tdDeps.append(m.departments.length ? deps : make('span', 'muted', '-'));
-    const tdExams = make('td');
+    const tdExams = make('td', 'wrap');
     tdExams.append(m.exams.length ? exams : make('span', 'muted', '-'));
-    tr.append(tdWho, make('td', 'r num muted', m.characterId), make('td', 'num', m.dn || '-'), make('td', '', `${m.rank} · ${m.rankName}`),
-      make('td', `r num${m.strikes >= 3 ? ' strikes--hot' : ''}`, m.strikes), make('td', 'r num', m.vacationDays), tdDeps, tdExams);
+    tr.append(tdWho, make('td', 'r num muted', m.characterId), make('td', 'num', m.dn || '-'), make('td', '', `${m.rank} · ${m.rankName}`), tdDiv,
+      make('td', `r num${m.strikes >= 3 ? ' strikes--hot' : ''}`, m.strikes), make('td', 'r num', m.vacationDays),
+      make('td', 'num muted', m.hiredAt || '-'), make('td', 'num muted', m.lastPromotedAt || '-'), tdDeps, tdExams);
     body.append(tr);
   });
   table.append(head, body);
-  scroll.append(bar, table);
+  scroll.append(bar, filters, table);
   if (!list.length) scroll.append(make('div', 'empty', TEXT.lst.empty));
 
   const detail = make('aside', 'detail');
@@ -1264,7 +2007,11 @@ function renderMemberDetail(box) {
   const edit = data.edit;
   const can = (key) => edit[key] && m.above;
   const st = statusOf(m);
-  box.append(make('h2', 'detail__name', m.name), make('div', 'detail__meta num', `ID ${m.characterId} · ${m.dn || '-'} · ${st.label} · ${TEXT.lst.since(m.hiredAt)}`));
+  const head = make('div', 'detail__head');
+  const who = make('div');
+  who.append(make('h2', 'detail__name', m.name), make('div', 'detail__meta num', `ID ${m.characterId} · ${m.dn || '-'} · ${st.label}`));
+  head.append(make('div', 'avatar', initials(m.name)), who);
+  box.append(head, datesTile([[TEXT.lst.dates.hired, m.hiredAt || '-'], [TEXT.lst.dates.promoted, m.lastPromotedAt || TEXT.lst.never]]));
   if (!m.above && !readOnly() && Object.keys(edit).length) box.append(make('div', 'note', TEXT.lst.above));
 
   const general = make('div', 'detail__block');
@@ -1294,8 +2041,24 @@ function renderMemberDetail(box) {
   }
   box.append(general);
 
+  // Bonus: Leader und Vice, einmal pro Tag je Person
+  if (edit.bonus && !m.self) {
+    const bonus = make('div', 'detail__block');
+    const inner = make('div', 'bonus');
+    inner.append(make('h3', 'section-title', TEXT.lst.bonus.title));
+    if (m.bonusToday) inner.append(make('div', 'muted', TEXT.lst.bonus.today));
+    else {
+      const row = make('div', 'bonus__row');
+      row.append(input('', { type: 'number', min: 1, max: data.limits.bonus, step: 1, id: 'bonus-amount', placeholder: '500', 'aria-label': TEXT.lst.bonus.amount(data.limits.bonus) }),
+        input('', { id: 'bonus-reason', maxlength: data.limits.reason, placeholder: TEXT.lst.bonus.reason, 'aria-label': TEXT.lst.bonus.reason }));
+      inner.append(row, button(TEXT.lst.bonus.pay, 'bonus', 'btn--primary'), make('div', 'note', TEXT.lst.bonus.hint));
+    }
+    bonus.append(inner);
+    box.append(bonus);
+  }
+
   const deps = make('div', 'detail__block');
-  deps.append(make('h3', 'section-title', TEXT.lst.fields.departments.toUpperCase()));
+  deps.append(make('h3', 'section-title', TEXT.lst.fields.departments));
   const leads = new Set(data.leads);
   if (!data.departments.length) deps.append(make('div', 'muted', TEXT.lst.none));
   data.departments.forEach((d) => {
@@ -1310,7 +2073,7 @@ function renderMemberDetail(box) {
   box.append(deps);
 
   const exams = make('div', 'detail__block');
-  exams.append(make('h3', 'section-title', TEXT.lst.fields.exams.toUpperCase()));
+  exams.append(make('h3', 'section-title', TEXT.lst.fields.exams));
   if (!data.exams.length) exams.append(make('div', 'muted', TEXT.lst.none));
   data.exams.forEach((e) => {
     const passed = m.exams.find((x) => x.id === e.id);
@@ -1349,7 +2112,7 @@ function renderArchive() {
     const head = make('thead');
     const hr = make('tr');
     const c = TEXT.archive.cols;
-    [[c.name, ''], [c.id, 'r'], [c.last, ''], [c.left, ''], [c.kind, '']].forEach(([t, cls]) => hr.append(make('th', cls, t)));
+    [[c.name, ''], [c.id, 'r'], [c.last, ''], [c.hired, ''], [c.left, ''], [c.kind, '']].forEach(([t, cls]) => hr.append(make('th', cls, t)));
     head.append(hr);
     const body = make('tbody');
     entries.forEach((a) => {
@@ -1358,7 +2121,7 @@ function renderArchive() {
       tr.dataset.id = a.id;
       tr.tabIndex = 0;
       tr.setAttribute('aria-selected', String(a.id === state.archiveSel));
-      tr.append(make('td', 'who__name', a.name), make('td', 'r num muted', a.characterId), make('td', '', a.lastRank), make('td', 'num', a.leftAt), make('td', 'muted', TEXT.archive.kind[a.kind] || a.kind));
+      tr.append(make('td', 'who__name', a.name), make('td', 'r num muted', a.characterId), make('td', '', a.lastRank), make('td', 'num', a.hiredAt || '-'), make('td', 'num', a.leftAt), make('td', 'muted', TEXT.archive.kind[a.kind] || a.kind));
       body.append(tr);
     });
     table.append(head, body);
@@ -1373,13 +2136,17 @@ function renderArchive() {
   const a = entries.find((x) => x.id === state.archiveSel);
   if (!a) detail.append(make('div', 'empty', TEXT.archive.pick));
   else {
-    detail.append(make('h2', 'detail__name', a.name), make('div', 'detail__meta num', `ID ${a.characterId} · ${a.dn || '-'} · ${TEXT.archive.hired(a.hiredAt || '-')}`));
+    const head = make('div', 'detail__head');
+    const who = make('div');
+    who.append(make('h2', 'detail__name', a.name), make('div', 'detail__meta num', `ID ${a.characterId} · ${a.dn || '-'} · ${a.lastRank}`));
+    head.append(make('div', 'avatar', initials(a.name)), who);
+    detail.append(head, datesTile([[TEXT.archive.dates.hired, a.hiredAt || '-'], [TEXT.archive.dates.left, a.leftAt || '-']]));
     const left = make('div', 'detail__block');
-    left.append(make('div', '', TEXT.archive.left(a.leftAt, a.by)));
+    left.append(make('span', 'pill pill--mark', `${TEXT.archive.kind[a.kind] || a.kind}${a.by ? `, ${TEXT.archive.by(a.by)}` : ''}`));
     if (a.reason) left.append(field(TEXT.archive.reason, make('div', '', a.reason)));
     detail.append(left);
     const ranks = make('div', 'detail__block');
-    ranks.append(make('h3', 'section-title', TEXT.archive.ranks.toUpperCase()));
+    ranks.append(make('h3', 'section-title', TEXT.archive.ranks));
     const tl = make('ol', 'timeline');
     a.ranks.forEach((r) => {
       const li = make('li');
@@ -1392,7 +2159,7 @@ function renderArchive() {
     ranks.append(a.ranks.length ? tl : make('div', 'muted', TEXT.archive.none));
     detail.append(ranks);
     const exams = make('div', 'detail__block');
-    exams.append(make('h3', 'section-title', TEXT.archive.exams.toUpperCase()));
+    exams.append(make('h3', 'section-title', TEXT.archive.exams));
     const el2 = make('ol', 'timeline');
     a.exams.forEach((e) => {
       const li = make('li');
@@ -1434,6 +2201,20 @@ async function memberUpdate(field, value, extra = {}) {
   if (data) { state.members = data; toast(TEXT.saved); render(); }
 }
 
+// Nach Aenderungen an Mitgliedern: Uebersicht (Zahlen) und Divisionen neu holen, wenn man sie wieder oeffnet
+async function refreshOverview() {
+  state.divisions = null;
+  const ov = await call('faction_menu_open', { admin: state.overview?.me?.admin === true });
+  if (ov) state.overview = ov;
+}
+
+function divisionValues(scope) {
+  const name = scope.querySelector('[data-role="div-name"], #div-new-name').value.trim();
+  const from = Number(scope.querySelector('[data-role="div-from"], #div-new-from').value);
+  const to = Number(scope.querySelector('[data-role="div-to"], #div-new-to').value);
+  return { name, minRank: Math.min(from, to), maxRank: Math.max(from, to) };
+}
+
 const actions = {
   close: () => close(),
   tab: (t) => openTab(t.dataset.tab),
@@ -1454,8 +2235,11 @@ const actions = {
   'rank-save': async () => {
     const name = document.getElementById('rank-name').value;
     const permissions = [...el.view.querySelectorAll('input[name="perm"]:checked')].map((cb) => cb.value);
-    const data = await call('faction_rank_save', { rank: state.rankSel, name, permissions });
-    if (data) { state.ranks = data; state.members = null; toast(TEXT.saved); render(); }
+    const salary = Number(document.getElementById('rank-salary').value);
+    if (!Number.isInteger(salary) || salary < 0 || salary > state.ranks.limits.salary) { toast(TEXT.errors.invalid_salary, true); return; }
+    const tasks = document.getElementById('rank-tasks').value.trim();
+    const data = await call('faction_rank_save', { rank: state.rankSel, name, permissions, salary, tasks });
+    if (data) { state.ranks = data; state.members = null; state.info = null; state.divisions = null; toast(TEXT.saved); render(); }
   },
   'dept-save': async (t) => {
     const row = t.closest('.dept');
@@ -1480,6 +2264,62 @@ const actions = {
     if (data) { state.ranks = data; state.members = null; render(); }
   },
   'member-pick': (t) => { state.memberSel = Number(t.dataset.id); render(); },
+  filter: (t) => { state.filter = t.dataset.filter; render(); },
+  bonus: async () => {
+    const amount = Number(document.getElementById('bonus-amount').value);
+    if (!Number.isInteger(amount) || amount < 1 || amount > state.members.limits.bonus) { toast(TEXT.errors.invalid_amount, true); return; }
+    const reason = document.getElementById('bonus-reason').value.trim() || undefined;
+    const data = await call('faction_member_bonus', { characterId: state.memberSel, amount, reason });
+    if (data) {
+      state.members = data;
+      if (typeof state.overview.balance === 'number') state.overview.balance -= amount;
+      toast(TEXT.lst.bonus.done);
+      render();
+    }
+  },
+  'division-add': async () => {
+    const values = divisionValues(el.view.querySelector('.division-new'));
+    if (!values.name) { toast(TEXT.errors.invalid_name, true); return; }
+    const data = await call('faction_division_save', values);
+    if (data) { state.divisions = data; await refreshOverview(); state.divisions = data; state.members = null; toast(TEXT.saved); render(); }
+  },
+  'division-save': async (t) => {
+    const values = divisionValues(t.closest('.division__edit'));
+    const data = await call('faction_division_save', { id: Number(t.dataset.id), ...values });
+    if (data) { state.divisions = data; await refreshOverview(); state.divisions = data; state.members = null; toast(TEXT.saved); render(); }
+  },
+  'division-delete': async (t) => {
+    const data = await call('faction_division_delete', { id: Number(t.dataset.id) });
+    if (data) { state.divisions = data; await refreshOverview(); state.divisions = data; state.members = null; render(); }
+  },
+  'info-sub': (t) => { state.infoSub = t.dataset.sub; state.infoEdit = null; render(); },
+  'info-new': () => { state.infoEdit = 'new'; render(); el.view.querySelector('[data-role="info-title"]')?.focus(); },
+  'info-edit': (t) => { state.infoEdit = Number(t.dataset.id); render(); },
+  'info-cancel': () => { state.infoEdit = null; render(); },
+  'info-save': async (t) => {
+    const form = t.closest('.article-form');
+    const payload = {
+      id: Number(form.dataset.id) || undefined,
+      category: form.querySelector('[data-role="info-category"]').value,
+      title: form.querySelector('[data-role="info-title"]').value.trim(),
+      body: form.querySelector('[data-role="info-body"]').value.trim(),
+      sort: Number(form.querySelector('[data-role="info-sort"]').value) || 0,
+    };
+    if (!payload.title || !payload.body) { toast(TEXT.errors.invalid_input, true); return; }
+    const data = await call('faction_info_save', payload);
+    if (data) { state.info = data; state.infoEdit = null; state.infoSub = payload.category; toast(TEXT.saved); render(); }
+  },
+  'info-delete': async (t) => {
+    const data = await call('faction_info_delete', { id: Number(t.dataset.id) });
+    if (data) { state.info = data; state.infoEdit = null; render(); }
+  },
+  'exam-desc-save': async (t) => {
+    const art = t.closest('.article');
+    const exam = state.info.exams.find((e) => e.id === Number(t.dataset.id));
+    const description = art.querySelector('[data-role="exam-desc"]').value.trim();
+    const data = await call('faction_exam_save', { id: exam.id, name: exam.name, description });
+    if (data) { state.ranks = data; state.info = await call('faction_info'); toast(TEXT.saved); render(); }
+  },
   'member-save': async () => {
     const dn = el.view.querySelector('[data-role="member-dn"]');
     const vac = el.view.querySelector('[data-role="member-vacation"]');
@@ -1499,14 +2339,14 @@ const actions = {
       input: { label: TEXT.lst.reason, maxLength: state.members.limits.reason },
       onConfirm: async (reason) => {
         const data = await call('faction_member_fire', { characterId: m.characterId, reason });
-        if (data) { state.members = data; state.memberSel = null; state.archive = null; render(); }
+        if (data) { state.members = data; state.memberSel = null; state.archive = null; await refreshOverview(); render(); }
       } });
   },
   hire: async () => {
     const id = Number(document.getElementById('hire-id').value);
     if (!Number.isInteger(id) || id <= 0) { toast(TEXT.errors.invalid_input, true); return; }
     const data = await call('faction_hire', { characterId: id });
-    if (data) { state.members = data; state.memberSel = id; render(); }
+    if (data) { state.members = data; state.memberSel = id; await refreshOverview(); render(); }
   },
   'archive-pick': (t) => { state.archiveSel = Number(t.dataset.id); render(); },
   'archive-more': async () => {
@@ -1540,7 +2380,7 @@ document.addEventListener('change', async (event) => {
     if (data) { state.vehicles = data; toast(TEXT.saved); render(); }
   } else if (t.dataset.role === 'member-rank') {
     const data = await call('faction_member_rank', { characterId: state.memberSel, rank: Number(t.value) });
-    if (data) { state.members = data; toast(TEXT.saved); render(); }
+    if (data) { state.members = data; await refreshOverview(); toast(TEXT.saved); render(); }
   } else if (t.dataset.role === 'member-dept') {
     const m = state.members.members.find((x) => x.characterId === state.memberSel);
     const id = Number(t.dataset.dept);
@@ -1585,6 +2425,7 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     if (state.modal) closeModal();
     else if (state.memoEdit) { state.memoEdit = false; render(); }
+    else if (state.infoEdit !== null) { state.infoEdit = null; render(); }
     else close();
     return;
   }
@@ -1608,8 +2449,10 @@ function close() {
 
 Bridge.on('orgmenu_open', (data) => {
   applyColors(data.colors);
+  applyTheme(data.overview?.org?.theme);
   Object.assign(state, { open: true, overview: data.overview, tab: 'overview', ranks: null, rankSel: null, sub: 'ranks', vehicles: null,
-    members: null, memberSel: null, search: '', archive: null, archiveSel: null, archiveSearch: '', archivePage: 1, memoEdit: false });
+    members: null, memberSel: null, search: '', archive: null, archiveSel: null, archiveSearch: '', archivePage: 1, memoEdit: false,
+    divisions: null, info: null, infoSub: 'exams', infoEdit: null, filter: 'all' });
   el.panel.hidden = false;
   render();
   el.nav.querySelector('.nav__item')?.focus();
@@ -1632,6 +2475,8 @@ Bridge.on('orgmenu_close', () => {
       if (tab === 'leitstelle') { state.memberSel = 108; render(); }
       if (tab === 'archive') { state.archiveSel = 3; render(); }
       if (tab === 'structure') { state.rankSel = 24; render(); }
+      const sub = new URLSearchParams(location.search).get('sub');
+      if (tab === 'info' && sub) { state.infoSub = sub; render(); }
     }
   }
 })();

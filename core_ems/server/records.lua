@@ -89,7 +89,7 @@ local function recordOf(characterId)
             stages = def.cure == 'treatment' and def.stages - 1 or def.stages,
             cure = def.cure,
             series = entry.series,
-            needed = def.treatments,
+            needed = Diseases.Needed(def, entry.stage),
         }
     end
     local history = {}

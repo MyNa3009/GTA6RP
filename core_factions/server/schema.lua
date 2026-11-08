@@ -99,4 +99,32 @@ CREATE TABLE IF NOT EXISTS faction_archive (
     INDEX idx_character (character_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ]],
+    [[
+CREATE TABLE IF NOT EXISTS faction_divisions (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    faction     VARCHAR(32) NOT NULL,
+    name        VARCHAR(32) NOT NULL,
+    min_rank    TINYINT UNSIGNED NOT NULL,
+    max_rank    TINYINT UNSIGNED NOT NULL,
+    INDEX idx_faction (faction)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ]],
+    [[
+CREATE TABLE IF NOT EXISTS faction_info (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    faction     VARCHAR(32) NOT NULL,
+    category    VARCHAR(16) NOT NULL,
+    title       VARCHAR(60) NOT NULL,
+    body        TEXT NOT NULL,
+    sort        SMALLINT NOT NULL DEFAULT 0,
+    updated_by  VARCHAR(101) NULL,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_faction (faction, category, sort)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ]],
+    -- Spalten seit core_factions 1.1.0 (bestehende Installationen bekommen sie hier dazu)
+    [[ALTER TABLE faction_ranks ADD COLUMN IF NOT EXISTS salary INT UNSIGNED NOT NULL DEFAULT 0]],
+    [[ALTER TABLE faction_ranks ADD COLUMN IF NOT EXISTS tasks VARCHAR(300) NULL]],
+    [[ALTER TABLE faction_exams ADD COLUMN IF NOT EXISTS description TEXT NULL]],
+    [[ALTER TABLE faction_members ADD COLUMN IF NOT EXISTS last_bonus_at TIMESTAMP NULL]],
 }

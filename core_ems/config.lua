@@ -84,7 +84,8 @@ Config.Ems = {
 
     -- Krankheiten. Die Uhr laeuft nur, solange man online ist.
     --   cure = 'pill': Tablette senkt um ein Stadium (Stadium 1 = geheilt), Mediziner heilt sofort. Nie toedlich.
-    --   cure = 'treatment': nur der Mediziner, treatments Mal innerhalb von windowMinutes, mit mindestens gapMinutes
+    --   cure = 'treatment': nur der Mediziner. treatments: so viele Behandlungen pro Stadium ({ 3, 4, 5 } = Stadium 1
+    --   braucht 3, Stadium 2 braucht 4, Stadium 3 braucht 5), alle innerhalb von windowMinutes, mit mindestens gapMinutes
     --   Abstand. Ohne Behandlung wird es alle worsenMinutes schlimmer. Im letzten Stadium bricht man zusammen
     --   (bewusstlos). Hochholen vor Ort geht dann nicht mehr, nur das Krankenhaus (Admins mit /revive schon).
     --   Danach steht die Krankheit wieder auf afterCollapseStage und muss weiter behandelt werden.
@@ -129,7 +130,7 @@ Config.Ems = {
             needs = { nil, { hunger = -0.5, thirst = -1 }, { hunger = -1, thirst = -2 } },
         },
         hypertension = {
-            label = 'Bluthochdruck', cure = 'treatment', stages = 4, treatments = 3, windowMinutes = 60, gapMinutes = 10,
+            label = 'Bluthochdruck', cure = 'treatment', stages = 4, treatments = { 3, 4, 5 }, windowMinutes = 60, gapMinutes = 10,
             worsenMinutes = 60, afterCollapseStage = 2, price = 400,
             chance = { base = 0.0001, stress = 0.0006 },
             symptoms = {
@@ -139,7 +140,7 @@ Config.Ems = {
             },
         },
         dementia = {
-            label = 'Demenz', cure = 'treatment', stages = 4, treatments = 3, windowMinutes = 60, gapMinutes = 10,
+            label = 'Demenz', cure = 'treatment', stages = 4, treatments = { 3, 4, 5 }, windowMinutes = 60, gapMinutes = 10,
             worsenMinutes = 60, afterCollapseStage = 2, price = 500,
             chance = { base = 0.00003 },
             symptoms = {

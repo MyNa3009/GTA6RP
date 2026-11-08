@@ -1,9 +1,11 @@
--- Organisationsmenue (5 Tabs) und Aktionen am Ziel aus dem G-Menue. Jede Anfrage prueft Rechte und Werte neu.
---   Tab 1 Uebersicht: Leader, eigener Rang, Einstellungsdatum, Nachricht vom Leader, Kasse (mit Recht)
---   Tab 2 Anpassung: Rangnamen und Rechte, Abteilungen, Pruefungen (nur Vice Leader und Leader)
---   Tab 3 Fahrzeuge ab Rang (nur Vice Leader und Leader)
---   Tab 4 Leitstelle: alle Mitarbeiter, Bearbeiten nach Rechten aus Tab 2
---   Tab 5 Archiv: ehemalige Mitarbeiter
+-- Organisationsmenue und Aktionen am Ziel aus dem G-Menue. Jede Anfrage prueft Rechte und Werte neu.
+--   Uebersicht: Leader, eigener Rang, Daten, Nachricht vom Leader, Mitgliederzahlen, Divisionen, Kasse (mit Recht)
+--   Divisionen: Ranggruppen (Highcommand, Command ...) mit ihren Mitgliedern, anlegen nur Leader und Vice
+--   Erklaerungen: Pruefungen, Raenge mit Aufgaben und Rechten, Regeln, Ablaeufe. Bearbeiten nur Leader und Vice
+--   Anpassung: Rangnamen, Rechte, Gehalt und Aufgaben pro Rang, Abteilungen, Pruefungen (nur Vice Leader und Leader)
+--   Fahrzeuge ab Rang (nur Vice Leader und Leader)
+--   Leitstelle: alle Mitarbeiter, Bearbeiten nach Rechten, Bonus (Leader und Vice)
+--   Archiv: ehemalige Mitarbeiter
 -- Admins oeffnen mit /orgaview jede Organisation: factions.view nur lesen, factions.manage wie der Leader.
 
 if FactionsDisabled then
@@ -121,31 +123,61 @@ local function onDutyList(faction)
     return list
 end
 
+-- Divisionen mit Anzahl Mitglieder und wie viele davon im Dienst sind
+local function divisionSummary(faction, counts, duty)
+    local list = {}
+    for _, division in ipairs(Members.Divisions(faction)) do
+        local count, onDuty = 0, 0
+        for rank = division.minRank, division.maxRank do
+            count = count + (counts[rank] or 0)
+        end
+        for _, entry in ipairs(duty) do
+            if entry.rank >= division.minRank and entry.rank <= division.maxRank then
+                onDuty = onDuty + 1
+            end
+        end
+        list[#list + 1] = { id = division.id, name = division.name, minRank = division.minRank, maxRank = division.maxRank,
+            minRankName = Factions.RankName(faction, division.minRank), maxRankName = Factions.RankName(faction, division.maxRank),
+            count = count, onDuty = onDuty }
+    end
+    return list
+end
+
 local function overview(ctx)
     local row = settings(ctx.faction)
     local member = ctx.member
+    local counts, total = Members.CountByRank(ctx.faction)
+    local duty = onDutyList(ctx.faction)
+    local lastPromotion = member and Members.PromotedSinceHire(Members.LastPromotions(ctx.faction)[member.characterId], member.hiredAt) or nil
     return {
         org = { id = ctx.faction, label = ctx.org.label, short = ctx.org.short, ranks = ctx.org.ranks,
-            leaderRank = ctx.org.leaderRank, viceRank = ctx.org.viceRank },
+            leaderRank = ctx.org.leaderRank, viceRank = ctx.org.viceRank, logo = ctx.org.logo, theme = ctx.org.theme },
         me = {
             name = member and member.name or ctx.name,
             rank = member and member.rank or nil,
             rankName = member and Factions.RankName(ctx.faction, member.rank) or nil,
             dn = member and member.dn or nil,
             hiredAt = member and member.hiredAt or nil,
+            lastPromotedAt = lastPromotion,
+            salary = member and Factions.RankSalary(ctx.faction, member.rank) or nil,
             admin = ctx.admin or nil,
             readOnly = ctx.readOnly or nil,
         },
+        salaryInterval = CFG.Salary.IntervalMinutes,
         leader = Members.LeaderName(ctx.faction),
         message = row.message and { text = row.message, by = row.message_by, at = row.message_at } or nil,
         balance = can(ctx, 'cash.view') and tonumber(row.balance) or nil,
-        onDuty = onDutyList(ctx.faction),
+        onDuty = duty,
+        counts = { members = total, onDuty = #duty },
+        divisions = divisionSummary(ctx.faction, counts, duty),
         access = {
             structure = canStructure(ctx),
             leitstelle = can(ctx, 'leitstelle.view'),
             archive = can(ctx, 'archive.view'),
             message = can(ctx, 'message.edit'),
             cash = can(ctx, 'cash.manage'),
+            divisions = can(ctx, 'leitstelle.view'),
+            info = true,
         },
     }
 end
@@ -236,6 +268,8 @@ local function ranksPayload(ctx)
             rank = rank,
             name = Factions.RankName(ctx.faction, rank),
             permissions = permissions,
+            salary = Factions.RankSalary(ctx.faction, rank),
+            tasks = Factions.RankTasks(ctx.faction, rank),
             editable = canEditRank(ctx, rank),
             fixedPermissions = rank >= ctx.org.leaderRank or nil,
         }
@@ -251,7 +285,9 @@ local function ranksPayload(ctx)
         departments = Members.Departments(ctx.faction),
         exams = Members.Exams(ctx.faction),
         limits = { departments = CFG.MaxDepartments, departmentRanks = CFG.MaxDepartmentRanks, exams = CFG.MaxExams,
-            rankName = CFG.TextMax.rankName, department = CFG.TextMax.department, exam = CFG.TextMax.exam },
+            rankName = CFG.TextMax.rankName, department = CFG.TextMax.department, exam = CFG.TextMax.exam,
+            examDescription = CFG.TextMax.examDescription, rankTasks = CFG.TextMax.rankTasks,
+            salary = CFG.Salary.Max, salaryInterval = CFG.Salary.IntervalMinutes },
         canEdit = canStructure(ctx) and not ctx.readOnly,
     }
 end
@@ -295,11 +331,23 @@ withContext('faction_rank_save', function(source, ctx, data)
             stored[def.key] = current
         end
     end
-    if not Factions.SaveRank(ctx.faction, rank, name, stored) then
+    -- Gehalt (0 bis Salary.Max) und Aufgaben (Text fuer Erklaerungen). Fehlen sie, bleiben die bisherigen.
+    local salary = Factions.RankSalary(ctx.faction, rank)
+    if data.salary ~= nil then
+        salary = Factions.Int(data.salary, 0, CFG.Salary.Max)
+        if not salary then
+            return { ok = false, error = 'invalid_salary' }
+        end
+    end
+    local tasks = nil
+    if data.tasks ~= nil then
+        tasks = Factions.Text(data.tasks, CFG.TextMax.rankTasks) or false
+    end
+    if not Factions.SaveRank(ctx.faction, rank, name, stored, { salary = salary, tasks = tasks }) then
         return { ok = false, error = 'db_error' }
     end
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'rank_settings',
-        data = { faction = ctx.faction, rank = rank, name = name, permissions = stored } })
+        data = { faction = ctx.faction, rank = rank, name = name, permissions = stored, salary = salary, tasks = tasks or nil } })
     Factions.PushFaction(ctx.faction)
     return { ok = true, data = ranksPayload(ctx) }
 end)
@@ -396,16 +444,24 @@ withContext('faction_exam_save', function(source, ctx, data)
     if not name then
         return { ok = false, error = 'invalid_name' }
     end
+    -- Beschreibung fuer die Erklaerungen (optional). Fehlt sie in der Anfrage, bleibt die bisherige.
+    local description = Factions.Text(data.description, CFG.TextMax.examDescription)
     local id = tonumber(data.id)
     if id then
-        if DB.Update('UPDATE faction_exams SET name = ? WHERE id = ? AND faction = ? AND deleted_at IS NULL', { name, id, ctx.faction }) ~= 1 then
+        local exists = DB.Scalar('SELECT COUNT(*) FROM faction_exams WHERE id = ? AND faction = ? AND deleted_at IS NULL', { id, ctx.faction })
+        if (tonumber(exists) or 0) ~= 1 then
             return { ok = false, error = 'not_found' }
+        end
+        if data.description ~= nil then
+            DB.Update('UPDATE faction_exams SET name = ?, description = ? WHERE id = ? AND faction = ?', DB.Args(name, description, id, ctx.faction))
+        else
+            DB.Update('UPDATE faction_exams SET name = ? WHERE id = ? AND faction = ?', { name, id, ctx.faction })
         end
     else
         if #Members.Exams(ctx.faction) >= CFG.MaxExams then
             return { ok = false, error = 'limit_reached' }
         end
-        id = DB.Insert('INSERT INTO faction_exams (faction, name) VALUES (?, ?)', { ctx.faction, name })
+        id = DB.Insert('INSERT INTO faction_exams (faction, name, description) VALUES (?, ?, ?)', DB.Args(ctx.faction, name, description))
     end
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'exam_save', data = { faction = ctx.faction, id = id, name = name } })
     return { ok = true, data = ranksPayload(ctx) }
@@ -484,6 +540,9 @@ end)
 local function membersPayload(ctx)
     local departments = Members.ById(Members.Departments(ctx.faction))
     local exams = Members.ById(Members.Exams(ctx.faction, true))
+    local promotions = Members.LastPromotions(ctx.faction)
+    local divisions = Members.Divisions(ctx.faction)
+    local today = os.date('%Y-%m-%d')
     local rows = {}
     for _, member in ipairs(Members.List(ctx.faction)) do
         local deps = {}
@@ -510,6 +569,9 @@ local function membersPayload(ctx)
             departments = deps,
             exams = passed,
             hiredAt = member.hiredAt,
+            lastPromotedAt = Members.PromotedSinceHire(promotions[member.characterId], member.hiredAt),
+            bonusToday = member.lastBonusAt == today or nil,
+            division = (Members.DivisionOf(divisions, member.rank) or {}).name,
             online = source ~= nil or nil,
             onDuty = source and Factions.IsOnDuty(source, ctx.faction) or nil,
             above = above(ctx, member) or nil,
@@ -522,6 +584,7 @@ local function membersPayload(ctx)
             'members.vacation', 'members.departments', 'members.exams' }) do
             edit[key:sub(9)] = can(ctx, key) or nil
         end
+        edit.bonus = canStructure(ctx) or nil
     end
     local leads = {}
     for _, department in pairs(departments) do
@@ -542,7 +605,8 @@ local function membersPayload(ctx)
         exams = Members.Exams(ctx.faction),
         leads = leads,
         ranks = ranks,
-        limits = { strikes = CFG.MaxStrikes, vacation = CFG.MaxVacationDays, dn = CFG.TextMax.dn, reason = CFG.TextMax.reason },
+        limits = { strikes = CFG.MaxStrikes, vacation = CFG.MaxVacationDays, dn = CFG.TextMax.dn, reason = CFG.TextMax.reason,
+            bonus = CFG.Bonus.Max },
     }
 end
 
@@ -734,6 +798,240 @@ withContext('faction_hire', function(source, ctx, data)
         result.data = membersPayload(ctx)
     end
     return result
+end)
+
+-- Bonus aus der Kasse aufs Konto (auch offline). Nur Leader und Vice, hoechstens Bonus.Max, einmal pro Tag je Person.
+withContext('faction_member_bonus', function(source, ctx, data)
+    if ctx.readOnly or not canStructure(ctx) then
+        return { ok = false, error = 'no_permission' }
+    end
+    local member, err = targetMember(ctx, data.characterId)
+    if not member then
+        return { ok = false, error = err }
+    end
+    if member.characterId == ctx.characterId then
+        return { ok = false, error = 'no_permission' }
+    end
+    local amount = Factions.Int(data.amount, 1, CFG.Bonus.Max)
+    if not amount then
+        return { ok = false, error = 'invalid_amount' }
+    end
+    local reason = Factions.Text(data.reason, CFG.TextMax.reason)
+    -- Erst den Tag belegen, damit zwei gleichzeitige Anfragen nicht beide durchgehen
+    local before = DB.Scalar('SELECT last_bonus_at FROM faction_members WHERE character_id = ?', { member.characterId })
+    if DB.Update('UPDATE faction_members SET last_bonus_at = CURRENT_TIMESTAMP WHERE character_id = ? AND faction = ? AND (last_bonus_at IS NULL OR last_bonus_at < CURDATE())',
+        { member.characterId, ctx.faction }) ~= 1 then
+        return { ok = false, error = 'bonus_today' }
+    end
+    local function undo()
+        DB.Update('UPDATE faction_members SET last_bonus_at = ? WHERE character_id = ?', DB.Args(before, member.characterId))
+    end
+    if not Factions.Withdraw(ctx.faction, amount, { actorSource = source, reason = 'Bonus', data = { to = member.characterId, reason = reason } }) then
+        undo()
+        return { ok = false, error = 'not_enough_money' }
+    end
+    if not Factions.Core('AddBankByCharacter', member.characterId, amount, ('Bonus %s'):format(ctx.org.short),
+        { actorAccountId = ctx.accountId, data = { faction = ctx.faction, by = ctx.characterId, reason = reason } }) then
+        Factions.Deposit(ctx.faction, amount, { reason = 'Bonus fehlgeschlagen, zurück' })
+        undo()
+        return { ok = false, error = 'server_error' }
+    end
+    Factions.Log({ actor_account_id = ctx.accountId, character_id = member.characterId, action = 'bonus', amount = amount, reason = reason,
+        data = { faction = ctx.faction, by = ctx.characterId } })
+    Factions.Refresh(member.characterId)
+    local targetSource = Factions.SourceOf(member.characterId)
+    if targetSource then
+        Platform.Notify(targetSource, ('Bonus von %s: %s aufs Konto.%s'):format(ctx.org.short, Factions.Money(amount),
+            reason and (' ' .. reason) or ''), 'success')
+    end
+    return { ok = true, data = membersPayload(ctx) }
+end)
+
+------------------------------------------------------------------------
+-- Divisionen: Ranggruppen (Highcommand, Command, Supervisor ...) mit ihren Mitgliedern
+------------------------------------------------------------------------
+
+local function divisionsPayload(ctx)
+    local divisions = Members.Divisions(ctx.faction)
+    local groups, byId = {}, {}
+    for _, division in ipairs(divisions) do
+        local group = { id = division.id, name = division.name, minRank = division.minRank, maxRank = division.maxRank,
+            minRankName = Factions.RankName(ctx.faction, division.minRank), maxRankName = Factions.RankName(ctx.faction, division.maxRank),
+            members = {} }
+        groups[#groups + 1] = group
+        byId[division.id] = group
+    end
+    local rest = { id = 0, name = 'Ohne Division', members = {} }
+    for _, member in ipairs(Members.List(ctx.faction)) do
+        local division = Members.DivisionOf(divisions, member.rank)
+        local target = division and byId[division.id] or rest
+        local source = Factions.SourceOf(member.characterId)
+        target.members[#target.members + 1] = {
+            characterId = member.characterId, name = member.name, dn = member.dn, rank = member.rank,
+            rankName = Factions.RankName(ctx.faction, member.rank),
+            online = source ~= nil or nil, onDuty = source and Factions.IsOnDuty(source, ctx.faction) or nil,
+        }
+    end
+    if #rest.members > 0 then
+        groups[#groups + 1] = rest
+    end
+    local ranks = {}
+    for rank = ctx.org.ranks, 1, -1 do
+        ranks[#ranks + 1] = { rank = rank, name = Factions.RankName(ctx.faction, rank) }
+    end
+    return { divisions = groups, ranks = ranks, canEdit = canStructure(ctx) and not ctx.readOnly,
+        limits = { divisions = CFG.MaxDivisions, name = CFG.TextMax.division } }
+end
+
+withContext('faction_divisions', function(source, ctx)
+    if not can(ctx, 'leitstelle.view') then
+        return { ok = false, error = 'no_permission' }
+    end
+    return { ok = true, data = divisionsPayload(ctx) }
+end)
+
+withContext('faction_division_save', function(source, ctx, data)
+    if ctx.readOnly or not canStructure(ctx) then
+        return { ok = false, error = 'no_permission' }
+    end
+    local name = Factions.Text(data.name, CFG.TextMax.division)
+    local minRank = Factions.Int(data.minRank, 1, ctx.org.ranks)
+    local maxRank = Factions.Int(data.maxRank, 1, ctx.org.ranks)
+    if not name then
+        return { ok = false, error = 'invalid_name' }
+    end
+    if not minRank or not maxRank or minRank > maxRank then
+        return { ok = false, error = 'invalid_ranks' }
+    end
+    local id = tonumber(data.id)
+    local list = Members.Divisions(ctx.faction)
+    if id and not Members.ById(list)[id] then
+        return { ok = false, error = 'not_found' }
+    end
+    if not id and #list >= CFG.MaxDivisions then
+        return { ok = false, error = 'limit_reached' }
+    end
+    -- Rangbereiche duerfen sich nicht ueberschneiden, sonst waere jemand in zwei Divisionen
+    for _, other in ipairs(list) do
+        if other.id ~= id and minRank <= other.maxRank and maxRank >= other.minRank then
+            return { ok = false, error = 'division_overlap', data = { name = other.name } }
+        end
+    end
+    if id then
+        DB.Update('UPDATE faction_divisions SET name = ?, min_rank = ?, max_rank = ? WHERE id = ? AND faction = ?', { name, minRank, maxRank, id, ctx.faction })
+    else
+        id = DB.Insert('INSERT INTO faction_divisions (faction, name, min_rank, max_rank) VALUES (?, ?, ?, ?)', { ctx.faction, name, minRank, maxRank })
+    end
+    Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'division_save',
+        data = { faction = ctx.faction, id = id, name = name, minRank = minRank, maxRank = maxRank } })
+    return { ok = true, data = divisionsPayload(ctx) }
+end)
+
+withContext('faction_division_delete', function(source, ctx, data)
+    if ctx.readOnly or not canStructure(ctx) then
+        return { ok = false, error = 'no_permission' }
+    end
+    local id = tonumber(data.id)
+    if not id or DB.Update('DELETE FROM faction_divisions WHERE id = ? AND faction = ?', { id, ctx.faction }) ~= 1 then
+        return { ok = false, error = 'not_found' }
+    end
+    Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'division_delete', data = { faction = ctx.faction, id = id } })
+    return { ok = true, data = divisionsPayload(ctx) }
+end)
+
+------------------------------------------------------------------------
+-- Erklaerungen: Pruefungen, Raenge mit Aufgaben und Rechten, Regeln und Ablaeufe der Leitung
+------------------------------------------------------------------------
+
+local CATEGORY_KEYS = {}
+for _, category in ipairs(CFG.InfoCategories) do
+    CATEGORY_KEYS[category.key] = true
+end
+
+local function infoPayload(ctx)
+    local labels = {}
+    for _, def in ipairs(Factions.PermissionsOf(ctx.faction)) do
+        labels[def.key] = def.label
+    end
+    -- Raenge mit Aufgaben, Gehalt und Rechten (nur Raenge, bei denen etwas steht oder ein Recht dazukommt)
+    local ranks = {}
+    local previous = {}
+    for rank = 1, ctx.org.ranks do
+        local current = Factions.RankPermissions(ctx.faction, rank)
+        local new = {}
+        for key in pairs(current) do
+            if not previous[key] then
+                new[#new + 1] = labels[key] or key
+            end
+        end
+        table.sort(new)
+        local tasks = Factions.RankTasks(ctx.faction, rank)
+        local salary = Factions.RankSalary(ctx.faction, rank)
+        ranks[#ranks + 1] = { rank = rank, name = Factions.RankName(ctx.faction, rank), tasks = tasks, salary = salary,
+            newPermissions = new }
+        previous = current
+    end
+    local exams = {}
+    for _, exam in ipairs(Members.Exams(ctx.faction)) do
+        exams[#exams + 1] = { id = exam.id, name = exam.name, description = exam.description }
+    end
+    return {
+        categories = CFG.InfoCategories,
+        sections = Members.Info(ctx.faction),
+        exams = exams,
+        ranks = ranks,
+        divisions = Members.Divisions(ctx.faction),
+        salaryInterval = CFG.Salary.IntervalMinutes,
+        canEdit = canStructure(ctx) and not ctx.readOnly,
+        limits = { sections = CFG.MaxInfoSections, title = CFG.TextMax.infoTitle, body = CFG.TextMax.infoBody,
+            examDescription = CFG.TextMax.examDescription, rankTasks = CFG.TextMax.rankTasks },
+    }
+end
+
+withContext('faction_info', function(source, ctx)
+    return { ok = true, data = infoPayload(ctx) }
+end)
+
+withContext('faction_info_save', function(source, ctx, data)
+    if ctx.readOnly or not canStructure(ctx) then
+        return { ok = false, error = 'no_permission' }
+    end
+    local category = CATEGORY_KEYS[data.category] and data.category or nil
+    local title = Factions.Text(data.title, CFG.TextMax.infoTitle)
+    local body = Factions.Text(data.body, CFG.TextMax.infoBody)
+    local sort = Factions.Int(data.sort or 0, -999, 999) or 0
+    if not category or not title or not body then
+        return { ok = false, error = 'invalid_input' }
+    end
+    local id = tonumber(data.id)
+    if id then
+        if DB.Update('UPDATE faction_info SET category = ?, title = ?, body = ?, sort = ?, updated_by = ? WHERE id = ? AND faction = ?',
+            { category, title, body, sort, ctx.name, id, ctx.faction }) ~= 1 then
+            return { ok = false, error = 'not_found' }
+        end
+    else
+        local count = tonumber(DB.Scalar('SELECT COUNT(*) FROM faction_info WHERE faction = ?', { ctx.faction })) or 0
+        if count >= CFG.MaxInfoSections then
+            return { ok = false, error = 'limit_reached' }
+        end
+        id = DB.Insert('INSERT INTO faction_info (faction, category, title, body, sort, updated_by) VALUES (?, ?, ?, ?, ?, ?)',
+            { ctx.faction, category, title, body, sort, ctx.name })
+    end
+    Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'info_save',
+        data = { faction = ctx.faction, id = id, category = category, title = title } })
+    return { ok = true, data = infoPayload(ctx) }
+end)
+
+withContext('faction_info_delete', function(source, ctx, data)
+    if ctx.readOnly or not canStructure(ctx) then
+        return { ok = false, error = 'no_permission' }
+    end
+    local id = tonumber(data.id)
+    if not id or DB.Update('DELETE FROM faction_info WHERE id = ? AND faction = ?', { id, ctx.faction }) ~= 1 then
+        return { ok = false, error = 'not_found' }
+    end
+    Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'info_delete', data = { faction = ctx.faction, id = id } })
+    return { ok = true, data = infoPayload(ctx) }
 end)
 
 ------------------------------------------------------------------------

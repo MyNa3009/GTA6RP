@@ -4,7 +4,8 @@
 -- Pruefungen), liegt in der Datenbank. Die Werte hier sind nur der Anfang.
 
 Config.Factions = {
-    -- Farben des Organisationsmenues als 'R G B' (aus dem Server-Logo). Fehlt ein Wert, gilt Config.UI.Colors der Core.
+    -- Grundfarben des Organisationsmenues als 'R G B'. Jede Organisation kann sie mit eigenen Farben (theme)
+    -- ueberschreiben, siehe unten. Fehlt ein Wert, gilt Config.UI.Colors der Core.
     Colors = {
         base   = '24 15 36',     -- Hintergrund (Aubergine)
         ink    = '253 241 233',  -- Text (Creme)
@@ -15,7 +16,22 @@ Config.Factions = {
     -- Organisationsmenue auch per Befehl (sonst G-Menue, Organisation)
     MenuCommand = 'orga',
 
+    -- Gehalt: Leader und Vice Leader legen es pro Rang fest (Organisationsmenue, Anpassung). Ausgezahlt wird
+    -- nach je IntervalMinutes im Dienst, aus der Kasse der Organisation aufs Konto. Ist die Kasse leer, gibt es nichts.
+    Salary = {
+        Max = 1000,
+        IntervalMinutes = 60,
+    },
+
+    -- Bonus: Leader und Vice Leader zahlen einer Person aus der Kasse etwas extra aufs Konto (Leitstelle),
+    -- hoechstens Max pro Zahlung und einmal pro Kalendertag je Person.
+    Bonus = {
+        Max = 1000,
+    },
+
     -- Grenzen
+    MaxDivisions = 5,            -- Divisionen pro Organisation (Ranggruppen wie Command, Supervisor)
+    MaxInfoSections = 30,        -- Abschnitte unter Erklaerungen
     MaxDepartments = 12,         -- Abteilungen pro Organisation
     MaxDepartmentRanks = 5,      -- interne Raenge pro Abteilung
     MaxExams = 30,               -- Pruefungen pro Organisation
@@ -23,7 +39,15 @@ Config.Factions = {
     MaxVacationDays = 365,
     ArchivePageSize = 40,
     MaxVehiclesPerMember = 1,    -- gleichzeitig ausgeparkte Dienstfahrzeuge pro Person
-    TextMax = { rankName = 32, department = 32, exam = 40, message = 600, reason = 120, dn = 12 },
+    TextMax = { rankName = 32, department = 32, exam = 40, message = 600, reason = 120, dn = 12,
+        division = 32, infoTitle = 60, infoBody = 3000, examDescription = 1500, rankTasks = 300 },
+
+    -- Bereiche unter Erklaerungen (Reihenfolge wie hier). Pruefungen und Raenge mit Rechten kommen automatisch dazu.
+    InfoCategories = {
+        { key = 'rules',   label = 'Regeln' },
+        { key = 'process', label = 'Abläufe' },
+        { key = 'info',    label = 'Wichtig' },
+    },
 
     -- Abstand zur Umkleide und Garage, den der Server prueft (Meter)
     PlaceDistance = 3.0,
@@ -52,6 +76,16 @@ Config.Factions = {
         ems = {
             label = 'Emergency Medical Service',
             short = 'EMS',               -- auch Kuerzel auf dem Dienstausweis
+            -- Logo im Organisationsmenue (Datei in html/logos/) und Farben der Organisation als 'R G B'.
+            -- accent: Auswahl, Hauptaktion, Kopf. mark: zweite Farbe (Hervorhebungen, Entlassen, Strikes).
+            -- base: Hintergrund (dunkel, leicht in Richtung der Organisation getoent). ink: Schrift.
+            logo = 'logos/ems.png',
+            theme = {
+                base   = '9 14 28',
+                ink    = '240 244 250',
+                accent = '37 94 190',    -- Blau aus dem Stern
+                mark   = '237 28 36',    -- Rot aus dem Ring
+            },
             ranks = 30,
             leaderRank = 30,             -- Leader: hat immer alle Rechte, setzt nur ein Admin (/setorga)
             viceRank = 29,               -- Vice Leader: Raenge, Rechte, Fahrzeuge, Abteilungen wie der Leader

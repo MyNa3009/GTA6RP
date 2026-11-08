@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_factions'
 description 'Organisationen fuer die eigene Core: Raenge, Rechte, Abteilungen, Leitstelle, Archiv, Kasse, Dienst'
-version '1.0.0'
+version '1.1.0'
 
 dependencies {
     'core',
@@ -47,4 +47,5 @@ ui_page 'html/orgmenu.html'
 
 files {
     'html/orgmenu.html',
+    'html/logos/*.png',
 }

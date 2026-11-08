@@ -100,6 +100,13 @@ Network.On('core_ems:anim', function(data)
     end)
 end)
 
+-- Anzahl eigener Verbandskaesten (nur Anzeige: "Hochholen" im G-Menue). Kommt vom Server, solange jemand
+-- in der Naehe bewusstlos ist. Ob wirklich einer da ist, prueft der Server beim Ausfuehren.
+EmsClient.medkits = 0
+Network.On('core_ems:medkits', function(count)
+    EmsClient.medkits = tonumber(count) or 0
+end)
+
 Network.On('core_ems:diseases', function(list)
     EmsClient.diseases = type(list) == 'table' and list or {}
     Platform.Emit('core_ems:diseasesChanged', EmsClient.diseases)

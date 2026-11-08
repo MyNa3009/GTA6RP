@@ -95,12 +95,68 @@ function Members.Departments(faction, includeDeleted)
 end
 
 function Members.Exams(faction, includeDeleted)
-    local rows = DB.Query('SELECT id, name, deleted_at IS NOT NULL AS deleted FROM faction_exams WHERE faction = ? ORDER BY id', { faction }) or {}
+    local rows = DB.Query('SELECT id, name, description, deleted_at IS NOT NULL AS deleted FROM faction_exams WHERE faction = ? ORDER BY id', { faction }) or {}
     local list = {}
     for _, row in ipairs(rows) do
         if includeDeleted or row.deleted == 0 or row.deleted == false then
-            list[#list + 1] = { id = row.id, name = row.name }
+            list[#list + 1] = { id = row.id, name = row.name, description = row.description }
         end
+    end
+    return list
+end
+
+-- Divisionen (Ranggruppen), hoechste zuerst: { id, name, minRank, maxRank }
+function Members.Divisions(faction)
+    local list = {}
+    for _, row in ipairs(DB.Query('SELECT id, name, min_rank, max_rank FROM faction_divisions WHERE faction = ? ORDER BY max_rank DESC, id', { faction }) or {}) do
+        list[#list + 1] = { id = row.id, name = row.name, minRank = row.min_rank, maxRank = row.max_rank }
+    end
+    return list
+end
+
+-- Division eines Rangs oder nil
+function Members.DivisionOf(divisions, rank)
+    for _, division in ipairs(divisions) do
+        if rank >= division.minRank and rank <= division.maxRank then
+            return division
+        end
+    end
+    return nil
+end
+
+-- Mitglieder pro Rang: { [rang] = anzahl } und die Gesamtzahl
+function Members.CountByRank(faction)
+    local counts, total = {}, 0
+    for _, row in ipairs(DB.Query('SELECT `rank`, COUNT(*) AS n FROM faction_members WHERE faction = ? GROUP BY `rank`', { faction }) or {}) do
+        counts[row.rank] = tonumber(row.n) or 0
+        total = total + (tonumber(row.n) or 0)
+    end
+    return counts, total
+end
+
+-- Letzter Uprank je Mitglied: { [permanente ID] = 'JJJJ-MM-TT' }
+function Members.LastPromotions(faction)
+    local map = {}
+    for _, row in ipairs(DB.Query("SELECT character_id, DATE_FORMAT(MAX(created_at), '%Y-%m-%d') AS at FROM faction_history WHERE faction = ? AND action = 'rank' AND rank_to > rank_from GROUP BY character_id", { faction }) or {}) do
+        map[row.character_id] = row.at
+    end
+    return map
+end
+
+-- Nur Upranks seit der aktuellen Einstellung zaehlen (nicht aus einer frueheren Mitgliedschaft)
+function Members.PromotedSinceHire(promotedAt, hiredAt)
+    if not promotedAt or (hiredAt and promotedAt < hiredAt) then
+        return nil
+    end
+    return promotedAt
+end
+
+-- Erklaerungen: Abschnitte der Leitung { id, category, title, body, sort, updatedBy, updatedAt }
+function Members.Info(faction)
+    local list = {}
+    for _, row in ipairs(DB.Query("SELECT id, category, title, body, sort, updated_by, DATE_FORMAT(updated_at, '%Y-%m-%d') AS updated_at FROM faction_info WHERE faction = ? ORDER BY category, sort, id", { faction }) or {}) do
+        list[#list + 1] = { id = row.id, category = row.category, title = row.title, body = row.body, sort = row.sort,
+            updatedBy = row.updated_by, updatedAt = row.updated_at }
     end
     return list
 end

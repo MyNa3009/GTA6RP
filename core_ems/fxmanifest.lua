@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_ems'
 description 'Rettungsdienst fuer die eigene Core: Hochholen, Verbandskasten, Verkauf, Behandlung, Krankheiten, Versicherung, Medizinische Datenbank'
-version '1.2.1'
+version '1.3.0'
 
 dependencies {
     'core',

@@ -1,6 +1,12 @@
-# core_ems 1.2.1
+# core_ems 1.3.0
 
 Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskasten, Verkauf von Verbänden, Verbandskästen und Tabletten, Untersuchen und Behandeln, Krankheiten mit Stadien, Krankenversicherung und die Medizinische Datenbank. Ränge, Rechte, Dienst und Kasse kommen aus `core_factions` (Organisation `ems`).
+
+## Update von 1.2.1
+
+1. Den Ordner `core_ems` ersetzen und neu starten. Keine Migration.
+2. Bluthochdruck und Demenz brauchen weniger Behandlungen: im Stadium 1 drei, im Stadium 2 vier, im Stadium 3 fünf (vorher immer drei pro Stadium, also bis zu neun). Einstellbar in `config.lua` unter `treatments = { 3, 4, 5 }`.
+3. "Person, Hochholen" (für alle, die keine Mediziner sind) erscheint im G-Menü nur noch, wenn man einen Verbandskasten dabeihat. Die Anzahl schickt der Server alle 2 Sekunden, solange jemand in 8 m Umkreis bewusstlos ist. Beim Ausführen prüft er sie noch einmal.
 
 ## Update von 1.2.0
 
@@ -26,7 +32,7 @@ Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskaste
 
 ## Installation
 
-1. Braucht Core 1.10.0, `core_lib`, `core_factions` und `core_inventory` 1.4.0 (Tabletten und Verbandskasten als Items).
+1. Braucht Core 1.10.3, `core_lib`, `core_factions` und `core_inventory` 1.4.0 (Tabletten und Verbandskasten als Items).
 2. Ordner `core_ems` nach `resources/[core]/` kopieren. Die Tabellen legt das Script beim Start selbst an, das SQL steht zusätzlich in `database/ems.sql`.
 3. In der `server.cfg` nach `core_factions`: `ensure core_ems`
 
@@ -44,7 +50,7 @@ Alles geht nur im Dienst (Umkleide am Krankenhaus, `E`) und nur mit dem passende
 | Ausweis verlangen | Die Person entscheidet mit Y oder N, ob sie ihren Personalausweis zeigt |
 | Medizinische Datenbank | Jede Person suchen (Name oder ID), Krankenakte, Versicherung, Verlauf, eigene Einträge |
 
-**Alle anderen** holen eine bewusstlose Person über das G-Menü (Person, Hochholen) mit einem Verbandskasten hoch, den sie beim Rettungsdienst gekauft haben. Skillcheck mit `Z`, der Kasten wird nur bei Erfolg verbraucht. Selbst benutzt (Inventar) heilt er ein Stück.
+**Alle anderen** holen eine bewusstlose Person über das G-Menü (Person, Hochholen) mit einem Verbandskasten hoch. Der Eintrag erscheint nur, wenn man einen dabeihat. Den Kasten kauft man beim Rettungsdienst. Skillcheck mit `Z`, der Kasten wird nur bei Erfolg verbraucht. Selbst benutzt (Inventar) heilt er ein Stück.
 
 Die Person stimmt jedem Kauf und jeder Behandlung zu (Y/N). Sie zahlt bar, sonst vom Konto. Alles Geld geht in die Kasse des EMS, nicht an den Mediziner. Preise stehen fest in `config.lua`, ein Preis vom Client wird nie angenommen.
 
@@ -59,11 +65,11 @@ Alle Krankheiten stehen in der Datenbank (`ems_diseases`), auch geheilte (für d
 | Erkältung | Tablette (ein Stadium pro Tablette) oder Mediziner | 3 | Husten, Niesen, verschwommene Sicht, kein Rennen |
 | Kopfschmerzen | Tablette oder Mediziner | 3 | Kopfschmerz, Wackeln, kurze Blackouts (1 s) |
 | Magen-Darm | Tablette oder Mediziner | 3 | Übelkeit, Erbrechen, Stolpern, wackeliger Gang, mehr Hunger und Durst |
-| Bluthochdruck | nur Mediziner, 3 Behandlungen | 3 + Endstadium | Wackeln, Blackouts bis 2,5 s, Stolpern, kein Rennen |
-| Demenz | nur Mediziner, 3 Behandlungen | 3 + Endstadium | Vergesslichkeit, Minimap weg, Blackouts, verwirrter Gang |
+| Bluthochdruck | nur Mediziner, 3 bis 5 Behandlungen | 3 + Endstadium | Wackeln, Blackouts bis 2,5 s, Stolpern, kein Rennen |
+| Demenz | nur Mediziner, 3 bis 5 Behandlungen | 3 + Endstadium | Vergesslichkeit, Minimap weg, Blackouts, verwirrter Gang |
 
 - **Tabletten:** einfach im Inventar benutzen. Eine zweite innerhalb von 5 Minuten bringt nichts.
-- **Bluthochdruck und Demenz:** drei Behandlungen innerhalb einer Stunde, mindestens 10 Minuten Abstand. Klappt das nicht, verfällt die Serie. Ohne Behandlung wird es jede Stunde schlimmer.
+- **Bluthochdruck und Demenz:** im Stadium 1 drei, im Stadium 2 vier, im Stadium 3 fünf Behandlungen, alle innerhalb einer Stunde, mindestens 10 Minuten Abstand. Klappt das nicht, verfällt die Serie. Ohne Behandlung wird es jede Stunde schlimmer.
 - **Endstadium:** Man bricht zusammen. Hochholen vor Ort geht nicht, nur das Krankenhaus (Admins mit `/revive` schon). Danach steht die Krankheit wieder auf Stadium 2 und muss weiter behandelt werden.
 - **Krank werden:** kleine Chance pro Minute online. Dazu: nass werden (Erkältung), Stress wie Rennen, Zielen, Schießen (Kopfschmerzen, Bluthochdruck), Essen (Magen-Darm).
 - **Ansteckung:** Erkältung (3 m) und Magen-Darm (2 m) springen auf Leute in der Nähe über, je höher das Stadium, desto eher. Die Positionen prüft der Server.

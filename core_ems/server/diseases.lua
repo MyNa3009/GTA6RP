@@ -231,6 +231,15 @@ function Diseases.Pill(characterId, item)
     return better(characterId, entry, nil, 'Tablette')
 end
 
+-- Wie viele Behandlungen braucht dieses Stadium? treatments ist eine Zahl oder eine Liste pro Stadium.
+function Diseases.Needed(def, stage)
+    local value = def.treatments
+    if type(value) == 'table' then
+        return value[math.min(stage, #value)] or value[#value] or 1
+    end
+    return tonumber(value) or 1
+end
+
 -- Behandlung durch einen Mediziner. Gibt true und { cured, series, needed } oder false und einen Fehlercode zurueck.
 function Diseases.Treat(characterId, disease, medicName)
     local entry = find(characterId, disease)
@@ -253,14 +262,15 @@ function Diseases.Treat(characterId, disease, medicName)
     entry.gapLeft = def.gapMinutes * SECONDS_PER_MINUTE
     -- Jede Behandlung haelt die Krankheit auf, bis zur naechsten Verschlechterung ist wieder volle Zeit
     entry.worsenIn = def.worsenMinutes * SECONDS_PER_MINUTE
-    Ems.Record(characterId, 'treatment', ('%s behandelt, %d von %d'):format(def.label, entry.series, def.treatments), medicName)
-    if entry.series >= def.treatments then
-        Diseases.Cure(characterId, disease, medicName, ('%d Behandlungen'):format(def.treatments))
+    local needed = Diseases.Needed(def, entry.stage)
+    Ems.Record(characterId, 'treatment', ('%s behandelt, %d von %d'):format(def.label, entry.series, needed), medicName)
+    if entry.series >= needed then
+        Diseases.Cure(characterId, disease, medicName, ('%d Behandlungen'):format(needed))
         return true, { cured = true }
     end
     save(entry)
     Diseases.Push(characterId)
-    return true, { cured = false, series = entry.series, needed = def.treatments }
+    return true, { cured = false, series = entry.series, needed = needed }
 end
 
 ------------------------------------------------------------------------

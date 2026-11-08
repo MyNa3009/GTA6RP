@@ -120,7 +120,11 @@ kits = lambda src: env.to_py(env.inv.eval(f"Platform.CallExport('core_inventory'
 env.positions[4] = list(HOSPITAL)
 env.call(2, 'death_report', {})
 check('Tom ohne Verbandskasten: no_medkit', E(4, 'ems_medkit_revive', {'serverId': 2})['error'] == 'no_medkit')
+env.tick(2100)
+check('Tom in der Nähe bekommt seine Anzahl: 0 Verbandskästen', env.events_for(4, 'core_ems:medkits')[-1:] == [0], env.events_for(4, 'core_ems:medkits'))
 env.to_py(env.inv.eval(f"Platform.CallExport('core_inventory', 'AddItem', {ids[4]}, 'medkit', 1)"))
+env.tick(2100)
+check('nach dem Kauf: 1 Verbandskasten, Eintrag erscheint', env.events_for(4, 'core_ems:medkits')[-1] == 1)
 r = E(4, 'ems_medkit_revive', {'serverId': 2})
 answer_minigame(4, success=False)
 check('Minigame verloren: Paul bewusstlos, Kasten noch da', r['ok'] and is_dead(2)[0] is True and kits(4) == 1)
@@ -128,6 +132,7 @@ E(4, 'ems_medkit_revive', {'serverId': 2})
 answer_minigame(4, success=True)
 check('auch mit Verbandskasten: Herzdruckmassage', env.events_for(4, 'core_ems:anim')[-2:] == [{'kind': 'revive', 'target': 2}, {}])
 check('geschafft: Paul wach, Kasten verbraucht', is_dead(2)[0] is False and kits(4) == 0, (is_dead(2), kits(4)))
+check('nach dem Hochholen: Anzahl 0 an Tom', env.events_for(4, 'core_ems:medkits')[-1] == 0)
 rec = env.sql("SELECT actor_name, text FROM ems_records WHERE character_id = %s AND kind = 'revive' ORDER BY id DESC LIMIT 1", (ids[2],))
 check('Akte: mit Verbandskasten hochgeholt von Tom', rec and rec[0]['actor_name'] == 'Tom Becker' and 'Verbandskasten' in rec[0]['text'], rec)
 check('wache Person: not_dead', E(4, 'ems_medkit_revive', {'serverId': 2})['error'] == 'not_dead')
@@ -183,7 +188,7 @@ r = E(1, 'ems_treat', {'serverId': 2, 'disease': 'hypertension'})
 check('Behandeln ohne Untersuchung: not_diagnosed', r['error'] == 'not_diagnosed')
 d = E(1, 'ems_diagnose', {'serverId': 2})['data']
 h = d['diseases'][0]
-check('Befund: Bluthochdruck 2 von 3, Behandlung 0 von 3, versichert 200 $ statt 400 $', h['stage'] == 2 and h['stages'] == 3 and h['series'] == 0 and h['needed'] == 3 and h['price'] == 200 and d['insured'], d)
+check('Befund: Bluthochdruck 2 von 3, Stadium 2 braucht 4 Behandlungen, versichert 200 $ statt 400 $', h['stage'] == 2 and h['stages'] == 3 and h['series'] == 0 and h['needed'] == 4 and h['price'] == 200 and d['insured'], d)
 check('zu schnell (Balken nicht gelaufen): too_fast', E(1, 'ems_treat', {'serverId': 2, 'disease': 'hypertension'})['error'] == 'too_fast')
 before_bal = balance()
 env.tick(8100)
@@ -194,13 +199,15 @@ env.tick(8100)
 r = E(1, 'ems_treat', {'serverId': 2, 'disease': 'hypertension'})
 check('zweite Behandlung direkt danach: too_soon', r['error'] == 'too_soon', r)
 disease_tick(2, 600)
-for n in (2, 3):
+for n in (2, 3, 4):
     E(1, 'ems_diagnose', {'serverId': 2})
     env.tick(8100)
     r = E(1, 'ems_treat', {'serverId': 2, 'disease': 'hypertension'})
-    if n == 2:
+    if n == 3:
+        check('nach 3 Behandlungen im Stadium 2 noch nicht geheilt (3 von 4)', r['ok'] and r['data']['cured'] is False and r['data']['series'] == 3, r)
+    if n < 4:
         disease_tick(2, 600)
-check('dritte Behandlung in der Stunde: geheilt', r['ok'] and r['data']['cured'] is True and diseases(ids[2]) == {}, (r, diseases(ids[2])))
+check('vierte Behandlung in der Stunde: geheilt', r['ok'] and r['data']['cured'] is True and diseases(ids[2]) == {}, (r, diseases(ids[2])))
 
 print('Serie verfällt nach einer Stunde')
 env.command(0, f'krankheit {ids[3]} dementia 1')

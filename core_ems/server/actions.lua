@@ -163,6 +163,45 @@ local function medkitCount(source)
     return tonumber(Ems.Inventory('GetItemCount', Ems.CharacterOf(source), 'medkit')) or 0
 end
 
+-- "Hochholen" im G-Menue nur zeigen, wenn man einen Verbandskasten hat. Liegt jemand bewusstlos, bekommen alle in
+-- der Naehe alle MEDKIT_PUSH_MS ihre Anzahl. Bewusstlose sind selten, darum kostet das kaum etwas.
+local MEDKIT_PUSH_MS = 2000
+local MEDKIT_PUSH_DISTANCE = 8.0
+local medkitSent = {}   -- [source] = zuletzt geschickte Anzahl
+
+local function pushMedkits(source)
+    local count = medkitCount(source)
+    if medkitSent[source] ~= count then
+        medkitSent[source] = count
+        Network.SendToClient(source, 'core_ems:medkits', count)
+    end
+end
+
+Platform.SetInterval(MEDKIT_PUSH_MS, function()
+    local active = Ems.Active()
+    local down = {}
+    for source in pairs(active) do
+        if Ems.Core('IsDead', source) then
+            down[#down + 1] = source
+        end
+    end
+    if #down == 0 then
+        return
+    end
+    for source in pairs(active) do
+        for _, other in ipairs(down) do
+            if other ~= source and Ems.Near(source, other, MEDKIT_PUSH_DISTANCE) then
+                pushMedkits(source)
+                break
+            end
+        end
+    end
+end)
+
+Platform.OnEvent('core:characterUnloaded', function(source)
+    medkitSent[tonumber(source) or source] = nil
+end)
+
 -- Mit einem Verbandskasten eine bewusstlose Person hochholen. Kein Recht noetig, aber ein Verbandskasten.
 -- Nach einem Zusammenbruch durch Krankheit geht das nicht (nur Krankenhaus).
 register('ems_medkit_revive', nil, function(source, data)
@@ -203,6 +242,7 @@ register('ems_medkit_revive', nil, function(source, data)
             Ems.Inventory('AddItem', Ems.CharacterOf(source), 'medkit', 1)
             return fail(source, reviveError or 'not_dead')
         end
+        pushMedkits(source)
         local helper = Ems.NameOf(source)
         Ems.Record(Ems.CharacterOf(target), 'revive', 'Mit Verbandskasten hochgeholt', helper)
         Ems.Log({ actor_account_id = accountOf(source), character_id = Ems.CharacterOf(target), action = 'medkit_revive',
@@ -328,7 +368,7 @@ register('ems_diagnose', 'ems.treat', function(source, data)
             stages = def.cure == 'treatment' and def.stages - 1 or def.stages,
             cure = def.cure,
             series = entry.series,
-            needed = def.treatments,
+            needed = Diseases.Needed(def, entry.stage),
             waitMinutes = entry.gapLeft > 0 and def.cure == 'treatment' and math.ceil(entry.gapLeft / 60) or nil,
             price = priceFor(entry.disease, insured ~= nil),
         }

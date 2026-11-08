@@ -89,8 +89,8 @@ lib.addInteraction({
     end,
 })
 
--- Fuer alle, die nicht als Mediziner hochholen koennen. Ob ein Verbandskasten da ist, prueft der Server
--- und sagt sonst, wo es einen gibt.
+-- Fuer alle, die nicht als Mediziner hochholen koennen, nur mit Verbandskasten. Die Anzahl schickt der Server,
+-- solange jemand in der Naehe bewusstlos ist. Beim Ausfuehren prueft er sie noch einmal.
 lib.addInteraction({
     id = 'medkit_revive',
     path = 'Person',
@@ -100,7 +100,7 @@ lib.addInteraction({
     order = 5,
     target = 'player',
     canShow = function(ctx)
-        return canRevive(ctx) and not EmsClient.Can('ems.revive')
+        return canRevive(ctx) and not EmsClient.Can('ems.revive') and (EmsClient.medkits or 0) > 0
     end,
     onSelect = function(ctx)
         EmsClient.Call('ems_medkit_revive', { serverId = ctx.player.serverId })
