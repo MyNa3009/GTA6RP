@@ -2222,3 +2222,60 @@ function Platform.GetOwnExposure()
         indoors = indoors,
     }
 end
+
+------------------------------------------------------------------------
+-- Karte und Ton fuer Einsaetze (seit Core 1.12.0, fuer core_dispatch)
+------------------------------------------------------------------------
+
+-- Toene der UI als eigene Namen. GTA-5-Sounds stehen nur hier.
+local UI_SOUNDS = {
+    alert  = { 'Event_Message_Purple', 'GTAO_FM_Events_Soundset' },   -- neuer Einsatz
+    urgent = { 'TIMER_STOP', 'HUD_MINI_GAME_SOUNDSET' },             -- Lebensgefahr, Einheit in Not
+    click  = { 'NAV_UP_DOWN', 'HUD_FRONTEND_DEFAULT_SOUNDSET' },
+    done   = { 'CHECKPOINT_PERFECT', 'HUD_MINI_GAME_SOUNDSET' },
+}
+
+-- Kurzer Ton: 'alert', 'urgent', 'click', 'done'. Unbekannte Namen werden ignoriert.
+function Platform.PlayUiSound(name)
+    local sound = UI_SOUNDS[name]
+    if sound then
+        PlaySoundFrontend(-1, sound[1], sound[2], true)
+    end
+end
+
+-- Wegpunkt auf der Karte setzen (GPS-Route im Spiel) und wieder entfernen
+function Platform.SetWaypoint(coords)
+    SetNewWaypoint(coords.x + 0.0, coords.y + 0.0)
+end
+
+function Platform.ClearWaypoint()
+    SetWaypointOff()
+end
+
+-- Route zu einem Blip an oder aus, auf Wunsch blinkend (z. B. zugewiesener Einsatz)
+function Platform.SetBlipRoute(blip, enabled, flashing)
+    if blip and DoesBlipExist(blip) then
+        SetBlipRoute(blip, enabled == true)
+        SetBlipFlashes(blip, flashing == true)
+    end
+end
+
+-- Ortsname an einer Stelle: "Straße / Kreuzung, Gegend". Nur Anzeige.
+function Platform.GetLocationName(coords)
+    local x, y, z = coords.x + 0.0, coords.y + 0.0, (coords.z or 0) + 0.0
+    local streetHash, crossingHash = GetStreetNameAtCoord(x, y, z)
+    local street = streetHash ~= 0 and GetStreetNameFromHashKey(streetHash) or nil
+    local crossing = crossingHash ~= 0 and GetStreetNameFromHashKey(crossingHash) or nil
+    local zone = GetLabelText(GetNameOfZone(x, y, z))
+    if zone == 'NULL' then
+        zone = nil
+    end
+    local parts = {}
+    if street and street ~= '' then
+        parts[1] = (crossing and crossing ~= '') and (street .. ' / ' .. crossing) or street
+    end
+    if zone and zone ~= '' then
+        parts[#parts + 1] = zone
+    end
+    return table.concat(parts, ', ')
+end

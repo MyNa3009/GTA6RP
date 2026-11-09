@@ -16,6 +16,7 @@ INVENTORY = os.path.join(ROOT, 'core_inventory')
 LIB = os.path.join(ROOT, 'core_lib')
 FACTIONS = os.path.join(ROOT, 'core_factions')
 EMS = os.path.join(ROOT, 'core_ems')
+DISPATCH = os.path.join(ROOT, 'core_dispatch')
 
 # Die Tests LOESCHEN alle Tabellen der Datenbank. Darum nur gegen eine eigene Test-Datenbank,
 # deren Name "test" enthaelt. Nie gegen die Datenbank des Servers.
@@ -50,6 +51,8 @@ EXTRA_FILES = {
     'core_ems': [(CORE, 'shared/config.lua'), (EMS, 'config.lua')] + BRIDGE + [
         (LIB, 'init.lua'), (EMS, 'server/schema.lua'), (EMS, 'server/main.lua'), (EMS, 'server/diseases.lua'),
         (EMS, 'server/actions.lua'), (EMS, 'server/records.lua')],
+    'core_dispatch': [(CORE, 'shared/config.lua'), (DISPATCH, 'config.lua')] + BRIDGE + [
+        (DISPATCH, 'server/schema.lua'), (DISPATCH, 'server/main.lua'), (DISPATCH, 'server/calls.lua'), (DISPATCH, 'server/mdt.lua')],
 }
 
 
@@ -64,7 +67,8 @@ def reset_db():
         cur.execute('SET FOREIGN_KEY_CHECKS=0')
         for table in ['audit_log', 'account_links', 'account_identifiers', 'characters', 'accounts', 'bans', 'admin_jails', 'account_devices', 'account_ips', 'device_alerts', 'warns', 'tickets', 'ticket_messages', 'audit_log_archive', 'inventories', 'weapon_registry', 'licenses', 'admin_keys',
                       'faction_members', 'faction_settings', 'faction_ranks', 'faction_vehicles', 'faction_departments', 'faction_exams',
-                      'faction_history', 'faction_archive', 'faction_divisions', 'faction_info', 'faction_logs', 'ems_diseases', 'ems_records', 'ems_insurance']:
+                      'faction_history', 'faction_archive', 'faction_divisions', 'faction_info', 'faction_logs', 'ems_diseases', 'ems_records', 'ems_insurance',
+                      'dispatch_calls', 'dispatch_events', 'dispatch_units', 'dispatch_blocks']:
             cur.execute(f'DROP TABLE IF EXISTS {table}')
         cur.execute('SET FOREIGN_KEY_CHECKS=1')
         for statement in open(f'{CORE}/database/schema.sql').read().split(';'):

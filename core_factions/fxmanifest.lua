@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_factions'
 description 'Organisationen fuer die eigene Core: Raenge, Rechte, Abteilungen, Leitstelle, Archiv, Kasse, Dienst'
-version '1.2.0'
+version '1.3.0'
 
 dependencies {
     'core',

@@ -1,6 +1,11 @@
-# core_factions 1.2.0
+# core_factions 1.3.0
 
 Organisationen für die eigene Core: Ränge, Rechte und Gehalt pro Rang, Divisionen, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Abteilungen mit eigenen Rängen, Prüfungen, Erklärungen, Leitstelle mit Suche, Bonus, Mitarbeiter-Archiv, Protokolle pro ID und eine Kasse. Alles läuft über das Organisationsmenü (in den Farben und mit dem Logo der Organisation) und das G-Menü. Als erste Organisation ist der Rettungsdienst (EMS) eingerichtet, LSPD und andere kommen später in dieselbe Config.
+
+## Update von 1.2.0
+
+1. Den Ordner `core_factions` ersetzen und neu starten. Keine Migration.
+2. Neuer Export `GetOrg(faction)`: Name, Kürzel, Logo (als `nui://`-Pfad) und Farben einer Organisation. Das MDT von `core_dispatch` nimmt damit Logo und Farben der Organisation.
 
 ## Update von 1.1.0
 
@@ -95,6 +100,7 @@ exports.core_factions:GetBalance('ems')
 exports.core_factions:Deposit('ems', 250, { actorSource = source, reason = 'Verkauf' })
 exports.core_factions:Withdraw('ems', 250, { actorSource = source, reason = 'Einkauf' })
 -- Eintrag im Protokoll (area: leitstelle, einsatz, datenbank, kasse, dienst, anpassung). Namen sucht das Script selbst.
+exports.core_factions:GetOrg('ems')                           -- { id, label, short, ranks, logo, theme = { base, ink, accent, signal } }
 exports.core_factions:AddProtocol('ems', { area = 'einsatz', action = 'revive', text = 'Hochgeholt', actorSource = source, target = permanenteId })
 
 -- Client

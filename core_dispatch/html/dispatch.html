@@ -1,0 +1,1574 @@
+<!DOCTYPE html>
+<!--
+  UI: Dispatch (core_dispatch)
+  CONTRACT_VERSION: 1
+  Drei Ansichten in einer Datei:
+    Alarm    am rechten Bildschirmrand, ohne Fokus (neuer Einsatz, zugewiesen, Lebensgefahr)
+    Notruf   Formular fuer alle (/dispatch ohne Text), dazu die eigenen Notrufe mit Antworten der Leitstelle
+    MDT      Vollbild fuer Einheiten im Dienst (/mdt, F6): Einsaetze, Funkstatus, Einheiten, Archiv
+  Die UI zeigt nur an. Jede Aktion prueft der Server. Zeiten kommen als Unix-Sekunden vom Server (now zum Abgleich).
+
+  EINGEHEND (Lua -> UI)
+  alert_show  { call: Call, now, kind: "new" | "assigned" | "urgent", ms, keys: { accept, mdt }, priorities: [{ level, label }] }
+  alert_hide  { id }
+  form_open   { colors?, now, location, services: [{ key, label, units }], default, calls: [MyCall], blockedUntil?, cooldown?, textMin, textMax }
+  form_mine   (wie form_open, ohne location)
+  mdt_open    { colors, now, me?: Unit, admin?, manage, archive, service: { key, label, prefix }, org?: { label, short, logo, theme },
+                calls: [Call], units: [Unit], statuses: [{ code, label }], priorities: [{ level, label }],
+                results: [{ key, label, block? }], free: { [status]: true }, stats?: Stats,
+                limits: { note, message, report, callsign }, blockMinutes }
+  mdt_call    { call: Call, now, alert? }          // status "closed": aus der Liste nehmen
+  mdt_units   { units: [Unit] }
+  mdt_self    { service?, status?, callId?, callsign? }
+  ui_hide     {}
+
+  AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
+  ui_ready    { ui: "dispatch", version: 1 }          -> data.colors
+  ui_close    {}
+  form_send   { text, service, anonymous }            -> { id, number, service, units }
+  mdt_route   { id, pos? }                            -> {}  (Wegpunkt im Spiel)
+  mdt_call    { name, data }
+    dispatch_mine {} -> wie form_open                 dispatch_cancel { id }
+    dispatch_call_get { id }  -> { now, call: Call, events: [{ kind, by?, text, at }], nearest?: [Unit + { distance, free }], assigned?, canWork? }
+    dispatch_accept { id }    dispatch_release { id }  dispatch_assign { id, characterId, remove? }
+    dispatch_priority { id, level }  dispatch_note { id, text }  dispatch_message { id, text }
+    dispatch_close { id, result, report? }
+    dispatch_status { status } -> { status }          dispatch_callsign { callsign } -> { callsign }
+    dispatch_archive { page, search?, result? } -> { entries: [Call], page, more, stats: Stats }
+
+  Call  { id, number, kind: "call" | "unit", priority, status: "open" | "active" | "closed", text, location?, pos, distance?,
+          createdAt, acceptedAt?, arrivedAt?, closedAt?, caller?: { id, name }, anonymous?, callerDown?,
+          units: [{ id, name, callsign?, status? }], lastEvent?, result?, resultKey?, report?, closedBy? }
+  Unit  { id, name, dn?, callsign?, status, since, callId? }
+  MyCall { id, number, service, text, status, result?, createdAt, units, messages: [{ text, at }] }
+  Stats { today, open, avgAccept?, avgArrive?, abuse, date, days: [{ ago, calls }] }
+
+  FEHLERCODES: text_too_short, cooldown, too_many_open, blocked, not_member, not_on_duty, no_permission, not_unit,
+  not_found, already_assigned, not_assigned, invalid_status, invalid_priority, invalid_result, invalid_input, no_caller,
+  invalid_service, server_error, timeout
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dispatch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentypen
+    MDT: Operate (Einsatzliste, Disponieren) mit Inspect (Einsatz im Detail). Vollbild, Dichte 7, Bewegung 2, Varianz 3.
+    Alarm: Monitor, am rechten Rand angedockt, Spielsicht frei. Notruf: Configure, ein Dialog mit zwei Spalten.
+  Richtung
+    Zweck: Notrufe annehmen, Einheiten fuehren, Einsaetze sauber abschliessen.
+    Charakter: knapp, wachsam, funkhaft.
+    Welt: Einsatzleitrechner auf der Rettungswache, FMS-Bedienteil im RTW (Statustasten 0 bis 9), Alarmfax.
+    Highlight: das FMS-Bedienteil mit grossen Zifferntasten und die Einsatznummer im Kopf des Einsatzes.
+    Signatur: der Funkstatus als Ziffer im kleinen Quadrat, ueberall wo eine Einheit steht.
+  Farben: aus der Organisation (Akzent Auswahl und Hauptaktion, Signal nur fuer Lebensgefahr, Status 0, Missbrauch).
+*/
+:root {
+  --rgb-base:   9 14 28;
+  --rgb-ink:    240 244 250;
+  --rgb-accent: 37 94 190;
+  --rgb-signal: 237 28 36;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.97);
+  --c-side:        rgb(var(--rgb-ink) / 0.025);
+  --c-surface:     rgb(var(--rgb-ink) / 0.045);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.085);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-border-hi:   rgb(var(--rgb-ink) / 0.14);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.54);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.18);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.55);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.16);
+  --c-on-accent:   rgb(var(--rgb-ink));
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.08);
+  --shadow:        0 16px 48px rgb(var(--rgb-base) / 0.6);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+  --fs-xxl: clamp(28px, 1.9vw, 40px);
+
+  --head-h: 64px;
+  --side-w: clamp(280px, 19vw, 340px);
+  --detail-w: clamp(400px, 30vw, 560px);
+  --row-h: 56px;
+  --field-h: 36px;
+  --key: 16px;               /* Ziffer im Quadrat */
+  --icon: 18px;
+
+  --dur-fast: 120ms; --dur-base: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --z-alert: 5; --z-panel: 10; --z-toast: 30;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; background: transparent; overflow: hidden;
+  font-family: 'Montserrat', sans-serif; font-size: var(--fs-md); color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+[hidden] { display: none !important; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+.num { font-variant-numeric: tabular-nums; }
+.icon { width: var(--icon); height: var(--icon); flex: none; }
+:focus-visible { outline: 2px solid rgb(var(--rgb-accent) / 0.7); outline-offset: 2px; }
+.muted { color: var(--c-text-muted); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---------- Bausteine ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  height: var(--field-h); padding: 0 var(--space-4); border: 1px solid var(--c-border-hi); border-radius: var(--radius-sm);
+  background: var(--c-surface); font-size: var(--fs-sm); font-weight: 600; white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.btn:hover:not(:disabled) { background: var(--c-surface-hi); }
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn--primary { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); }
+.btn--primary:hover:not(:disabled) { background: rgb(var(--rgb-accent) / 0.85); }
+.btn--danger { background: transparent; border-color: rgb(var(--rgb-signal) / 0.5); color: var(--c-text); }
+.btn--danger:hover:not(:disabled) { background: var(--c-signal-soft); }
+.btn--ghost { background: transparent; border-color: transparent; color: var(--c-text-2); }
+.btn--ghost:hover:not(:disabled) { color: var(--c-text); background: var(--c-surface); }
+.btn--sm { height: 28px; padding: 0 var(--space-3); font-size: var(--fs-xs); }
+.btn--icon { width: var(--field-h); padding: 0; }
+.input, .select, .textarea {
+  width: 100%; height: var(--field-h); padding: 0 var(--space-3); border: 1px solid var(--c-border-hi); border-radius: var(--radius-sm);
+  background: rgb(var(--rgb-base) / 0.7); font-size: var(--fs-sm); outline: none;
+}
+.textarea { height: auto; min-height: 88px; padding: var(--space-2) var(--space-3); resize: vertical; line-height: 1.5; }
+.input:focus, .select:focus, .textarea:focus { border-color: var(--c-accent-line); }
+.label { display: block; margin-bottom: var(--space-2); font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
+.section-title { margin: 0 0 var(--space-3); font-size: var(--fs-sm); font-weight: 700; color: var(--c-text-2); }
+.kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 22px; padding: 0 6px;
+  border: 1px solid var(--c-border-hi); border-bottom-width: 2px; border-radius: var(--radius-xs);
+  font-size: var(--fs-xs); font-weight: 700; color: var(--c-text-2);
+}
+.empty { padding: var(--space-6) var(--space-4); color: var(--c-text-muted); text-align: center; line-height: 1.5; }
+
+/* Signatur: Funkstatus als Ziffer im Quadrat */
+.fms {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: calc(var(--key) + 8px); height: calc(var(--key) + 8px); border-radius: var(--radius-xs);
+  border: 1px solid var(--c-border-hi); background: var(--c-surface); font-size: var(--fs-xs); font-weight: 700;
+  font-variant-numeric: tabular-nums; color: var(--c-text);
+}
+.fms--busy { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); }
+.fms--talk { border-color: var(--c-signal); color: var(--c-text); }
+.fms--sos { background: var(--c-signal); border-color: transparent; color: var(--c-on-accent); }
+.fms--off { color: var(--c-text-muted); }
+
+/* Prioritaet: kleines Quadrat und Text */
+.prio { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); white-space: nowrap; }
+.prio::before { content: ''; width: 8px; height: 8px; border-radius: 2px; background: rgb(var(--rgb-ink) / 0.35); }
+.prio--2::before { background: var(--c-accent); }
+.prio--3 { color: var(--c-text); }
+.prio--3::before { background: var(--c-signal); }
+
+/* ---------- Alarm (Monitor) ---------- */
+.alerts { position: fixed; right: var(--space-5); top: 22vh; z-index: var(--z-alert); display: grid; gap: var(--space-3); width: min(380px, 30vw); }
+.alert {
+  position: relative; overflow: hidden; padding: var(--space-4); border: 1px solid var(--c-border-hi); border-radius: var(--radius-md);
+  background: rgb(var(--rgb-base) / 0.94); box-shadow: var(--shadow);
+  animation: alert-in var(--dur-base) var(--ease-out);
+}
+.alert--urgent { border-color: rgb(var(--rgb-signal) / 0.7); }
+@keyframes alert-in { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+.alert__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.alert__kind { font-size: var(--fs-xs); font-weight: 700; color: var(--c-text-2); }
+.alert--urgent .alert__kind { color: var(--c-text); }
+.alert__number { margin-top: var(--space-2); font-size: var(--fs-lg); font-weight: 700; font-variant-numeric: tabular-nums; }
+.alert__text { margin-top: var(--space-1); font-size: var(--fs-sm); line-height: 1.45; color: var(--c-text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.alert__where { margin-top: var(--space-2); font-size: var(--fs-xs); color: var(--c-text-2); }
+.alert__keys { display: flex; gap: var(--space-4); margin-top: var(--space-3); font-size: var(--fs-xs); color: var(--c-text-2); }
+.alert__keys span { display: inline-flex; align-items: center; gap: 6px; }
+.alert__timer { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgb(var(--rgb-ink) / 0.3); transform-origin: left; }
+
+/* ---------- Notruf (Configure) ---------- */
+.form {
+  position: fixed; left: 50%; top: 50%; z-index: var(--z-panel); transform: translate(-50%, -50%);
+  width: min(1120px, 94vw); max-height: 88dvh; display: grid; grid-template-columns: 1.1fr 1fr; overflow: hidden;
+  background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+}
+.form__main { padding: var(--space-6); overflow: auto; }
+.form__side { padding: var(--space-6) var(--space-5); overflow: auto; background: var(--c-side); border-left: 1px solid var(--c-border); }
+.form__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-5); }
+.form__title { margin: 0; font-size: var(--fs-xl); font-weight: 700; }
+.form__sub { margin-top: var(--space-1); color: var(--c-text-2); font-size: var(--fs-sm); }
+.field { margin-bottom: var(--space-5); }
+.services { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.service {
+  display: grid; gap: 2px; min-width: 180px; padding: var(--space-3) var(--space-4); text-align: left;
+  border: 1px solid var(--c-border-hi); border-radius: var(--radius-md); background: var(--c-surface);
+}
+.service[aria-pressed="true"] { border-color: var(--c-accent-line); background: var(--c-accent-soft); box-shadow: var(--edge-light); }
+.service__name { font-weight: 700; }
+.service__units { font-size: var(--fs-xs); color: var(--c-text-2); }
+.service__units--none { color: var(--c-text); }
+.quick { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.quick button { height: 28px; padding: 0 var(--space-3); border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: transparent; font-size: var(--fs-xs); color: var(--c-text-2); }
+.quick button:hover { color: var(--c-text); background: var(--c-surface); }
+.counter { margin-top: var(--space-1); text-align: right; font-size: var(--fs-xs); color: var(--c-text-muted); }
+.where { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--c-surface); }
+.where .icon { color: var(--c-accent); margin-top: 2px; }
+.where__name { font-weight: 600; }
+.where__hint { font-size: var(--fs-xs); color: var(--c-text-2); margin-top: 2px; }
+.check { display: flex; gap: var(--space-3); align-items: flex-start; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--c-accent); }
+.check small { display: block; color: var(--c-text-2); font-size: var(--fs-xs); margin-top: 2px; }
+.form__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--c-border); }
+.notice { font-size: var(--fs-sm); color: var(--c-text); }
+.notice--warn { color: var(--c-text); }
+.notice--warn::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: var(--space-2); border-radius: 2px; background: var(--c-signal); }
+.mine { display: grid; gap: var(--space-3); }
+.mine__item { padding: var(--space-4); border: 1px solid var(--c-border); border-radius: var(--radius-md); background: rgb(var(--rgb-base) / 0.4); }
+.mine__top { display: flex; justify-content: space-between; gap: var(--space-3); align-items: baseline; }
+.mine__number { font-weight: 700; }
+.mine__state { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
+.mine__state--live { color: var(--c-text); }
+.mine__text { margin-top: var(--space-2); font-size: var(--fs-sm); color: var(--c-text-2); line-height: 1.45; }
+.mine__msg { margin-top: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--c-accent-soft); font-size: var(--fs-sm); line-height: 1.45; }
+.mine__msg small { display: block; color: var(--c-text-2); font-size: var(--fs-xs); margin-bottom: 2px; }
+.mine__foot { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-3); font-size: var(--fs-xs); color: var(--c-text-muted); }
+
+/* ---------- MDT (Operate) ---------- */
+.mdt {
+  position: fixed; inset: var(--space-4); z-index: var(--z-panel); display: grid; grid-template-rows: var(--head-h) 1fr; overflow: hidden;
+  background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+}
+.mdt__head { display: flex; align-items: center; gap: var(--space-5); padding: 0 var(--space-5); border-bottom: 1px solid var(--c-border); }
+.brand { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.brand img { width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: rgb(var(--rgb-ink) / 0.95); }
+.brand__title { margin: 0; font-size: var(--fs-lg); font-weight: 700; white-space: nowrap; }
+.brand__sub { font-size: var(--fs-xs); color: var(--c-text-2); white-space: nowrap; }
+.head__fill { flex: 1; }
+.head__me { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--c-surface); }
+.head__me .fms { --key: 20px; font-size: var(--fs-sm); }
+.head__me-name { font-weight: 600; font-size: var(--fs-sm); }
+.head__me-status { font-size: var(--fs-xs); color: var(--c-text-2); }
+.head__clock { font-size: var(--fs-lg); font-weight: 600; color: var(--c-text-2); }
+.head__admin { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); padding: var(--space-1) var(--space-2); border: 1px solid var(--c-border-hi); border-radius: var(--radius-xs); }
+
+.mdt__body { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr) var(--detail-w); min-height: 0; }
+.side { display: grid; grid-template-rows: auto 1fr; min-height: 0; background: var(--c-side); border-right: 1px solid var(--c-border); }
+.main { display: grid; grid-template-rows: auto auto 1fr; min-height: 0; }
+.detail { min-height: 0; overflow: auto; padding: var(--space-5); border-left: 1px solid var(--c-border); }
+
+/* Highlight: FMS-Bedienteil */
+.panelfms { padding: var(--space-5); border-bottom: 1px solid var(--c-border); }
+.panelfms__now { display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4); }
+.panelfms__digit {
+  display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: var(--radius-md);
+  background: var(--c-accent); color: var(--c-on-accent); font-size: var(--fs-xxl); font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.panelfms__digit--free { background: var(--c-surface-hi); color: var(--c-text); }
+.panelfms__digit--sos { background: var(--c-signal); }
+.panelfms__label { font-weight: 700; line-height: 1.3; }
+.panelfms__since { font-size: var(--fs-xs); color: var(--c-text-2); margin-top: 2px; }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); }
+.key {
+  display: grid; grid-template-rows: auto auto; justify-items: start; gap: 2px; min-height: 64px; padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--c-border-hi); border-bottom-width: 3px; border-radius: var(--radius-sm); background: rgb(var(--rgb-base) / 0.6); text-align: left;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.key:hover:not(:disabled) { background: var(--c-surface-hi); }
+.key:active:not(:disabled) { transform: translateY(1px); border-bottom-width: 2px; }
+.key[aria-pressed="true"] { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); }
+.key__digit { font-size: var(--fs-xl); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.key__label { font-size: 10px; font-weight: 600; line-height: 1.25; color: var(--c-text-2); }
+.key[aria-pressed="true"] .key__label { color: rgb(var(--rgb-ink) / 0.85); }
+.key--sos { border-color: rgb(var(--rgb-signal) / 0.6); }
+.key--sos[aria-pressed="true"], .key--armed { background: var(--c-signal); border-color: transparent; color: var(--c-on-accent); }
+.key--armed .key__label { color: var(--c-on-accent); }
+.callsign { display: flex; gap: var(--space-2); margin-top: var(--space-4); }
+.callsign .input { flex: 1; }
+
+.units { min-height: 0; overflow: auto; padding: var(--space-4) var(--space-3); }
+.units__head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 var(--space-2) var(--space-3); }
+.units__count { font-size: var(--fs-xs); color: var(--c-text-2); }
+.unit { display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-3); align-items: center; padding: var(--space-2); border-radius: var(--radius-sm); }
+.unit + .unit { margin-top: 2px; }
+.unit--me { background: var(--c-surface); }
+.unit__name { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.unit__sub { font-size: var(--fs-xs); color: var(--c-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.unit__call { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
+
+.tabs { display: flex; align-items: flex-end; gap: var(--space-5); padding: 0 var(--space-5); border-bottom: 1px solid var(--c-border); }
+.tab { height: 52px; padding: 0; border: 0; border-bottom: 2px solid transparent; background: none; font-weight: 600; color: var(--c-text-2); }
+.tab[aria-selected="true"] { color: var(--c-text); border-bottom-color: var(--c-accent); }
+.tab .num { margin-left: 6px; color: var(--c-text-muted); font-weight: 500; }
+.toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-4) var(--space-5) var(--space-3); }
+.summary { font-size: var(--fs-sm); color: var(--c-text-2); }
+.summary b { color: var(--c-text); font-weight: 700; }
+.filters { display: flex; gap: var(--space-1); margin-left: auto; padding: 2px; border: 1px solid var(--c-border); border-radius: var(--radius-sm); }
+.filter { height: 28px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-xs); background: transparent; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
+.filter[aria-pressed="true"] { background: var(--c-surface-hi); color: var(--c-text); }
+.list { min-height: 0; overflow: auto; padding: 0 var(--space-3) var(--space-4); }
+
+.row {
+  display: grid; grid-template-columns: 120px 132px minmax(0, 1fr) 84px 72px 108px; align-items: center; gap: var(--space-4);
+  width: 100%; min-height: var(--row-h); padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: none; text-align: left;
+}
+.row + .row { margin-top: 2px; }
+.row:hover { background: var(--c-surface); }
+.row[aria-selected="true"] { background: var(--c-surface-hi); box-shadow: var(--edge-light); }
+.row__number { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.row--urgent .row__number { color: var(--c-text); }
+.row__text { min-width: 0; }
+.row__msg { font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row__where { font-size: var(--fs-xs); color: var(--c-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.row__right { text-align: right; font-size: var(--fs-sm); color: var(--c-text-2); }
+.row__units { display: flex; gap: var(--space-1); justify-content: flex-end; }
+.row__open { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text); }
+.tag { display: inline-block; margin-left: var(--space-2); padding: 1px 6px; border-radius: var(--radius-xs); background: var(--c-signal-soft); font-size: 10px; font-weight: 700; color: var(--c-text); vertical-align: 1px; }
+.tag--muted { background: var(--c-surface-hi); color: var(--c-text-2); }
+.list__head { display: grid; grid-template-columns: 120px 132px minmax(0, 1fr) 84px 72px 108px; gap: var(--space-4); padding: 0 var(--space-3) var(--space-2); font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+.list__head .r { text-align: right; }
+
+/* Einsatz im Detail */
+.call__top { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.call__number { margin: var(--space-2) 0 0; font-size: var(--fs-xxl); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.call__state { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
+.call__msg { margin: var(--space-4) 0 0; padding: var(--space-4); border-radius: var(--radius-md); background: var(--c-surface); font-size: var(--fs-lg); line-height: 1.45; text-wrap: pretty; }
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3) var(--space-5); margin: var(--space-5) 0 0; }
+.facts dt { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+.facts dd { margin: 2px 0 0; font-size: var(--fs-sm); font-weight: 600; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-5); }
+.block { margin-top: var(--space-6); }
+.block__row { display: flex; gap: var(--space-2); }
+.block__row .input { flex: 1; }
+.oncall { display: grid; gap: var(--space-2); }
+.oncall .unit { padding: var(--space-2) 0; }
+.near .unit { grid-template-columns: auto 1fr auto auto; }
+.near__dist { font-size: var(--fs-xs); color: var(--c-text-2); font-variant-numeric: tabular-nums; }
+.close-grid { display: grid; gap: var(--space-3); }
+.timeline { list-style: none; margin: 0; padding: 0; }
+.timeline li { display: grid; grid-template-columns: 52px 1fr; gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--c-border); font-size: var(--fs-sm); }
+.timeline li:first-child { border-top: 0; }
+.timeline time { color: var(--c-text-muted); font-size: var(--fs-xs); padding-top: 2px; }
+.timeline small { display: block; color: var(--c-text-2); font-size: var(--fs-xs); margin-top: 2px; }
+.timeline .ev--message { color: var(--c-text); }
+.report { padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--c-surface); font-size: var(--fs-sm); line-height: 1.5; }
+
+/* Archiv */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(220px, 1.6fr); gap: var(--space-5); align-items: end; padding: var(--space-4) var(--space-5) var(--space-3); }
+.stat__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+.stat__value { margin-top: 2px; font-size: var(--fs-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat__value small { font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-2); margin-left: 4px; }
+.chart { display: grid; grid-template-columns: repeat(7, 1fr); gap: var(--space-2); align-items: end; height: 72px; }
+.chart__col { display: grid; grid-template-rows: 1fr auto; gap: var(--space-1); height: 100%; text-align: center; }
+.chart__bar { align-self: end; width: 100%; min-height: 2px; border-radius: 2px 2px 0 0; background: rgb(var(--rgb-ink) / 0.22); }
+.chart__col--today .chart__bar { background: var(--c-accent); }
+.chart__day { font-size: 10px; color: var(--c-text-muted); }
+.chart__n { font-size: 10px; color: var(--c-text-2); font-variant-numeric: tabular-nums; }
+.archive-row { grid-template-columns: 132px 112px minmax(0, 1fr) 180px 120px; }
+.archive-row > span { font-size: var(--fs-sm); }
+.toolbar > .stats { width: 100%; padding: 0 0 var(--space-2); }
+.archive-head { grid-template-columns: 132px 112px minmax(0, 1fr) 180px 120px; }
+.toolbar .input { max-width: 320px; }
+.toolbar .select { width: auto; min-width: 200px; }
+.pager { display: flex; justify-content: center; padding: var(--space-4); }
+
+.close-x { margin-left: var(--space-2); }
+
+.toast {
+  position: fixed; left: 50%; bottom: var(--space-6); z-index: var(--z-toast); transform: translateX(-50%);
+  padding: var(--space-3) var(--space-5); border-radius: var(--radius-md); background: rgb(var(--rgb-ink)); color: rgb(var(--rgb-base));
+  font-size: var(--fs-sm); font-weight: 600; box-shadow: var(--shadow);
+}
+.toast--error { background: var(--c-signal); color: rgb(var(--rgb-ink)); }
+
+@media (max-width: 1400px) {
+  .mdt__body { grid-template-columns: var(--side-w) minmax(0, 1fr) 380px; }
+  .row, .list__head { grid-template-columns: 104px 120px minmax(0, 1fr) 72px 64px; }
+  .row > :nth-child(6), .list__head > :nth-child(6) { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-close" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></g>
+    <g id="i-pin" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></g>
+    <g id="i-route" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7"/></g>
+    <g id="i-send" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4 18-7z"/></g>
+    <g id="i-search" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></g>
+  </defs>
+</svg>
+
+<!-- Alarm -->
+<section class="alerts" id="alerts" aria-live="assertive" aria-label="Alarme"></section>
+
+<!-- Notruf -->
+<div class="form" id="form" role="dialog" aria-modal="true" aria-labelledby="form-title" hidden>
+  <div class="form__main" id="form-main"></div>
+  <aside class="form__side" id="form-side"></aside>
+</div>
+
+<!-- MDT -->
+<div class="mdt" id="mdt" role="dialog" aria-modal="true" aria-labelledby="mdt-title" hidden>
+  <header class="mdt__head" id="mdt-head"></header>
+  <div class="mdt__body">
+    <aside class="side">
+      <section class="panelfms" id="fms" aria-label="Funkstatus"></section>
+      <section class="units" id="units" aria-label="Einheiten"></section>
+    </aside>
+    <main class="main">
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+      <div class="toolbar" id="toolbar"></div>
+      <div class="list" id="list"></div>
+    </main>
+    <section class="detail" id="detail" aria-live="polite"></section>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  const isFiveM = typeof GetParentResourceName === 'function';
+  const platform = isFiveM ? 'fivem' : 'mock';
+  function on(event, fn) { (handlers[event] ||= []).push(fn); }
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${GetParentResourceName()}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+  return { on, send, emit, platform };
+})();
+
+// Testdaten fuer den Browser: ?view=mdt (Standard), ?view=form, ?view=alert, ?rank=1 (ohne Disponieren und Archiv), ?tab=archive
+const Mock = (() => {
+  const NOW = Math.floor(Date.now() / 1000);
+  const m = (min) => NOW - Math.round(min * 60);
+  const STATUSES = ['Notruf: Einheit in Gefahr', 'Einsatzbereit über Funk', 'Einsatzbereit auf Wache', 'Einsatz übernommen', 'Am Einsatzort',
+    'Sprechwunsch', 'Nicht einsatzbereit', 'Patient aufgenommen', 'Am Krankenhaus'];
+  const units = [
+    { id: 256, name: 'Fabian Nandes', dn: 'EMS-009', callsign: 'RTW 1/83-1', status: 3, since: m(4), callId: 4212 },
+    { id: 108, name: 'Mira Schulz', dn: 'EMS-004', callsign: 'NEF 1/82-1', status: 4, since: m(2), callId: 4211 },
+    { id: 17, name: 'Lena Hoffmann', dn: 'EMS-001', callsign: 'KdoW 1/10-1', status: 2, since: m(38) },
+    { id: 402, name: 'Murat Demir', dn: 'EMS-007', callsign: 'RTW 1/83-2', status: 1, since: m(11) },
+    { id: 233, name: 'Tom Becker', dn: 'EMS-012', callsign: 'RTW 1/83-3', status: 5, since: m(1) },
+    { id: 530, name: 'Ina Roth', dn: 'EMS-015', status: 6, since: m(25) },
+  ];
+  const calls = [
+    { id: 4214, number: 'EMS 26/4214', kind: 'call', priority: 3, status: 'open', text: 'Person liegt bewusstlos am Ende vom Pier, atmet kaum. Bitte schnell kommen.',
+      location: 'Del Perro Pier, Del Perro', pos: { x: -1600, y: -1050, z: 13 }, distance: 2840, createdAt: m(0.6), caller: { id: 611, name: 'Kai Brandt' }, units: [] },
+    { id: 4213, number: 'EMS 26/4213', kind: 'call', priority: 2, status: 'open', text: 'Verkehrsunfall, zwei Autos, eine Frau klagt über Nackenschmerzen.',
+      location: 'Vespucci Blvd / San Andreas Ave, Pillbox Hill', pos: { x: 120, y: -900, z: 30 }, distance: 640, createdAt: m(3.2), anonymous: true, units: [] },
+    { id: 4212, number: 'EMS 26/4212', kind: 'call', priority: 2, status: 'active', text: 'Mein Freund ist vom Motorrad gestürzt, Bein sieht schlimm aus.',
+      location: 'Route 68, Harmony', pos: { x: 540, y: 2670, z: 42 }, distance: 4210, createdAt: m(7.5), acceptedAt: m(6.9), caller: { id: 377, name: 'Lea Vogt' }, callerDown: false,
+      units: [{ id: 256, name: 'Fabian Nandes', callsign: 'RTW 1/83-1', status: 3 }] },
+    { id: 4211, number: 'EMS 26/4211', kind: 'call', priority: 1, status: 'active', text: 'Älterer Herr im Supermarkt gestürzt, ansprechbar.',
+      location: 'Innocence Blvd, Strawberry', pos: { x: 30, y: -1350, z: 29 }, distance: 1180, createdAt: m(14), acceptedAt: m(12.5), arrivedAt: m(2),
+      caller: { id: 290, name: 'Hanna Wolf' }, units: [{ id: 108, name: 'Mira Schulz', callsign: 'NEF 1/82-1', status: 4 }] },
+  ];
+  const events = {
+    4214: [{ kind: 'created', text: 'Notruf eingegangen: Person liegt bewusstlos am Ende vom Pier, atmet kaum. Bitte schnell kommen.', at: m(0.6), by: 'Kai Brandt' }],
+    4212: [
+      { kind: 'created', text: 'Notruf eingegangen: Mein Freund ist vom Motorrad gestürzt, Bein sieht schlimm aus.', at: m(7.5), by: 'Lea Vogt' },
+      { kind: 'accept', text: 'Fabian Nandes hat übernommen', at: m(6.9), by: 'Fabian Nandes' },
+      { kind: 'message', text: 'RTW ist unterwegs, etwa vier Minuten. Bitte das Bein nicht bewegen.', at: m(6.5), by: 'Fabian Nandes' },
+      { kind: 'note', text: 'Laut Anruferin offene Wunde am Unterschenkel', at: m(5.8), by: 'Lena Hoffmann' },
+    ],
+  };
+  const archive = [
+    { id: 4209, number: 'EMS 26/4209', kind: 'call', priority: 2, status: 'closed', text: 'Mann mit Brustschmerzen vor der Bank', location: 'Alta St, Pillbox Hill', pos: { x: 0, y: 0, z: 0 },
+      createdAt: m(95), acceptedAt: m(94), arrivedAt: m(89), closedAt: m(70), result: 'Transport ins Krankenhaus', resultKey: 'transport', closedBy: 'Mira Schulz',
+      caller: { id: 512, name: 'Paul Krüger' }, units: [{ id: 108, name: 'Mira Schulz' }, { id: 402, name: 'Murat Demir' }], report: 'Verdacht auf Herzinfarkt, mit Sauerstoff ins Pillbox gebracht.' },
+    { id: 4208, number: 'EMS 26/4208', kind: 'call', priority: 1, status: 'closed', text: 'Hier brennt es lol', location: 'Grove St, Davis', pos: { x: 0, y: 0, z: 0 },
+      createdAt: m(140), acceptedAt: m(139), closedAt: m(131), result: 'Missbrauch', resultKey: 'abuse', closedBy: 'Lena Hoffmann', caller: { id: 702, name: 'Jan Pohl' }, units: [{ id: 17, name: 'Lena Hoffmann' }] },
+    { id: 4207, number: 'EMS 26/4207', kind: 'unit', priority: 3, status: 'closed', text: 'RTW 1/83-2, Murat Demir braucht sofort Hilfe', location: 'Forum Dr, Strawberry', pos: { x: 0, y: 0, z: 0 },
+      createdAt: m(210), acceptedAt: m(209.6), arrivedAt: m(206), closedAt: m(190), result: 'Erledigt vor Ort', resultKey: 'done', closedBy: 'Lena Hoffmann', caller: { id: 402, name: 'Murat Demir' },
+      units: [{ id: 17, name: 'Lena Hoffmann' }, { id: 256, name: 'Fabian Nandes' }] },
+    { id: 4206, number: 'EMS 26/4206', kind: 'call', priority: 1, status: 'closed', text: 'Kind hat sich am Spielplatz den Arm verletzt', location: 'Mirror Park Blvd, Mirror Park', pos: { x: 0, y: 0, z: 0 },
+      createdAt: m(260), acceptedAt: m(257), arrivedAt: m(250), closedAt: m(236), result: 'Erledigt vor Ort', resultKey: 'done', closedBy: 'Fabian Nandes', anonymous: true, units: [{ id: 256, name: 'Fabian Nandes' }] },
+  ];
+  const stats = { today: 17, open: 2, avgAccept: 74, avgArrive: 312, abuse: 1, date: new Date().toISOString().slice(0, 10),
+    days: [{ ago: 6, calls: 12 }, { ago: 5, calls: 9 }, { ago: 4, calls: 15 }, { ago: 3, calls: 21 }, { ago: 2, calls: 18 }, { ago: 1, calls: 11 }, { ago: 0, calls: 17 }] };
+  const params = new URLSearchParams(location.search);
+  const RANK_LOW = params.get('rank') === '1';
+  const me = units[0];
+  const calls_ = {
+    dispatch_call_get: (d) => {
+      const call = calls.find((c) => c.id === d.id) || archive.find((c) => c.id === d.id);
+      if (!call) return { ok: false, error: 'not_found' };
+      const assigned = call.units.some((u) => u.id === me.id);
+      const nearest = RANK_LOW || call.status === 'closed' ? undefined : units.map((u) => ({ ...u, distance: Math.round(300 + ((u.id * 37) % 2900)), free: [1, 2].includes(u.status) && !u.callId }))
+        .sort((a, b) => (a.free === b.free ? a.distance - b.distance : a.free ? -1 : 1));
+      return { ok: true, data: { now: NOW, call, events: events[call.id] || [{ kind: 'created', text: `Notruf eingegangen: ${call.text}`, at: call.createdAt }], nearest, assigned, canWork: !RANK_LOW || assigned } };
+    },
+    dispatch_accept: (d) => { const c = calls.find((x) => x.id === d.id); c.units.push({ id: me.id, name: me.name, callsign: me.callsign, status: 3 }); c.status = 'active'; c.acceptedAt = c.acceptedAt || NOW; me.callId = c.id; me.status = 3; return { ok: true, data: { call: c } }; },
+    dispatch_release: (d) => { const c = calls.find((x) => x.id === d.id); c.units = c.units.filter((u) => u.id !== me.id); me.callId = undefined; me.status = 1; return { ok: true }; },
+    dispatch_assign: (d) => { const c = calls.find((x) => x.id === d.id); const u = units.find((x) => x.id === d.characterId); if (d.remove) c.units = c.units.filter((x) => x.id !== u.id); else { c.units.push({ id: u.id, name: u.name, callsign: u.callsign, status: 3 }); u.status = 3; u.callId = c.id; c.status = 'active'; } return { ok: true }; },
+    dispatch_priority: (d) => { calls.find((x) => x.id === d.id).priority = d.level; return { ok: true }; },
+    dispatch_note: (d) => { (events[d.id] ||= []).push({ kind: 'note', text: d.text, at: NOW, by: me.name }); return { ok: true }; },
+    dispatch_message: (d) => { (events[d.id] ||= []).push({ kind: 'message', text: d.text, at: NOW, by: me.name }); return { ok: true }; },
+    dispatch_close: (d) => { const i = calls.findIndex((x) => x.id === d.id); const [c] = calls.splice(i, 1); c.status = 'closed'; return { ok: true }; },
+    dispatch_status: (d) => { me.status = d.status; me.since = NOW; return { ok: true, data: { status: d.status } }; },
+    dispatch_callsign: (d) => { me.callsign = d.callsign || undefined; return { ok: true, data: { callsign: d.callsign } }; },
+    dispatch_archive: (d) => ({ ok: true, data: { entries: archive.filter((a) => (!d.result || a.resultKey === d.result) && (!d.search || a.text.toLowerCase().includes(d.search.toLowerCase()) || a.number.includes(d.search))), page: 1, more: false, stats } }),
+    dispatch_mine: () => ({ ok: true, data: mineData() }),
+    dispatch_cancel: () => ({ ok: true }),
+  };
+  function mineData() {
+    return { now: NOW, location: 'Del Perro Pier, Del Perro', default: 'ems', textMin: 5, textMax: 240,
+      services: [{ key: 'ems', label: 'Rettungsdienst', units: 5 }],
+      calls: [
+        { id: 4212, number: 'EMS 26/4212', service: 'Rettungsdienst', text: 'Mein Freund ist vom Motorrad gestürzt, Bein sieht schlimm aus.', status: 'active', createdAt: m(7.5), units: 1,
+          messages: [{ text: 'RTW ist unterwegs, etwa vier Minuten. Bitte das Bein nicht bewegen.', at: m(6.5) }] },
+        { id: 4190, number: 'EMS 26/4190', service: 'Rettungsdienst', text: 'Person mit Kreislaufproblemen am Strand', status: 'closed', result: 'Erledigt vor Ort', createdAt: m(60 * 26), units: 0, messages: [] },
+      ] };
+  }
+  function mdtData() {
+    return {
+      now: NOW, me: RANK_LOW ? { ...units[3] } : me, manage: !RANK_LOW, archive: !RANK_LOW,
+      service: { key: 'ems', label: 'Rettungsdienst', prefix: 'EMS' },
+      org: { label: 'Emergency Medical Service', short: 'EMS', logo: '../../core_factions/html/logos/ems.png', theme: { base: '9 14 28', ink: '240 244 250', accent: '37 94 190', signal: '237 28 36' } },
+      calls, units, statuses: STATUSES.map((label, code) => ({ code, label })),
+      priorities: [{ level: 1, label: 'Normal' }, { level: 2, label: 'Dringend' }, { level: 3, label: 'Lebensgefahr' }],
+      results: [{ key: 'done', label: 'Erledigt vor Ort' }, { key: 'transport', label: 'Transport ins Krankenhaus' }, { key: 'no_person', label: 'Niemand vor Ort' },
+        { key: 'false_alarm', label: 'Fehlalarm' }, { key: 'duplicate', label: 'Doppelt gemeldet' }, { key: 'abuse', label: 'Missbrauch', block: true }],
+      free: { 1: true, 2: true }, stats: RANK_LOW ? undefined : stats, limits: { note: 240, message: 160, report: 600, callsign: 16 }, blockMinutes: 30,
+    };
+  }
+  return {
+    delay: 100, mdtData, mineData, calls, NOW,
+    async handle(event, data) {
+      await new Promise((r) => setTimeout(r, this.delay));
+      if (event === 'mdt_call') { const fn = calls_[data.name]; return fn ? fn(data.data || {}) : { ok: false, error: 'invalid_input' }; }
+      if (event === 'form_send') return { ok: true, data: { id: 4215, number: 'EMS 26/4215', service: 'Rettungsdienst', units: 5 } };
+      return { ok: true };
+    },
+    push(event, data) { Bridge.emit(event, data); },
+  };
+})();
+</script>
+
+<script id="app">
+const TEXT = {
+  close: 'Schließen',
+  alert: { new: 'Neuer Einsatz', assigned: 'Dir zugewiesen', unit: 'Einheit in Not', accept: 'Übernehmen', mdt: 'MDT' },
+  form: {
+    title: 'Notruf absetzen', sub: 'Die Leitstelle sieht deinen Standort und meldet sich hier, sobald jemand übernimmt.',
+    service: 'Wen brauchst du', units: (n) => n === 0 ? 'Gerade niemand im Dienst' : `${n} ${n === 1 ? 'Einheit' : 'Einheiten'} im Dienst`,
+    what: 'Was ist passiert', placeholder: 'Wer ist verletzt, wie viele Personen, was genau ist passiert',
+    quick: ['Person bewusstlos', 'Verkehrsunfall', 'Person verletzt', 'Atemnot', 'Sturz'],
+    where: 'Dein Standort', whereHint: 'Wird automatisch mitgeschickt.', noLocation: 'Standort wird beim Absenden ermittelt',
+    anon: 'Ohne meinen Namen melden', anonHint: 'Die Einheiten sehen deinen Namen nicht. Missbrauch wird trotzdem verfolgt.',
+    send: 'Notruf absetzen', sending: 'Sendet…', count: (n, max) => `${n} / ${max}`,
+    blocked: (t) => `Du kannst bis ${t} Uhr keinen Notruf absetzen.`, cooldown: (s) => `Nächster Notruf in ${s} Sekunden möglich.`,
+    nobody: 'Gerade ist niemand im Dienst. Dein Notruf bleibt offen, bis jemand übernimmt.',
+    sent: (n) => `Notruf ${n} ist raus.`,
+    mine: 'Deine Notrufe', mineEmpty: 'Du hast noch keinen Notruf abgesetzt.',
+    state: { open: 'Wartet auf Einheit', active: 'Übernommen', closed: 'Abgeschlossen' },
+    reply: 'Leitstelle', cancel: 'Zurückziehen', cancelled: 'Zurückgezogen.',
+  },
+  mdt: {
+    title: 'Leitstelle', admin: 'Admin-Ansicht', fms: 'Funkstatus', since: (t) => `seit ${t}`, armed: 'Nochmal drücken: Notruf an alle',
+    callsign: 'Funkrufname', callsignPh: 'z. B. RTW 1/83-1', save: 'Speichern',
+    units: 'Einheiten', unitsCount: (n, free) => `${n} im Dienst, ${free} frei`, noUnits: 'Niemand im Dienst.',
+    tabs: { calls: 'Einsätze', archive: 'Archiv' },
+    summary: (open, active, free) => [['offen', open], ['in Arbeit', active], ['Einheiten frei', free]],
+    filters: { all: 'Alle', open: 'Offen', mine: 'Meine' },
+    cols: ['Priorität', 'Nummer', 'Meldung', 'Entfernung', 'Alter', 'Einheiten'],
+    noCalls: 'Keine offenen Einsätze. Neue Notrufe erscheinen hier und am Bildschirmrand.',
+    noCallsMine: 'Du bist an keinem Einsatz.',
+    waiting: 'wartet',
+    pick: 'Wähle links einen Einsatz.',
+    state: { open: 'Offen, keine Einheit', active: 'In Arbeit', closed: 'Abgeschlossen' },
+    unitCall: 'Einheit in Not', down: 'bewusstlos', anon: 'Anonym',
+    facts: { caller: 'Anrufer', where: 'Ort', distance: 'Entfernung', created: 'Eingang', accept: 'Bis Übernahme', arrive: 'Bis Ankunft', closed: 'Abgeschlossen', by: 'Von' },
+    accept: 'Übernehmen', release: 'Freigeben', route: 'Route setzen', routeSet: 'Route ist gesetzt.',
+    priority: 'Priorität',
+    onCall: 'Am Einsatz', noneOnCall: 'Noch keine Einheit.',
+    nearest: 'Nächste Einheiten', assign: 'Zuweisen', unassign: 'Abziehen', free: 'frei',
+    message: 'Nachricht an den Anrufer', messagePh: 'z. B. RTW ist in drei Minuten da', send: 'Senden', sent: 'Nachricht gesendet.', noCaller: 'Kein Anrufer erreichbar.',
+    note: 'Notiz für die Einheiten', notePh: 'z. B. Person ansprechbar, Kopfplatzwunde', noteSave: 'Speichern', noted: 'Notiz gespeichert.',
+    closeTitle: 'Einsatz abschließen', result: 'Ergebnis', report: 'Bericht (optional)', reportPh: 'Was wurde gemacht, wohin transportiert',
+    closeBtn: 'Einsatz abschließen', closed: 'Einsatz abgeschlossen.', abuse: (n) => `Der Anrufer wird ${n} Minuten für Notrufe gesperrt.`,
+    timeline: 'Verlauf', report_: 'Bericht', accepted: 'Einsatz übernommen. Route ist gesetzt.', released: 'Einsatz freigegeben.',
+    assigned: 'Einheit zugewiesen.', unassigned: 'Einheit abgezogen.', status: (c, l) => `Status ${c}: ${l}`, callsignSaved: 'Funkrufname gespeichert.',
+    stats: { today: 'Einsätze heute', accept: 'Ø bis Übernahme', arrive: 'Ø bis Ankunft', abuse: 'Missbrauch heute', week: 'Letzte 7 Tage' },
+    search: 'Nummer, ID oder Stichwort', allResults: 'Alle Ergebnisse', archiveCols: ['Nummer', 'Datum', 'Meldung', 'Ergebnis', 'Einheiten'],
+    noArchive: 'Keine abgeschlossenen Einsätze gefunden.', more: 'Ältere laden',
+    days: ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'],
+    ev: { note: 'Notiz', message: 'An Anrufer' },   // andere Eintraege bringen ihren Text vom Server mit
+  },
+  ago: (s) => s < 60 ? `${Math.max(0, s)} s` : s < 3600 ? `${Math.floor(s / 60)} Min` : `${Math.floor(s / 3600)} Std`,
+  dur: (s) => s == null ? '-' : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')} Min`,
+  dist: (m) => m == null ? '-' : m < 1000 ? `${m} m` : `${(m / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1 })} km`,
+  errors: {
+    text_too_short: 'Beschreib kurz, was passiert ist.', cooldown: 'Warte kurz bis zum nächsten Notruf.', too_many_open: 'Du hast schon offene Notrufe.',
+    blocked: 'Du bist für Notrufe gesperrt.', not_member: 'Kein Zugriff aufs MDT.', not_on_duty: 'Dafür musst du im Dienst sein.',
+    no_permission: 'Dafür hast du keine Rechte.', not_unit: 'Nur Einheiten im Dienst können das.', not_found: 'Den Einsatz gibt es nicht mehr.',
+    already_assigned: 'Die Einheit ist schon am Einsatz.', not_assigned: 'Die Einheit ist nicht am Einsatz.', invalid_status: 'Diesen Status gibt es nicht.',
+    invalid_priority: 'Diese Priorität gibt es nicht.', invalid_result: 'Wähle ein Ergebnis.', invalid_input: 'Die Eingabe passt nicht.',
+    no_caller: 'Kein Anrufer erreichbar.', server_error: 'Fehler auf dem Server. Bitte nochmal versuchen.', timeout: 'Der Server antwortet nicht.',
+    default: 'Das hat nicht geklappt.',
+  },
+};
+
+const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const TOAST_MS = 2600;
+const TICK_MS = 15000;          // Alter der Einsaetze neu anzeigen, nur solange das MDT offen ist
+const SOS_ARM_MS = 3000;        // Status 0: zweimal druecken innerhalb dieser Zeit
+const MAX_ALERTS = 3;
+const KEYPAD = [1, 2, 3, 4, 5, 6, 7, 8, 0];
+const BUSY_STATUSES = new Set([3, 4, 7, 8]);
+
+const state = {
+  view: null, busy: false, offset: 0,
+  data: null, calls: new Map(), units: [], me: null,
+  tab: 'calls', filter: 'all', selected: null, detail: null, sosArmed: false,
+  archive: null, archiveSearch: '', archiveResult: '',
+  form: null, formService: null, formAnon: false, formText: '',
+};
+const el = {
+  alerts: document.getElementById('alerts'), form: document.getElementById('form'), formMain: document.getElementById('form-main'), formSide: document.getElementById('form-side'),
+  mdt: document.getElementById('mdt'), head: document.getElementById('mdt-head'), fms: document.getElementById('fms'), units: document.getElementById('units'),
+  tabs: document.getElementById('tabs'), toolbar: document.getElementById('toolbar'), list: document.getElementById('list'), detail: document.getElementById('detail'),
+  toast: document.getElementById('toast'),
+};
+
+/* ---------- Hilfen ---------- */
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+function icon(id) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.append(use);
+  return svg;
+}
+function button(label, action, variant = '', data = {}) {
+  const b = make('button', `btn ${variant}`.trim(), label);
+  b.type = 'button';
+  b.dataset.action = action;
+  Object.entries(data).forEach(([k, v]) => { b.dataset[k] = v; });
+  return b;
+}
+function applyColors(colors) {
+  if (!colors) return;
+  COLOR_KEYS.forEach((key) => {
+    if (typeof colors[key] === 'string' && COLOR_PATTERN.test(colors[key])) document.documentElement.style.setProperty(`--rgb-${key}`, colors[key]);
+  });
+}
+let toastTimer = null;
+function toast(text, error = false) {
+  el.toast.textContent = text;
+  el.toast.classList.toggle('toast--error', error);
+  el.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.toast.hidden = true; }, TOAST_MS);
+}
+function errorText(res) {
+  if (res && res.error === 'blocked' && res.data && res.data.until) return TEXT.form.blocked(res.data.until);
+  if (res && res.error === 'cooldown' && res.data && res.data.seconds) return TEXT.form.cooldown(res.data.seconds);
+  return TEXT.errors[res && res.error] || TEXT.errors.default;
+}
+async function request(event, data) {
+  if (state.busy) return null;
+  state.busy = true;
+  const res = await Bridge.send(event, data);
+  state.busy = false;
+  if (!res || !res.ok) { toast(errorText(res), true); return null; }
+  return res.data || {};
+}
+const call = (name, data) => request('mdt_call', { name, data });
+const serverNow = () => Math.floor(Date.now() / 1000) + state.offset;
+const ago = (t) => (t ? TEXT.ago(serverNow() - t) : '-');
+function clock(t) {
+  const d = new Date((t - state.offset) * 1000);
+  return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+}
+function setOffset(now) { if (typeof now === 'number') state.offset = now - Math.floor(Date.now() / 1000); }
+function statusLabel(code) {
+  const s = state.data && state.data.statuses.find((x) => x.code === code);
+  return s ? s.label : '';
+}
+function fmsKey(code) {
+  const k = make('span', 'fms', code ?? '-');
+  if (code === 0) k.classList.add('fms--sos');
+  else if (code === 5) k.classList.add('fms--talk');
+  else if (BUSY_STATUSES.has(code)) k.classList.add('fms--busy');
+  else if (code === 6) k.classList.add('fms--off');
+  k.title = statusLabel(code);
+  k.setAttribute('aria-label', `Status ${code}: ${statusLabel(code)}`);
+  return k;
+}
+function prio(level) {
+  const list = (state.data && state.data.priorities) || state.priorities || [];
+  const p = list.find((x) => x.level === level);
+  return make('span', `prio prio--${level}`, p ? p.label : level);
+}
+function isFree(u) { return state.data && state.data.free[u.status] && !u.callId; }
+
+/* ---------- Alarm (Monitor) ---------- */
+function showAlert(d) {
+  const c = d.call;
+  [...el.alerts.children].forEach((n) => { if (Number(n.dataset.id) === c.id) n.remove(); });
+  const urgent = d.kind === 'urgent' || c.kind === 'unit' || c.priority >= 3;
+  const card = make('article', `alert${urgent ? ' alert--urgent' : ''}`);
+  card.dataset.id = c.id;
+  const top = make('div', 'alert__top');
+  const kind = c.kind === 'unit' ? TEXT.alert.unit : d.kind === 'assigned' ? TEXT.alert.assigned : TEXT.alert.new;
+  top.append(make('span', 'alert__kind', kind), prio(c.priority));
+  const where = make('div', 'alert__where', [c.location, TEXT.dist(c.distance)].filter(Boolean).join(' · '));
+  const keys = make('div', 'alert__keys');
+  const k1 = make('span'); k1.append(make('span', 'kbd', d.keys.accept), make('span', '', TEXT.alert.accept));
+  const k2 = make('span'); k2.append(make('span', 'kbd', d.keys.mdt), make('span', '', TEXT.alert.mdt));
+  keys.append(k1, k2);
+  const timer = make('div', 'alert__timer');
+  card.append(top, make('div', 'alert__number', c.number), make('div', 'alert__text', c.text), where, keys, timer);
+  el.alerts.prepend(card);
+  while (el.alerts.children.length > MAX_ALERTS) el.alerts.lastChild.remove();
+  timer.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: d.ms, easing: 'linear', fill: 'forwards' });
+  setTimeout(() => card.remove(), d.ms);
+}
+
+/* ---------- Notruf (Configure) ---------- */
+function renderForm() {
+  const f = state.form;
+  el.formMain.replaceChildren();
+  const head = make('div', 'form__head');
+  const titles = make('div');
+  const h = make('h2', 'form__title', TEXT.form.title);
+  h.id = 'form-title';
+  titles.append(h, make('div', 'form__sub', TEXT.form.sub));
+  const x = button('', 'close', 'btn--ghost btn--icon');
+  x.append(icon('i-close'));
+  x.setAttribute('aria-label', TEXT.close);
+  head.append(titles, x);
+  el.formMain.append(head);
+
+  const fService = make('div', 'field');
+  fService.append(make('span', 'label', TEXT.form.service));
+  const services = make('div', 'services');
+  services.setAttribute('role', 'group');
+  f.services.forEach((s) => {
+    const b = make('button', 'service');
+    b.type = 'button';
+    b.dataset.action = 'form-service';
+    b.dataset.key = s.key;
+    b.setAttribute('aria-pressed', String(state.formService === s.key));
+    b.append(make('span', 'service__name', s.label), make('span', `service__units${s.units === 0 ? ' service__units--none' : ''}`, TEXT.form.units(s.units)));
+    services.append(b);
+  });
+  fService.append(services);
+  el.formMain.append(fService);
+
+  const fText = make('div', 'field');
+  const lab = make('label', 'label', TEXT.form.what);
+  lab.htmlFor = 'form-text';
+  const area = make('textarea', 'textarea');
+  area.id = 'form-text';
+  area.maxLength = f.textMax;
+  area.placeholder = TEXT.form.placeholder;
+  area.value = state.formText;
+  const quick = make('div', 'quick');
+  TEXT.form.quick.forEach((q) => { const b = make('button', '', q); b.type = 'button'; b.dataset.action = 'form-quick'; b.dataset.text = q; quick.append(b); });
+  const counter = make('div', 'counter num', TEXT.form.count(state.formText.length, f.textMax));
+  counter.id = 'form-count';
+  fText.append(lab, area, quick, counter);
+  el.formMain.append(fText);
+
+  const fWhere = make('div', 'field');
+  fWhere.append(make('span', 'label', TEXT.form.where));
+  const where = make('div', 'where');
+  const w = make('div');
+  w.append(make('div', 'where__name', f.location || TEXT.form.noLocation), make('div', 'where__hint', TEXT.form.whereHint));
+  where.append(icon('i-pin'), w);
+  fWhere.append(where);
+  el.formMain.append(fWhere);
+
+  const fAnon = make('div', 'field');
+  const lbl = make('label', 'check');
+  const box = make('input');
+  box.type = 'checkbox';
+  box.id = 'form-anon';
+  box.checked = state.formAnon;
+  const t = make('span', '', TEXT.form.anon);
+  t.append(make('small', '', TEXT.form.anonHint));
+  lbl.append(box, t);
+  fAnon.append(lbl);
+  el.formMain.append(fAnon);
+
+  const foot = make('div', 'form__foot');
+  const svc = f.services.find((s) => s.key === state.formService);
+  let notice = '';
+  if (f.blockedUntil) notice = TEXT.form.blocked(f.blockedUntil);
+  else if (f.cooldown) notice = TEXT.form.cooldown(f.cooldown);
+  else if (svc && svc.units === 0) notice = TEXT.form.nobody;
+  foot.append(make('span', `notice${notice ? ' notice--warn' : ''}`, notice));
+  const send = button(TEXT.form.send, 'form-send', 'btn--primary');
+  send.prepend(icon('i-send'));
+  send.disabled = Boolean(f.blockedUntil);
+  foot.append(send);
+  el.formMain.append(foot);
+  renderMine();
+}
+
+function renderMine() {
+  const f = state.form;
+  el.formSide.replaceChildren(make('h3', 'section-title', TEXT.form.mine));
+  if (!f.calls.length) { el.formSide.append(make('div', 'empty', TEXT.form.mineEmpty)); return; }
+  const list = make('div', 'mine');
+  f.calls.forEach((c) => {
+    const item = make('article', 'mine__item');
+    const top = make('div', 'mine__top');
+    const live = c.status !== 'closed';
+    top.append(make('span', 'mine__number num', c.number), make('span', `mine__state${live ? ' mine__state--live' : ''}`, c.status === 'closed' ? (c.result || TEXT.form.state.closed) : TEXT.form.state[c.status]));
+    item.append(top, make('div', 'mine__text', c.text));
+    c.messages.forEach((msg) => {
+      const m = make('div', 'mine__msg');
+      m.append(make('small', 'num', `${TEXT.form.reply} · ${clock(msg.at)}`), make('span', '', msg.text));
+      item.append(m);
+    });
+    const foot = make('div', 'mine__foot');
+    foot.append(make('span', 'num', `${c.service} · ${ago(c.createdAt)}`));
+    if (live) foot.append(button(TEXT.form.cancel, 'form-cancel', 'btn--sm btn--ghost', { id: c.id }));
+    item.append(foot);
+    list.append(item);
+  });
+  el.formSide.append(list);
+}
+
+/* ---------- MDT: Kopf, Funkstatus, Einheiten ---------- */
+function renderHead() {
+  const d = state.data;
+  el.head.replaceChildren();
+  const brand = make('div', 'brand');
+  if (d.org && d.org.logo) {
+    const img = make('img');
+    img.src = d.org.logo;
+    img.alt = '';
+    brand.append(img);
+  }
+  const t = make('div');
+  const h = make('h1', 'brand__title', `${TEXT.mdt.title} ${d.service.label}`);
+  h.id = 'mdt-title';
+  t.append(h, make('div', 'brand__sub', d.org ? d.org.label : d.service.label));
+  brand.append(t);
+  el.head.append(brand, make('div', 'head__fill'));
+  if (d.admin) el.head.append(make('span', 'head__admin', TEXT.mdt.admin));
+  if (state.me) {
+    const me = make('div', 'head__me');
+    const who = make('div');
+    who.append(make('div', 'head__me-name', state.me.callsign ? `${state.me.callsign} · ${state.me.name}` : state.me.name),
+      make('div', 'head__me-status', statusLabel(state.me.status)));
+    me.append(fmsKey(state.me.status), who);
+    el.head.append(me);
+  }
+  const c = make('span', 'head__clock num', clock(serverNow()));
+  c.id = 'clock';
+  const x = button('', 'close', 'btn--ghost btn--icon close-x');
+  x.append(icon('i-close'));
+  x.setAttribute('aria-label', TEXT.close);
+  el.head.append(c, x);
+}
+
+function renderFms() {
+  el.fms.replaceChildren();
+  const me = state.me;
+  if (!me) { el.fms.hidden = true; return; }
+  el.fms.hidden = false;
+  el.fms.append(make('h2', 'section-title', TEXT.mdt.fms));
+  const now = make('div', 'panelfms__now');
+  const digit = make('div', 'panelfms__digit', me.status);
+  if (me.status === 0) digit.classList.add('panelfms__digit--sos');
+  else if (!BUSY_STATUSES.has(me.status)) digit.classList.add('panelfms__digit--free');
+  const t = make('div');
+  t.append(make('div', 'panelfms__label', statusLabel(me.status)), make('div', 'panelfms__since num', TEXT.mdt.since(clock(me.since))));
+  now.append(digit, t);
+  const pad = make('div', 'keypad');
+  KEYPAD.forEach((code) => {
+    const k = make('button', `key${code === 0 ? ' key--sos' : ''}`);
+    k.type = 'button';
+    k.dataset.action = 'status';
+    k.dataset.code = code;
+    k.setAttribute('aria-pressed', String(me.status === code));
+    if (code === 0 && state.sosArmed) k.classList.add('key--armed');
+    k.append(make('span', 'key__digit', code), make('span', 'key__label', code === 0 && state.sosArmed ? TEXT.mdt.armed : statusLabel(code)));
+    pad.append(k);
+  });
+  const cs = make('div', 'callsign');
+  const input = make('input', 'input');
+  input.id = 'callsign';
+  input.maxLength = state.data.limits.callsign;
+  input.placeholder = TEXT.mdt.callsignPh;
+  input.value = me.callsign || '';
+  input.setAttribute('aria-label', TEXT.mdt.callsign);
+  cs.append(input, button(TEXT.mdt.save, 'callsign', 'btn--sm'));
+  el.fms.append(now, pad, cs);
+}
+
+function unitRow(u, extra) {
+  const row = make('div', `unit${state.me && u.id === state.me.id ? ' unit--me' : ''}`);
+  const who = make('div');
+  who.style.minWidth = '0';
+  who.append(make('div', 'unit__name', u.name), make('div', 'unit__sub', [u.callsign, u.dn].filter(Boolean).join(' · ') || statusLabel(u.status)));
+  row.append(fmsKey(u.status), who);
+  if (extra) row.append(...extra);
+  return row;
+}
+
+function renderUnits() {
+  el.units.replaceChildren();
+  const head = make('div', 'units__head');
+  const free = state.units.filter(isFree).length;
+  head.append(make('h2', 'section-title', TEXT.mdt.units), make('span', 'units__count num', TEXT.mdt.unitsCount(state.units.length, free)));
+  el.units.append(head);
+  if (!state.units.length) { el.units.append(make('div', 'empty', TEXT.mdt.noUnits)); return; }
+  const order = [...state.units].sort((a, b) => (a.status === 0 ? -1 : b.status === 0 ? 1 : a.status === 5 ? -1 : b.status === 5 ? 1 : a.status - b.status));
+  order.forEach((u) => {
+    const callNo = u.callId && state.calls.get(u.callId);
+    el.units.append(unitRow(u, [make('span', 'unit__call num', callNo ? callNo.number.split(' ')[1] : '')]));
+  });
+}
+
+/* ---------- MDT: Einsatzliste ---------- */
+function visibleCalls() {
+  let list = [...state.calls.values()];
+  if (state.filter === 'open') list = list.filter((c) => c.status === 'open');
+  if (state.filter === 'mine') list = list.filter((c) => state.me && c.units.some((u) => u.id === state.me.id));
+  return list.sort((a, b) => (b.priority - a.priority) || (a.createdAt - b.createdAt));
+}
+
+function renderTabs() {
+  el.tabs.replaceChildren();
+  const tabs = [['calls', TEXT.mdt.tabs.calls, state.calls.size]];
+  if (state.data.archive) tabs.push(['archive', TEXT.mdt.tabs.archive]);
+  tabs.forEach(([id, label, n]) => {
+    const b = make('button', 'tab', label);
+    b.type = 'button';
+    b.dataset.action = 'tab';
+    b.dataset.tab = id;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(state.tab === id));
+    if (n !== undefined) b.append(make('span', 'num', n));
+    el.tabs.append(b);
+  });
+}
+
+function renderList() {
+  if (state.tab === 'archive') { renderArchive(); return; }
+  el.toolbar.replaceChildren();
+  const all = [...state.calls.values()];
+  const summary = make('div', 'summary num');
+  TEXT.mdt.summary(all.filter((c) => c.status === 'open').length, all.filter((c) => c.status === 'active').length, state.units.filter(isFree).length)
+    .forEach(([label, n], i) => {
+      if (i) summary.append(' · ');
+      summary.append(make('b', '', n), ` ${label}`);
+    });
+  const filters = make('div', 'filters');
+  Object.entries(TEXT.mdt.filters).forEach(([key, label]) => {
+    if (key === 'mine' && !state.me) return;
+    const b = make('button', 'filter', label);
+    b.type = 'button';
+    b.dataset.action = 'filter';
+    b.dataset.filter = key;
+    b.setAttribute('aria-pressed', String(state.filter === key));
+    filters.append(b);
+  });
+  el.toolbar.append(summary, filters);
+
+  el.list.replaceChildren();
+  const list = visibleCalls();
+  if (!list.length) { el.list.append(make('div', 'empty', state.filter === 'mine' ? TEXT.mdt.noCallsMine : TEXT.mdt.noCalls)); return; }
+  const head = make('div', 'list__head');
+  TEXT.mdt.cols.forEach((c, i) => head.append(make('span', i >= 3 ? 'r' : '', c)));
+  el.list.append(head);
+  list.forEach((c) => {
+    const urgent = c.priority >= 3 || c.kind === 'unit';
+    const row = make('button', `row${urgent ? ' row--urgent' : ''}`);
+    row.type = 'button';
+    row.dataset.action = 'pick';
+    row.dataset.id = c.id;
+    row.setAttribute('aria-selected', String(state.selected === c.id));
+    const text = make('div', 'row__text');
+    const msg = make('div', 'row__msg', c.text);
+    if (c.kind === 'unit') msg.prepend(make('span', 'tag', TEXT.mdt.unitCall), ' ');
+    text.append(msg, make('div', 'row__where', c.location || ''));
+    const units = make('div', 'row__units');
+    if (c.units.length) c.units.forEach((u) => units.append(fmsKey(u.status ?? 3)));
+    else units.append(make('span', 'row__open', TEXT.mdt.waiting));
+    row.append(prio(c.priority), make('span', 'row__number', c.number), text, make('span', 'row__right num', TEXT.dist(c.distance)), make('span', 'row__right num', ago(c.createdAt)), units);
+    el.list.append(row);
+  });
+}
+
+/* ---------- MDT: Einsatz im Detail ---------- */
+function fact(dl, label, value) {
+  const wrap = make('div');
+  wrap.append(make('dt', '', label), make('dd', 'num', value));
+  dl.append(wrap);
+}
+
+function renderDetail() {
+  el.detail.replaceChildren();
+  const d = state.detail;
+  if (!d) { el.detail.append(make('div', 'empty', TEXT.mdt.pick)); return; }
+  const c = d.call;
+  const live = c.status !== 'closed';
+  const top = make('div', 'call__top');
+  top.append(prio(c.priority), make('span', 'call__state', live ? TEXT.mdt.state[c.status] : (c.result || TEXT.mdt.state.closed)));
+  if (c.kind === 'unit') top.append(make('span', 'tag', TEXT.mdt.unitCall));
+  if (c.callerDown) top.append(make('span', 'tag', TEXT.mdt.down));
+  el.detail.append(top, make('h2', 'call__number', c.number), make('p', 'call__msg', c.text));
+
+  const dl = make('dl', 'facts');
+  fact(dl, TEXT.mdt.facts.caller, c.caller ? `${c.caller.name} · ID ${c.caller.id}` : c.anonymous ? TEXT.mdt.anon : '-');
+  fact(dl, TEXT.mdt.facts.where, c.location || '-');
+  fact(dl, TEXT.mdt.facts.created, `${clock(c.createdAt)} · vor ${ago(c.createdAt)}`);
+  fact(dl, TEXT.mdt.facts.distance, live ? TEXT.dist(c.distance) : '-');
+  fact(dl, TEXT.mdt.facts.accept, c.acceptedAt ? TEXT.dur(c.acceptedAt - c.createdAt) : '-');
+  fact(dl, TEXT.mdt.facts.arrive, c.arrivedAt ? TEXT.dur(c.arrivedAt - c.createdAt) : '-');
+  if (!live) { fact(dl, TEXT.mdt.facts.closed, c.closedAt ? clock(c.closedAt) : '-'); fact(dl, TEXT.mdt.facts.by, c.closedBy || '-'); }
+  el.detail.append(dl);
+
+  if (live) {
+    const actions = make('div', 'actions');
+    if (state.me) actions.append(d.assigned ? button(TEXT.mdt.release, 'release', '', { id: c.id }) : button(TEXT.mdt.accept, 'accept', 'btn--primary', { id: c.id }));
+    const route = button(TEXT.mdt.route, 'route', '', { id: c.id });
+    route.prepend(icon('i-route'));
+    actions.append(route);
+    if (d.canWork) {
+      const sel = make('select', 'select');
+      sel.id = 'priority';
+      sel.style.width = 'auto';
+      sel.setAttribute('aria-label', TEXT.mdt.priority);
+      state.data.priorities.forEach((p) => { const o = make('option', '', `${TEXT.mdt.priority}: ${p.label}`); o.value = p.level; sel.append(o); });
+      sel.value = String(c.priority);
+      actions.append(sel);
+    }
+    el.detail.append(actions);
+  }
+
+  const onCall = make('div', 'block');
+  onCall.append(make('h3', 'section-title', TEXT.mdt.onCall));
+  const oc = make('div', 'oncall');
+  if (!c.units.length) oc.append(make('div', 'muted', TEXT.mdt.noneOnCall));
+  c.units.forEach((u) => {
+    const live_ = state.units.find((x) => x.id === u.id);
+    const extra = [];
+    if (live && state.data.manage) extra.push(button(TEXT.mdt.unassign, 'assign', 'btn--sm btn--ghost', { id: c.id, unit: u.id, remove: 'true' }));
+    oc.append(unitRow({ ...u, ...(live_ || {}) }, extra));
+  });
+  onCall.append(oc);
+  el.detail.append(onCall);
+
+  if (live && d.nearest && d.nearest.length) {
+    const near = make('div', 'block near');
+    near.append(make('h3', 'section-title', TEXT.mdt.nearest));
+    d.nearest.filter((u) => !c.units.some((x) => x.id === u.id)).slice(0, 5).forEach((u) => {
+      near.append(unitRow(u, [make('span', 'near__dist', `${TEXT.dist(u.distance)}${u.free ? ` · ${TEXT.mdt.free}` : ''}`),
+        button(TEXT.mdt.assign, 'assign', u.free ? 'btn--sm' : 'btn--sm btn--ghost', { id: c.id, unit: u.id })]));
+    });
+    el.detail.append(near);
+  }
+
+  if (live && d.canWork && c.kind === 'call') {
+    const msg = make('div', 'block');
+    msg.append(make('h3', 'section-title', TEXT.mdt.message));
+    const row = make('div', 'block__row');
+    const input = make('input', 'input');
+    input.id = 'message';
+    input.maxLength = state.data.limits.message;
+    input.placeholder = TEXT.mdt.messagePh;
+    input.setAttribute('aria-label', TEXT.mdt.message);
+    const send = button(TEXT.mdt.send, 'message', '', { id: c.id });
+    row.append(input, send);
+    msg.append(row);
+    el.detail.append(msg);
+  }
+
+  if (live) {
+    const note = make('div', 'block');
+    note.append(make('h3', 'section-title', TEXT.mdt.note));
+    const row = make('div', 'block__row');
+    const input = make('input', 'input');
+    input.id = 'note';
+    input.maxLength = state.data.limits.note;
+    input.placeholder = TEXT.mdt.notePh;
+    input.setAttribute('aria-label', TEXT.mdt.note);
+    row.append(input, button(TEXT.mdt.noteSave, 'note', '', { id: c.id }));
+    note.append(row);
+    el.detail.append(note);
+  }
+
+  if (live && d.canWork) {
+    const close = make('div', 'block');
+    close.append(make('h3', 'section-title', TEXT.mdt.closeTitle));
+    const grid = make('div', 'close-grid');
+    const sel = make('select', 'select');
+    sel.id = 'result';
+    sel.setAttribute('aria-label', TEXT.mdt.result);
+    const blank = make('option', '', `${TEXT.mdt.result} wählen`);
+    blank.value = '';
+    sel.append(blank);
+    state.data.results.forEach((r) => { const o = make('option', '', r.label); o.value = r.key; sel.append(o); });
+    const area = make('textarea', 'textarea');
+    area.id = 'report';
+    area.maxLength = state.data.limits.report;
+    area.placeholder = TEXT.mdt.reportPh;
+    area.setAttribute('aria-label', TEXT.mdt.report);
+    const hint = make('div', 'muted');
+    hint.id = 'result-hint';
+    hint.style.fontSize = 'var(--fs-xs)';
+    grid.append(sel, area, hint, button(TEXT.mdt.closeBtn, 'close-call', 'btn--primary', { id: c.id }));
+    close.append(grid);
+    el.detail.append(close);
+  }
+
+  if (!live && c.report) {
+    const rep = make('div', 'block');
+    rep.append(make('h3', 'section-title', TEXT.mdt.report_), make('div', 'report', c.report));
+    el.detail.append(rep);
+  }
+
+  const tl = make('div', 'block');
+  tl.append(make('h3', 'section-title', TEXT.mdt.timeline));
+  const list = make('ol', 'timeline');
+  d.events.forEach((e) => {
+    const li = make('li');
+    const body = make('div', e.kind === 'message' ? 'ev--message' : '');
+    body.append(make('span', '', `${TEXT.mdt.ev[e.kind] || ''}${TEXT.mdt.ev[e.kind] ? ': ' : ''}${e.text}`));
+    if (e.by) body.append(make('small', '', e.by));
+    li.append(make('time', 'num', clock(e.at)), body);
+    list.append(li);
+  });
+  tl.append(list);
+  el.detail.append(tl);
+}
+
+async function loadDetail(id, keep = false) {
+  const data = await call('dispatch_call_get', { id });
+  if (!data) return;
+  setOffset(data.now);
+  if (keep && state.selected !== id) return;
+  state.selected = id;
+  state.detail = data;
+  renderDetail();
+  if (state.tab === 'calls') renderList();
+}
+
+/* ---------- MDT: Archiv ---------- */
+function renderArchive() {
+  const a = state.archive;
+  el.toolbar.replaceChildren();
+  el.list.replaceChildren();
+  if (!a) return;
+  const s = a.stats;
+  if (s) {
+    const stats = make('div', 'stats');
+    [[TEXT.mdt.stats.today, s.today], [TEXT.mdt.stats.accept, TEXT.dur(s.avgAccept)], [TEXT.mdt.stats.arrive, TEXT.dur(s.avgArrive)], [TEXT.mdt.stats.abuse, s.abuse]]
+      .forEach(([label, value]) => {
+        const st = make('div');
+        st.append(make('div', 'stat__label', label), make('div', 'stat__value', value));
+        stats.append(st);
+      });
+    const week = make('div');
+    week.append(make('div', 'stat__label', TEXT.mdt.stats.week));
+    const chart = make('div', 'chart');
+    const max = Math.max(1, ...s.days.map((x) => x.calls));
+    const base = new Date(`${s.date}T12:00:00`);
+    s.days.forEach((day) => {
+      const col = make('div', `chart__col${day.ago === 0 ? ' chart__col--today' : ''}`);
+      const bar = make('div', 'chart__bar');
+      bar.style.height = `${(day.calls / max) * 100}%`;
+      bar.title = `${day.calls}`;
+      const date = new Date(base.getTime() - day.ago * 86400000);
+      const label = make('div');
+      label.append(make('div', 'chart__n', day.calls), make('div', 'chart__day', TEXT.mdt.days[date.getDay()]));
+      col.append(bar, label);
+      chart.append(col);
+    });
+    week.append(chart);
+    stats.append(week);
+    el.toolbar.append(stats);
+  }
+  const bar = make('div', 'toolbar');
+  bar.style.padding = '0';
+  bar.style.width = '100%';
+  const input = make('input', 'input');
+  input.id = 'archive-search';
+  input.type = 'search';
+  input.placeholder = TEXT.mdt.search;
+  input.value = state.archiveSearch;
+  input.setAttribute('aria-label', TEXT.mdt.search);
+  const sel = make('select', 'select');
+  sel.id = 'archive-result';
+  sel.setAttribute('aria-label', TEXT.mdt.allResults);
+  const all = make('option', '', TEXT.mdt.allResults);
+  all.value = '';
+  sel.append(all);
+  state.data.results.forEach((r) => { const o = make('option', '', r.label); o.value = r.key; sel.append(o); });
+  sel.value = state.archiveResult;
+  const go = button('', 'archive-search', 'btn--icon');
+  go.append(icon('i-search'));
+  go.setAttribute('aria-label', TEXT.mdt.search);
+  bar.append(input, go, sel);
+  el.toolbar.append(bar);
+
+  if (!a.entries.length) { el.list.append(make('div', 'empty', TEXT.mdt.noArchive)); return; }
+  const head = make('div', 'list__head archive-head');
+  TEXT.mdt.archiveCols.forEach((c) => head.append(make('span', '', c)));
+  el.list.append(head);
+  a.entries.forEach((c) => {
+    const row = make('button', 'row archive-row');
+    row.type = 'button';
+    row.dataset.action = 'pick-archive';
+    row.dataset.id = c.id;
+    row.setAttribute('aria-selected', String(state.selected === c.id));
+    const text = make('div', 'row__text');
+    const msg = make('div', 'row__msg', c.text);
+    if (c.kind === 'unit') msg.prepend(make('span', 'tag', TEXT.mdt.unitCall), ' ');
+    text.append(msg, make('div', 'row__where', c.location || ''));
+    const res = make('span', 'row__msg', c.result || '');
+    const day = new Date((c.createdAt - state.offset) * 1000).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+    row.append(make('span', 'row__number', c.number), make('span', 'num', `${day} ${clock(c.createdAt)}`), text, res, make('span', 'num muted', c.units.map((u) => u.name.split(' ')[0]).join(', ')));
+    el.list.append(row);
+  });
+  if (a.more) { const p = make('div', 'pager'); p.append(button(TEXT.mdt.more, 'archive-more')); el.list.append(p); }
+}
+
+async function loadArchive(page = 1) {
+  const data = await call('dispatch_archive', { page, search: state.archiveSearch || undefined, result: state.archiveResult || undefined });
+  if (!data) return;
+  state.archive = page === 1 ? data : { ...data, entries: [...state.archive.entries, ...data.entries] };
+  renderArchive();
+}
+
+function renderMdt() {
+  renderHead();
+  renderFms();
+  renderUnits();
+  renderTabs();
+  renderList();
+  renderDetail();
+}
+
+/* ---------- Aktionen ---------- */
+let sosTimer = null;
+const actions = {
+  close: () => closeView(),
+  'form-service': (t) => { state.formService = t.dataset.key; renderForm(); },
+  'form-quick': (t) => {
+    const area = document.getElementById('form-text');
+    state.formText = area.value.trim() ? `${area.value.trim()}. ${t.dataset.text}` : t.dataset.text;
+    renderForm();
+    const a = document.getElementById('form-text');
+    a.focus();
+    a.setSelectionRange(a.value.length, a.value.length);
+  },
+  'form-send': async (t) => {
+    const text = document.getElementById('form-text').value.trim();
+    if (text.length < state.form.textMin) { toast(TEXT.errors.text_too_short, true); return; }
+    t.disabled = true;
+    t.textContent = TEXT.form.sending;
+    const data = await request('form_send', { text, service: state.formService, anonymous: document.getElementById('form-anon').checked });
+    if (data) {
+      toast(TEXT.form.sent(data.number));
+      state.formText = '';
+      const mine = await call('dispatch_mine', {});
+      if (mine) state.form = { ...state.form, ...mine };
+    }
+    renderForm();
+  },
+  'form-cancel': async (t) => {
+    if (await call('dispatch_cancel', { id: Number(t.dataset.id) })) {
+      toast(TEXT.form.cancelled);
+      const mine = await call('dispatch_mine', {});
+      if (mine) { state.form = { ...state.form, ...mine }; renderMine(); }
+    }
+  },
+  tab: async (t) => {
+    state.tab = t.dataset.tab;
+    state.selected = null;
+    state.detail = null;
+    if (state.tab === 'archive') await loadArchive(1);
+    renderTabs();
+    renderList();
+    renderDetail();
+  },
+  filter: (t) => { state.filter = t.dataset.filter; renderList(); },
+  pick: (t) => loadDetail(Number(t.dataset.id)),
+  'pick-archive': (t) => { state.selected = Number(t.dataset.id); renderArchive(); loadDetail(Number(t.dataset.id)); },
+  accept: async (t) => {
+    const data = await call('dispatch_accept', { id: Number(t.dataset.id) });
+    if (data) { toast(TEXT.mdt.accepted); if (data.call) state.calls.set(data.call.id, data.call); await loadDetail(Number(t.dataset.id)); }
+  },
+  release: async (t) => { if (await call('dispatch_release', { id: Number(t.dataset.id) })) { toast(TEXT.mdt.released); loadDetail(Number(t.dataset.id)); } },
+  route: async (t) => {
+    const c = state.detail && state.detail.call;
+    const res = await Bridge.send('mdt_route', { id: Number(t.dataset.id), pos: c ? c.pos : undefined });
+    if (res && res.ok) toast(TEXT.mdt.routeSet); else toast(errorText(res), true);
+  },
+  assign: async (t) => {
+    const remove = t.dataset.remove === 'true';
+    if (await call('dispatch_assign', { id: Number(t.dataset.id), characterId: Number(t.dataset.unit), remove })) {
+      toast(remove ? TEXT.mdt.unassigned : TEXT.mdt.assigned);
+      loadDetail(Number(t.dataset.id));
+    }
+  },
+  message: async (t) => {
+    const input = document.getElementById('message');
+    const text = input.value.trim();
+    if (!text) { input.focus(); return; }
+    if (await call('dispatch_message', { id: Number(t.dataset.id), text })) { toast(TEXT.mdt.sent); loadDetail(Number(t.dataset.id)); }
+  },
+  note: async (t) => {
+    const input = document.getElementById('note');
+    const text = input.value.trim();
+    if (!text) { input.focus(); return; }
+    if (await call('dispatch_note', { id: Number(t.dataset.id), text })) { toast(TEXT.mdt.noted); loadDetail(Number(t.dataset.id)); }
+  },
+  'close-call': async (t) => {
+    const result = document.getElementById('result').value;
+    if (!result) { toast(TEXT.errors.invalid_result, true); document.getElementById('result').focus(); return; }
+    const report = document.getElementById('report').value.trim();
+    if (await call('dispatch_close', { id: Number(t.dataset.id), result, report: report || undefined })) {
+      toast(TEXT.mdt.closed);
+      state.calls.delete(Number(t.dataset.id));
+      state.selected = null;
+      state.detail = null;
+      renderMdt();
+    }
+  },
+  status: async (t) => {
+    const code = Number(t.dataset.code);
+    if (code === 0 && state.me.status !== 0 && !state.sosArmed) {
+      state.sosArmed = true;
+      renderFms();
+      clearTimeout(sosTimer);
+      sosTimer = setTimeout(() => { state.sosArmed = false; renderFms(); }, SOS_ARM_MS);
+      return;
+    }
+    state.sosArmed = false;
+    const data = await call('dispatch_status', { status: code });
+    if (data) { state.me = { ...state.me, status: data.status, since: serverNow() }; toast(TEXT.mdt.status(code, statusLabel(code))); renderHead(); renderFms(); }
+  },
+  callsign: async () => {
+    const value = document.getElementById('callsign').value.trim();
+    const data = await call('dispatch_callsign', { callsign: value });
+    if (data) { state.me = { ...state.me, callsign: data.callsign || undefined }; toast(TEXT.mdt.callsignSaved); renderHead(); }
+  },
+  'archive-search': () => { state.archiveSearch = document.getElementById('archive-search').value.trim(); loadArchive(1); },
+  'archive-more': () => loadArchive((state.archive.page || 1) + 1),
+};
+
+document.addEventListener('click', (event) => {
+  const t = event.target.closest('[data-action]');
+  if (!t || t.disabled) return;
+  const fn = actions[t.dataset.action];
+  if (fn) fn(t);
+});
+
+document.addEventListener('input', (event) => {
+  if (event.target.id === 'form-text') {
+    state.formText = event.target.value;
+    const c = document.getElementById('form-count');
+    if (c) c.textContent = TEXT.form.count(event.target.value.length, state.form.textMax);
+  }
+  if (event.target.id === 'form-anon') state.formAnon = event.target.checked;
+});
+
+document.addEventListener('change', async (event) => {
+  const t = event.target;
+  if (t.id === 'form-anon') state.formAnon = t.checked;
+  if (t.id === 'priority' && state.detail) {
+    if (await call('dispatch_priority', { id: state.detail.call.id, level: Number(t.value) })) loadDetail(state.detail.call.id);
+  }
+  if (t.id === 'archive-result') { state.archiveResult = t.value; loadArchive(1); }
+  if (t.id === 'result') {
+    const r = state.data.results.find((x) => x.key === t.value);
+    document.getElementById('result-hint').textContent = r && r.block ? TEXT.mdt.abuse(state.data.blockMinutes) : '';
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (!state.view) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeView(); return; }
+  if (event.key !== 'Enter') return;
+  const id = event.target.id;
+  if (id === 'message') { event.preventDefault(); document.querySelector('[data-action="message"]').click(); }
+  if (id === 'note') { event.preventDefault(); document.querySelector('[data-action="note"]').click(); }
+  if (id === 'callsign') { event.preventDefault(); actions.callsign(); }
+  if (id === 'archive-search') { event.preventDefault(); actions['archive-search'](); }
+  if (id === 'form-text' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); document.querySelector('[data-action="form-send"]').click(); }
+});
+
+/* ---------- Oeffnen und Schliessen ---------- */
+let tickTimer = null;
+function startTick() {
+  clearInterval(tickTimer);
+  tickTimer = setInterval(() => {
+    if (state.view !== 'mdt') return;
+    const c = document.getElementById('clock');
+    if (c) c.textContent = clock(serverNow());
+    if (state.tab === 'calls') renderList();
+  }, TICK_MS);
+}
+
+function hideAll() {
+  state.view = null;
+  el.form.hidden = true;
+  el.mdt.hidden = true;
+  clearInterval(tickTimer);
+  tickTimer = null;
+}
+
+function closeView() {
+  if (!state.view) return;
+  hideAll();
+  Bridge.send('ui_close', {});
+}
+
+Bridge.on('alert_show', (d) => { setOffset(d.now); if (d.priorities) state.priorities = d.priorities; showAlert(d); });
+Bridge.on('alert_hide', (d) => { [...el.alerts.children].forEach((n) => { if (Number(n.dataset.id) === d.id) n.remove(); }); });
+
+Bridge.on('form_open', (d) => {
+  applyColors(d.colors);
+  setOffset(d.now);
+  state.form = d;
+  state.formService = d.default || (d.services[0] && d.services[0].key);
+  state.formText = '';
+  state.formAnon = false;
+  state.view = 'form';
+  el.mdt.hidden = true;
+  el.form.hidden = false;
+  renderForm();
+  document.getElementById('form-text').focus();
+});
+Bridge.on('form_mine', (d) => { if (state.view === 'form') { state.form = { ...state.form, ...d }; renderMine(); } });
+
+Bridge.on('mdt_open', (d) => {
+  applyColors(d.colors);
+  setOffset(d.now);
+  state.data = d;
+  state.me = d.me || null;
+  state.units = d.units || [];
+  state.calls = new Map((d.calls || []).map((c) => [c.id, c]));
+  Object.assign(state, { tab: 'calls', filter: 'all', selected: null, detail: null, archive: null, archiveSearch: '', archiveResult: '', sosArmed: false });
+  state.view = 'mdt';
+  el.form.hidden = true;
+  el.alerts.replaceChildren();
+  el.mdt.hidden = false;
+  renderMdt();
+  startTick();
+  const first = visibleCalls()[0];
+  if (first) loadDetail(first.id);
+});
+
+Bridge.on('mdt_call', (d) => {
+  if (state.view !== 'mdt') return;
+  setOffset(d.now);
+  const c = d.call;
+  if (c.status === 'closed') {
+    state.calls.delete(c.id);
+    if (state.selected === c.id && state.tab === 'calls') { state.selected = null; state.detail = null; renderDetail(); }
+  } else {
+    state.calls.set(c.id, c);
+    if (state.selected === c.id) loadDetail(c.id, true);
+  }
+  renderTabs();
+  if (state.tab === 'calls') renderList();
+  renderUnits();
+});
+
+Bridge.on('mdt_units', (d) => {
+  if (state.view !== 'mdt') return;
+  state.units = d.units || [];
+  if (state.me) {
+    const mine = state.units.find((u) => u.id === state.me.id);
+    if (mine) state.me = { ...state.me, ...mine };
+  }
+  renderUnits();
+  renderHead();
+  renderFms();
+  if (state.tab === 'calls') renderList();
+});
+
+Bridge.on('mdt_self', (d) => {
+  if (state.view !== 'mdt' || !state.me) return;
+  if (!d.service && !state.data.admin) { hideAll(); return; }
+  state.me = { ...state.me, status: d.status ?? state.me.status, callId: d.callId, callsign: d.callsign };
+  renderHead();
+  renderFms();
+});
+
+Bridge.on('ui_hide', () => hideAll());
+
+(async () => {
+  const res = await Bridge.send('ui_ready', { ui: 'dispatch', version: CONTRACT_VERSION });
+  if (res && res.ok && res.data) applyColors(res.data.colors);
+  if (Bridge.platform === 'mock') {
+    const params = new URLSearchParams(location.search);
+    const v = params.get('view') || 'mdt';
+    if (v === 'form') Mock.push('form_open', Mock.mineData());
+    else if (v === 'alert') {
+      const keys = { accept: 'J', mdt: 'F6' };
+      const priorities = Mock.mdtData().priorities;
+      Mock.push('alert_show', { call: Mock.calls[1], now: Mock.NOW, kind: 'new', ms: 600000, keys, priorities });
+      Mock.push('alert_show', { call: Mock.calls[0], now: Mock.NOW, kind: 'urgent', ms: 600000, keys, priorities });
+    } else {
+      Mock.push('mdt_open', { ...Mock.mdtData(), colors: Mock.mdtData().org.theme });
+      if (params.get('tab') === 'archive') setTimeout(() => document.querySelector('[data-tab="archive"]').click(), 300);
+    }
+  }
+})();
+</script>
+</body>
+</html>
