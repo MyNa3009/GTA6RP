@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_factions'
 description 'Organisationen fuer die eigene Core: Raenge, Rechte, Abteilungen, Leitstelle, Archiv, Kasse, Dienst'
-version '1.1.0'
+version '1.2.0'
 
 dependencies {
     'core',
@@ -26,6 +26,7 @@ server_scripts {
     '@core_lib/init.lua',
     'server/schema.lua',
     'server/main.lua',
+    'server/protocol.lua',
     'server/consent.lua',
     'server/members.lua',
     'server/menu.lua',

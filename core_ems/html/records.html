@@ -1,30 +1,37 @@
 <!DOCTYPE html>
 <!--
   UI: Medizinische Datenbank (core_ems)
-  CONTRACT_VERSION: 1
+  CONTRACT_VERSION: 2
   Links Personen suchen (Name oder permanente ID), rechts die Krankenakte: Versicherung, aktuelle Erkrankungen, Verlauf.
-  Mit Recht ems.records.note kann man Eintraege schreiben. Die UI zeigt nur an, jede Anfrage prueft der Server.
+  Mit Recht ems.records.note kann man Eintraege schreiben. Mit ems.records.manage (Leitung) oder als Admin mit
+  factions.manage korrigiert man die Akte: Eintraege aendern oder loeschen (nur markiert, wiederherstellbar),
+  Versicherung setzen oder beenden, Krankheiten setzen oder heilen. Die UI zeigt nur an, jede Anfrage prueft der Server.
+  Jede Korrektur steht im Protokoll des Rettungsdiensts (Organisationsmenue, Protokolle).
 
   EINGEHEND (Lua -> UI)
-  records_open  { colors: { base, ink, accent, signal }, canNote: boolean, admin?: boolean, noteMax: number, characterId?: number }
+  records_open  { colors: { base, ink, accent, signal }, canNote: boolean, canManage?: boolean, admin?: boolean, noteMax: number,
+                  insuranceMaxDays?: number, diseases?: [{ disease, label, stages }], characterId?: number }
   records_close {}
 
   AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
-  ui_ready      { ui: "records", version: 1 }                     -> data.colors
+  ui_ready      { ui: "records", version: 2 }                     -> data.colors
   records_close {}
   records_call  { name, data }
     ems_records_search { text }                -> { results: [{ characterId, name, dateOfBirth, insuredUntil?, diseases }] }
     ems_records_get    { characterId }         -> Record
     ems_records_note   { characterId, text }   -> Record
+    ems_records_entry  { id, text } | { id, delete: true } | { id, restore: true }   -> Record   (nur canManage)
+    ems_records_insurance { characterId, days }  -> Record   (days 0 = beenden, nur canManage)
+    ems_records_disease   { characterId, disease, stage }   -> Record   (stage 0 = heilen, nur canManage)
 
   Record {
     characterId, name, dateOfBirth, gender: "male" | "female",
     insurance?: { validUntil, valid, soldBy },
-    diseases: [{ label, stage, stages, cure: "pill" | "treatment", series, needed }],
-    history: [{ kind, text, by?, at }]      // neuester Eintrag zuerst
+    diseases: [{ disease, label, stage, stages, cure: "pill" | "treatment", series, needed }],
+    history: [{ id, kind, text, by?, at, editedBy?, editedAt?, deletedBy? }]   // neuester zuerst, deletedBy nur fuer canManage
   }
 
-  FEHLERCODES: not_medic, not_on_duty, no_permission, not_found, invalid_input, server_error, timeout
+  FEHLERCODES: not_medic, not_on_duty, no_permission, not_found, invalid_input, not_insured, not_sick, already_sick, server_error, timeout
 -->
 <html lang="de">
 <head>
@@ -197,6 +204,27 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .btn:disabled { opacity: 0.45; cursor: default; }
 
+.history li.is-deleted .entry-text { text-decoration: line-through; color: var(--c-text-muted); }
+.history .edit-mark { color: var(--c-text-muted); font-style: italic; }
+.history .del-mark { color: var(--c-signal); font-weight: 600; }
+.entry-tools { display: flex; gap: var(--space-1); margin-top: var(--space-2); }
+/* Werkzeuge nur an der Zeile, die man anschaut (Maus oder Tastatur), damit der Verlauf ruhig bleibt */
+.history li:not(.is-deleted) .entry-tools { opacity: 0; }
+.history li:hover .entry-tools, .history li:focus-within .entry-tools { opacity: 1; }
+.btn--sm { height: 28px; padding: 0 var(--space-3); font-size: var(--fs-xs); }
+.btn--ghost { background: transparent; color: var(--c-text-2); border: 1px solid var(--c-border); }
+.btn--ghost:hover:not(:disabled) { background: var(--c-surface); color: var(--c-text); }
+.btn--danger { background: transparent; color: var(--c-signal); border: 1px solid rgb(var(--rgb-signal) / 0.45); }
+.btn--danger:hover:not(:disabled) { background: var(--c-signal-soft); }
+.select { height: var(--field-h); padding: 0 var(--space-2); border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: rgb(var(--rgb-base) / 0.9); color: var(--c-text); font: inherit; font-size: var(--fs-sm); }
+.fix { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px dashed rgb(var(--rgb-accent) / 0.45); border-radius: var(--radius-md); display: grid; gap: var(--space-2); }
+.fix__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-accent); letter-spacing: 0.05em; }
+.fix__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.fix__row .input { width: 96px; }
+.fix__hint { font-size: var(--fs-xs); color: var(--c-text-muted); line-height: 1.5; }
+.disease__fix { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.manage-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px var(--space-2); border-radius: var(--radius-xs); background: var(--c-accent-soft); color: var(--c-text); font-size: var(--fs-xs); font-weight: 600; }
+
 .empty-record { display: grid; place-items: center; height: 100%; color: var(--c-text-muted); font-size: var(--fs-md); text-align: center; line-height: 1.6; }
 
 .toast {
@@ -240,7 +268,7 @@ button, input, textarea { font: inherit; color: inherit; }
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script id="bridge">
-const CONTRACT_VERSION = 1;
+const CONTRACT_VERSION = 2;
 
 const Bridge = (() => {
   const handlers = {};
@@ -277,28 +305,58 @@ const Bridge = (() => {
 const Mock = (() => {
   const people = [
     { characterId: 256, name: 'Fabian Nandes', dateOfBirth: '1998-04-12', gender: 'male', insurance: { validUntil: '2026-12-07', valid: true, soldBy: 'Mira Schulz' },
-      diseases: [{ label: 'Bluthochdruck', stage: 2, stages: 3, cure: 'treatment', series: 1, needed: 3 }],
+      diseases: [{ disease: 'hypertension', label: 'Bluthochdruck', stage: 2, stages: 3, cure: 'treatment', series: 1, needed: 4 }],
       history: [
-        { kind: 'treatment', text: 'Bluthochdruck behandelt, 1 von 3', by: 'Mira Schulz', at: '2026-11-07 17:12' },
-        { kind: 'diagnosis', text: 'Untersucht: Bluthochdruck, Stadium 2 von 3', by: 'Mira Schulz', at: '2026-11-07 17:10' },
-        { kind: 'worse', text: 'Bluthochdruck, Stadium 2 von 3 schlimmer geworden', at: '2026-11-07 16:31' },
-        { kind: 'insurance', text: 'Krankenversicherung bis 2026-12-07', by: 'Mira Schulz', at: '2026-11-07 15:02' },
-        { kind: 'onset', text: 'Bluthochdruck, Stadium 1 von 3 begonnen', at: '2026-11-07 14:44' },
-        { kind: 'cured', text: 'Erkältung geheilt (Tablette)', at: '2026-11-05 21:18' },
-        { kind: 'revive', text: 'Vor Ort hochgeholt', by: 'Jonas Weber', at: '2026-11-03 23:40' },
+        { id: 58, kind: 'note', text: 'Allergie gegen Penicillin und Ibuprofen.', by: 'Mira Schulz', at: '2026-11-07 17:20', editedBy: 'Lena Hoffmann', editedAt: '2026-11-08 09:12' },
+        { id: 57, kind: 'treatment', text: 'Bluthochdruck behandelt, 1 von 4', by: 'Mira Schulz', at: '2026-11-07 17:12' },
+        { id: 56, kind: 'diagnosis', text: 'Untersucht: Bluthochdruck, Stadium 2 von 3', by: 'Mira Schulz', at: '2026-11-07 17:10' },
+        { id: 55, kind: 'note', text: 'Patient wirkt alkoholisiert.', by: 'Tom Becker', at: '2026-11-07 16:50', deletedBy: 'Lena Hoffmann' },
+        { id: 54, kind: 'worse', text: 'Bluthochdruck, Stadium 2 von 3 schlimmer geworden', at: '2026-11-07 16:31' },
+        { id: 53, kind: 'insurance', text: 'Krankenversicherung bis 2026-12-07', by: 'Mira Schulz', at: '2026-11-07 15:02' },
+        { id: 52, kind: 'onset', text: 'Bluthochdruck, Stadium 1 von 3 begonnen', at: '2026-11-07 14:44' },
+        { id: 51, kind: 'cured', text: 'Erkältung geheilt (Tablette)', at: '2026-11-05 21:18' },
+        { id: 50, kind: 'revive', text: 'Vor Ort hochgeholt', by: 'Jonas Weber', at: '2026-11-03 23:40' },
       ] },
-    { characterId: 17, name: 'Lena Hoffmann', dateOfBirth: '1991-09-30', gender: 'female', diseases: [], history: [{ kind: 'note', text: 'Allergie gegen Penicillin laut eigener Aussage.', by: 'Jonas Weber', at: '2026-10-21 12:05' }] },
+    { characterId: 17, name: 'Lena Hoffmann', dateOfBirth: '1991-09-30', gender: 'female', diseases: [], history: [{ id: 40, kind: 'note', text: 'Allergie gegen Penicillin laut eigener Aussage.', by: 'Jonas Weber', at: '2026-10-21 12:05' }] },
     { characterId: 311, name: 'Sara Yilmaz', dateOfBirth: '2001-02-17', gender: 'female', insurance: { validUntil: '2026-10-30', valid: false, soldBy: 'Tom Becker' },
-      diseases: [{ label: 'Erkältung', stage: 3, stages: 3, cure: 'pill', series: 0, needed: null }, { label: 'Demenz', stage: 1, stages: 3, cure: 'treatment', series: 0, needed: 3 }],
-      history: [{ kind: 'collapse', text: 'Zusammenbruch durch Demenz', at: '2026-11-01 20:15' }] },
+      diseases: [{ disease: 'cold', label: 'Erkältung', stage: 3, stages: 3, cure: 'pill', series: 0, needed: null }, { disease: 'dementia', label: 'Demenz', stage: 1, stages: 3, cure: 'treatment', series: 0, needed: 3 }],
+      history: [{ id: 30, kind: 'collapse', text: 'Zusammenbruch durch Demenz', at: '2026-11-01 20:15' }] },
   ];
+  const DISEASES = [{ disease: 'cold', label: 'Erkältung', stages: 3 }, { disease: 'headache', label: 'Kopfschmerzen', stages: 3 },
+    { disease: 'stomach', label: 'Magen-Darm', stages: 3 }, { disease: 'hypertension', label: 'Bluthochdruck', stages: 3 }, { disease: 'dementia', label: 'Demenz', stages: 3 }];
+  const NOW = '2026-11-09 14:20';
+  const byEntry = (id) => people.find((p) => p.history.some((h) => h.id === id));
+  let nextId = 100;
   const calls = {
     ems_records_search: (d) => ({ ok: true, data: { results: people.filter((p) => !d.text || p.name.toLowerCase().includes(d.text.toLowerCase()) || String(p.characterId) === d.text)
       .map((p) => ({ characterId: p.characterId, name: p.name, dateOfBirth: p.dateOfBirth, insuredUntil: p.insurance && p.insurance.valid ? p.insurance.validUntil : undefined, diseases: p.diseases.length })) } }),
     ems_records_get: (d) => { const p = people.find((x) => x.characterId === d.characterId); return p ? { ok: true, data: p } : { ok: false, error: 'not_found' }; },
-    ems_records_note: (d) => { const p = people.find((x) => x.characterId === d.characterId); p.history.unshift({ kind: 'note', text: d.text, by: 'Mira Schulz', at: '2026-11-07 18:01' }); return { ok: true, data: p }; },
+    ems_records_note: (d) => { const p = people.find((x) => x.characterId === d.characterId); p.history.unshift({ id: nextId++, kind: 'note', text: d.text, by: 'Lena Hoffmann', at: NOW }); return { ok: true, data: p }; },
+    ems_records_entry: (d) => {
+      const p = byEntry(d.id); const h = p && p.history.find((x) => x.id === d.id);
+      if (!h) return { ok: false, error: 'not_found' };
+      if (d.delete) h.deletedBy = 'Lena Hoffmann'; else if (d.restore) delete h.deletedBy; else { if (!d.text) return { ok: false, error: 'invalid_input' }; h.text = d.text; h.editedBy = 'Lena Hoffmann'; h.editedAt = NOW; }
+      return { ok: true, data: p };
+    },
+    ems_records_insurance: (d) => {
+      const p = people.find((x) => x.characterId === d.characterId);
+      if (d.days === 0) { if (!p.insurance || !p.insurance.valid) return { ok: false, error: 'not_insured' }; p.insurance = { ...p.insurance, valid: false, validUntil: '2026-11-09' }; }
+      else p.insurance = { validUntil: '2027-02-07', valid: true, soldBy: 'Lena Hoffmann' };
+      p.history.unshift({ id: nextId++, kind: 'insurance', text: d.days === 0 ? 'Krankenversicherung beendet (Korrektur)' : `Krankenversicherung bis ${p.insurance.validUntil} gesetzt (Korrektur)`, by: 'Lena Hoffmann', at: NOW });
+      return { ok: true, data: p };
+    },
+    ems_records_disease: (d) => {
+      const p = people.find((x) => x.characterId === d.characterId);
+      const def = DISEASES.find((x) => x.disease === d.disease);
+      const cur = p.diseases.find((x) => x.disease === d.disease);
+      if (d.stage === 0) { if (!cur) return { ok: false, error: 'not_sick' }; p.diseases = p.diseases.filter((x) => x !== cur); }
+      else if (cur) cur.stage = d.stage;
+      else p.diseases.push({ disease: d.disease, label: def.label, stage: d.stage, stages: def.stages, cure: ['hypertension', 'dementia'].includes(d.disease) ? 'treatment' : 'pill', series: 0, needed: 3 });
+      p.history.unshift({ id: nextId++, kind: 'correction', text: d.stage === 0 ? `${def.label} geheilt (Korrektur)` : `${def.label}, Stadium ${d.stage} gesetzt (Korrektur)`, by: 'Lena Hoffmann', at: NOW });
+      return { ok: true, data: p };
+    },
   };
-  return {
+  return { DISEASES,
     delay: 120,
     async handle(event, data) {
       await new Promise((r) => setTimeout(r, this.delay));
@@ -342,10 +400,20 @@ const TEXT = {
   notePlaceholder: 'Z. B. Allergien, Vorerkrankungen, Absprachen',
   noteSave: 'Eintragen',
   admin: 'Admin-Ansicht, nur lesen',
+  adminManage: 'Admin-Ansicht, korrigieren erlaubt',
+  manage: 'Korrigieren erlaubt',
+  fix: {
+    title: 'KORREKTUR', insurance: 'Versicherung ab heute für', days: 'Tage', set: 'Setzen', end: 'Beenden',
+    hint: 'Jede Korrektur steht in der Akte und im Protokoll des Rettungsdiensts.',
+    stage: (s) => `Stadium ${s}`, cure: 'Heilen', add: 'KRANKHEIT SETZEN', addBtn: 'Setzen', pick: 'Krankheit wählen',
+    saved: 'Korrigiert.', edit: 'Ändern', del: 'Löschen', restore: 'Wiederherstellen', save: 'Speichern', cancel: 'Abbrechen',
+    edited: (by, at) => `geändert von ${by}, ${at}`, deleted: (by) => `gelöscht von ${by}`,
+    invalidDays: (max) => `Bitte 1 bis ${max} Tage eingeben.`,
+  },
   kinds: {
     onset: 'ERKRANKT', worse: 'VERSCHLECHTERT', better: 'GEBESSERT', cured: 'GEHEILT', treatment: 'BEHANDLUNG', pill: 'TABLETTE',
     revive: 'HOCHGEHOLT', heal: 'VERSORGT', medkit: 'VERBANDSKASTEN', stabilized: 'STABILISIERT', collapse: 'ZUSAMMENBRUCH', hospital: 'KRANKENHAUS', insurance: 'VERSICHERUNG',
-    diagnosis: 'UNTERSUCHUNG', note: 'NOTIZ', series: 'BEHANDLUNG ABGEBROCHEN',
+    diagnosis: 'UNTERSUCHUNG', note: 'NOTIZ', series: 'BEHANDLUNG ABGEBROCHEN', correction: 'KORREKTUR',
   },
   saved: 'Eingetragen.',
   errors: {
@@ -353,7 +421,10 @@ const TEXT = {
     not_on_duty: 'Dafür musst du im Dienst sein.',
     no_permission: 'Dafür hast du keine Rechte.',
     not_found: 'Diese Person gibt es nicht.',
-    invalid_input: 'Bitte einen Text eingeben.',
+    invalid_input: 'Die Eingabe passt nicht.',
+    not_insured: 'Die Person ist gerade nicht versichert.',
+    not_sick: 'Die Person hat diese Krankheit nicht.',
+    already_sick: 'Die Person hat diese Krankheit schon.',
     server_error: 'Fehler auf dem Server. Bitte nochmal versuchen.',
     timeout: 'Der Server antwortet nicht.',
     default: 'Das hat nicht geklappt.',
@@ -367,7 +438,9 @@ const TOAST_MS = 2600;
 const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
 const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
 
-const state = { open: false, busy: false, canNote: false, admin: false, noteMax: 255, results: [], selected: null, record: null };
+const state = { open: false, busy: false, canNote: false, canManage: false, admin: false, noteMax: 255, insuranceMaxDays: 365, diseaseList: [],
+  results: [], selected: null, record: null, editEntry: null };
+const DEFAULT_INSURANCE_DAYS = 30;
 const el = {
   panel: document.getElementById('panel'),
   title: document.getElementById('title'),
@@ -384,6 +457,13 @@ function make(tag, className, text) {
   if (className) node.className = className;
   if (text !== undefined && text !== null) node.textContent = String(text);
   return node;
+}
+function button(label, action, variant = '', data = {}) {
+  const b = make('button', `btn ${variant}`.trim(), label);
+  b.type = 'button';
+  b.dataset.action = action;
+  Object.entries(data).forEach(([k, v]) => { b.dataset[k] = v; });
+  return b;
 }
 function applyColors(colors) {
   if (!colors) return;
@@ -455,7 +535,7 @@ function stageBar(stage, stages) {
 
 function renderRecord() {
   const r = state.record;
-  el.meta.textContent = state.admin ? TEXT.admin : '';
+  el.meta.textContent = state.admin ? (state.canManage ? TEXT.adminManage : TEXT.admin) : (state.canManage ? TEXT.manage : '');
   if (!r) {
     const empty = make('div', 'empty-record');
     empty.append(make('div', '', TEXT.pick));
@@ -478,6 +558,17 @@ function renderRecord() {
   else { title = TEXT.cover.no; sub = TEXT.cover.noSub; cover.classList.add('cover--none'); }
   cover.append(make('span', 'cover__mark'), make('span', 'cover__title', title), make('span', 'cover__sub', sub));
   left.append(cover);
+  if (state.canManage) {
+    const fix = make('div', 'fix');
+    const row = make('div', 'fix__row');
+    const days = make('input', 'input num');
+    days.type = 'number'; days.min = 1; days.max = state.insuranceMaxDays; days.value = DEFAULT_INSURANCE_DAYS; days.id = 'fix-days';
+    days.setAttribute('aria-label', TEXT.fix.days);
+    row.append(make('span', '', TEXT.fix.insurance), days, make('span', '', TEXT.fix.days), button(TEXT.fix.set, 'insurance-set', 'btn--sm'));
+    if (ins && ins.valid) row.append(button(TEXT.fix.end, 'insurance-end', 'btn--sm btn--danger'));
+    fix.append(make('span', 'fix__label', TEXT.fix.title), row);
+    left.append(fix);
+  }
 
   left.append(make('h3', 'section-title', TEXT.current));
   if (!r.diseases.length) left.append(make('div', 'none', TEXT.none));
@@ -486,8 +577,29 @@ function renderRecord() {
     const head = make('div', 'disease__head');
     head.append(make('span', 'disease__name', d.label), make('span', 'disease__stage num', TEXT.stage(d.stage, d.stages)));
     box.append(head, stageBar(d.stage, d.stages), make('div', 'disease__note', d.cure === 'pill' ? TEXT.pill : TEXT.treatment(d.series, d.needed)));
+    if (state.canManage && d.disease) {
+      const fix = make('div', 'disease__fix');
+      fix.append(stageSelect(d.stages, d.stage, { 'data-role': 'disease-stage', 'data-disease': d.disease, 'aria-label': `${d.label}: ${TEXT.stage(d.stage, d.stages)}` }),
+        button(TEXT.fix.cure, 'disease-cure', 'btn--sm btn--ghost', { disease: d.disease }));
+      box.append(fix);
+    }
     left.append(box);
   });
+  if (state.canManage && state.diseaseList.length) {
+    const fix = make('div', 'fix');
+    const row = make('div', 'fix__row');
+    const which = make('select', 'select');
+    which.id = 'fix-disease';
+    which.setAttribute('aria-label', TEXT.fix.pick);
+    const have = new Set(r.diseases.map((d) => d.disease));
+    state.diseaseList.filter((d) => !have.has(d.disease)).forEach((d) => { const o = make('option', '', d.label); o.value = d.disease; which.append(o); });
+    if (which.options.length) {
+      const first = state.diseaseList.find((d) => d.disease === which.value);
+      row.append(which, stageSelect(first ? first.stages : 3, 1, { id: 'fix-stage', 'aria-label': TEXT.fix.stage('') }), button(TEXT.fix.addBtn, 'disease-add', 'btn--sm'));
+      fix.append(make('span', 'fix__label', TEXT.fix.add), row, make('span', 'fix__hint', TEXT.fix.hint));
+      left.append(fix);
+    }
+  }
 
   const right = make('div');
   right.append(make('h3', 'section-title', TEXT.history));
@@ -513,10 +625,31 @@ function renderRecord() {
     const list = make('ol', 'history');
     r.history.forEach((h) => {
       const li = make('li');
+      if (h.deletedBy) li.className = 'is-deleted';
       const what = make('div');
       const kindClass = ALERT_KINDS.has(h.kind) ? ' kind--alert' : GOOD_KINDS.has(h.kind) ? ' kind--good' : '';
-      what.append(make('span', `kind${kindClass}`, TEXT.kinds[h.kind] || h.kind.toUpperCase()), make('span', '', h.text));
-      if (h.by) what.append(make('small', '', h.by));
+      what.append(make('span', `kind${kindClass}`, TEXT.kinds[h.kind] || h.kind.toUpperCase()));
+      if (state.editEntry === h.id) {
+        const area = make('textarea', 'textarea');
+        area.id = 'entry-text';
+        area.maxLength = state.noteMax;
+        area.value = h.text;
+        area.setAttribute('aria-label', TEXT.fix.edit);
+        const tools = make('div', 'entry-tools');
+        tools.append(button(TEXT.fix.save, 'entry-save', 'btn--sm', { id: h.id }), button(TEXT.fix.cancel, 'entry-cancel', 'btn--sm btn--ghost'));
+        what.append(area, tools);
+      } else {
+        what.append(make('span', 'entry-text', h.text));
+        if (h.by) what.append(make('small', '', h.by));
+        if (h.editedBy) what.append(make('small', 'edit-mark', TEXT.fix.edited(h.editedBy, h.editedAt)));
+        if (h.deletedBy) what.append(make('small', 'del-mark', TEXT.fix.deleted(h.deletedBy)));
+        if (state.canManage && h.id) {
+          const tools = make('div', 'entry-tools');
+          if (h.deletedBy) tools.append(button(TEXT.fix.restore, 'entry-restore', 'btn--sm btn--ghost', { id: h.id }));
+          else tools.append(button(TEXT.fix.edit, 'entry-edit', 'btn--sm btn--ghost', { id: h.id }), button(TEXT.fix.del, 'entry-delete', 'btn--sm btn--danger', { id: h.id }));
+          what.append(tools);
+        }
+      }
       li.append(make('time', 'num', h.at), what);
       list.append(li);
     });
@@ -524,6 +657,20 @@ function renderRecord() {
   }
   grid.append(left, right);
   el.record.replaceChildren(grid);
+}
+
+function stageSelect(stages, value, attrs) {
+  const sel = make('select', 'select');
+  for (let i = 1; i <= stages; i += 1) { const o = make('option', '', TEXT.fix.stage(i)); o.value = i; sel.append(o); }
+  sel.value = String(value);
+  Object.entries(attrs).forEach(([k, v]) => sel.setAttribute(k, v));
+  return sel;
+}
+
+// Antwort einer Korrektur: Akte neu zeichnen
+async function fix(name, payload) {
+  const data = await call(name, payload);
+  if (data) { state.record = data; state.editEntry = null; toast(TEXT.fix.saved); renderRecord(); }
 }
 
 async function pick(id) {
@@ -541,11 +688,43 @@ document.addEventListener('click', async (event) => {
   if (!t || state.busy) return;
   if (t.dataset.action === 'close') close();
   if (t.dataset.action === 'pick') pick(Number(t.dataset.id));
+  const id = Number(t.dataset.id);
+  const a = t.dataset.action;
+  if (a === 'entry-edit') { state.editEntry = id; renderRecord(); document.getElementById('entry-text')?.focus(); }
+  if (a === 'entry-cancel') { state.editEntry = null; renderRecord(); }
+  if (a === 'entry-save') {
+    const text = document.getElementById('entry-text').value.trim();
+    if (!text) { toast(TEXT.errors.invalid_input, true); return; }
+    await fix('ems_records_entry', { id, text });
+  }
+  if (a === 'entry-delete') await fix('ems_records_entry', { id, delete: true });
+  if (a === 'entry-restore') await fix('ems_records_entry', { id, restore: true });
+  if (a === 'insurance-set') {
+    const days = Number(document.getElementById('fix-days').value);
+    if (!Number.isInteger(days) || days < 1 || days > state.insuranceMaxDays) { toast(TEXT.fix.invalidDays(state.insuranceMaxDays), true); return; }
+    await fix('ems_records_insurance', { characterId: state.selected, days });
+  }
+  if (a === 'insurance-end') await fix('ems_records_insurance', { characterId: state.selected, days: 0 });
+  if (a === 'disease-cure') await fix('ems_records_disease', { characterId: state.selected, disease: t.dataset.disease, stage: 0 });
+  if (a === 'disease-add') {
+    await fix('ems_records_disease', { characterId: state.selected, disease: document.getElementById('fix-disease').value, stage: Number(document.getElementById('fix-stage').value) });
+  }
   if (t.dataset.action === 'note') {
     const text = document.getElementById('note').value.trim();
     if (!text) { toast(TEXT.errors.invalid_input, true); return; }
     const data = await call('ems_records_note', { characterId: state.selected, text });
     if (data) { state.record = data; toast(TEXT.saved); renderRecord(); }
+  }
+});
+
+document.addEventListener('change', async (event) => {
+  const t = event.target;
+  if (state.busy) return;
+  if (t.dataset.role === 'disease-stage') await fix('ems_records_disease', { characterId: state.selected, disease: t.dataset.disease, stage: Number(t.value) });
+  if (t.id === 'fix-disease') {
+    const def = state.diseaseList.find((d) => d.disease === t.value);
+    const old = document.getElementById('fix-stage');
+    if (def && old) old.replaceWith(stageSelect(def.stages, 1, { id: 'fix-stage', 'aria-label': TEXT.fix.stage('') }));
   }
 });
 
@@ -561,7 +740,11 @@ document.addEventListener('input', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (!state.open) return;
-  if (event.key === 'Escape') { event.preventDefault(); close(); return; }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (state.editEntry !== null) { state.editEntry = null; renderRecord(); } else close();
+    return;
+  }
   if (event.key === 'Enter' && event.target === el.search) { clearTimeout(searchTimer); search(); }
   if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && (event.target === el.search || event.target.classList.contains('result'))) {
     event.preventDefault();
@@ -582,8 +765,9 @@ function close() {
 
 Bridge.on('records_open', async (data) => {
   applyColors(data.colors);
-  Object.assign(state, { open: true, canNote: data.canNote === true, admin: data.admin === true, noteMax: Number(data.noteMax) || 255,
-    results: [], selected: null, record: null });
+  Object.assign(state, { open: true, canNote: data.canNote === true, canManage: data.canManage === true, admin: data.admin === true,
+    noteMax: Number(data.noteMax) || 255, insuranceMaxDays: Number(data.insuranceMaxDays) || 365,
+    diseaseList: Array.isArray(data.diseases) ? data.diseases : [], results: [], selected: null, record: null, editEntry: null });
   el.panel.hidden = false;
   el.search.value = '';
   renderRecord();
@@ -607,7 +791,9 @@ el.close.setAttribute('aria-label', TEXT.close);
   if (res && res.ok && res.data) applyColors(res.data.colors);
   if (Bridge.platform === 'mock') {
     const params = new URLSearchParams(location.search);
-    Mock.push('records_open', { canNote: true, noteMax: 255, characterId: params.has('empty') ? undefined : Number(params.get('id') || 256) });
+    const manage = !params.has('medic');   // ?medic: ohne Korrektur-Recht
+    Mock.push('records_open', { canNote: true, canManage: manage, admin: params.has('admin'), noteMax: 255, insuranceMaxDays: 365, diseases: Mock.DISEASES,
+      characterId: params.has('empty') ? undefined : Number(params.get('id') || 256) });
   }
 })();
 </script>

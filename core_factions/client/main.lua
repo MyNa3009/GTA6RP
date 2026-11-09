@@ -30,6 +30,8 @@ local MENU_CALLS = {
     faction_vehicles = true, faction_vehicle_save = true,
     faction_members = true, faction_member_update = true, faction_member_rank = true, faction_member_fire = true, faction_hire = true,
     faction_archive = true,
+    faction_archive_update = true,
+    faction_logs = true,
 }
 
 local ERROR_TEXT = {

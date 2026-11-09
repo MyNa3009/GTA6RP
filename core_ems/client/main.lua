@@ -170,7 +170,8 @@ end)
 -- Medizinische Datenbank
 ------------------------------------------------------------------------
 
-local RECORD_CALLS = { ems_records_search = true, ems_records_get = true, ems_records_note = true }
+local RECORD_CALLS = { ems_records_search = true, ems_records_get = true, ems_records_note = true,
+    ems_records_entry = true, ems_records_insurance = true, ems_records_disease = true }
 local uiReady, pending, open = false, nil, false
 
 local function colors()
@@ -198,7 +199,8 @@ function EmsClient.OpenRecords(characterId)
     end
     open = true
     Platform.UiFocus(true, true)
-    local data = { colors = colors(), canNote = info.canNote, admin = info.admin, noteMax = info.noteMax, characterId = characterId }
+    local data = { colors = colors(), canNote = info.canNote, canManage = info.canManage, admin = info.admin, noteMax = info.noteMax,
+        insuranceMaxDays = info.insuranceMaxDays, diseases = info.diseases, characterId = characterId }
     if uiReady then
         Platform.UiSend('records_open', data)
     else

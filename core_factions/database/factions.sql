@@ -120,8 +120,31 @@ CREATE TABLE IF NOT EXISTS faction_info (
     INDEX idx_faction (faction, category, sort)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Protokolle: jede Aenderung pro permanenter ID (wer, an wem, was). Wird nie geaendert oder geloescht.
+CREATE TABLE IF NOT EXISTS faction_logs (
+    id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    faction       VARCHAR(32) NOT NULL,
+    area          VARCHAR(16) NOT NULL,                        -- leitstelle, einsatz, datenbank, kasse, dienst, anpassung
+    action        VARCHAR(32) NOT NULL,
+    actor_id      INT UNSIGNED NULL,                           -- permanente ID, wer es getan hat (nil: System)
+    actor_name    VARCHAR(101) NULL,
+    actor_admin   TINYINT(1) NOT NULL DEFAULT 0,
+    target_id     INT UNSIGNED NULL,                           -- permanente ID, wen es betrifft
+    target_name   VARCHAR(101) NULL,
+    text          VARCHAR(500) NOT NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_faction (faction, id),
+    INDEX idx_area (faction, area, id),
+    INDEX idx_target (faction, target_id, id),
+    INDEX idx_actor (faction, actor_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Seit 1.1.0: Gehalt und Aufgaben pro Rang, Beschreibung der Pruefungen, letzter Bonus
 ALTER TABLE faction_ranks ADD COLUMN IF NOT EXISTS salary INT UNSIGNED NOT NULL DEFAULT 0;
 ALTER TABLE faction_ranks ADD COLUMN IF NOT EXISTS tasks VARCHAR(300) NULL;
 ALTER TABLE faction_exams ADD COLUMN IF NOT EXISTS description TEXT NULL;
 ALTER TABLE faction_members ADD COLUMN IF NOT EXISTS last_bonus_at TIMESTAMP NULL;
+
+-- Seit 1.2.0: Archiv-Eintraege kann ein Admin ausblenden (bleiben fuer Admins sichtbar)
+ALTER TABLE faction_archive ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMP NULL;
+ALTER TABLE faction_archive ADD COLUMN IF NOT EXISTS hidden_by VARCHAR(101) NULL;

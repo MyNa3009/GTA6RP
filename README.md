@@ -4,11 +4,11 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 
 | Ordner | Version | Inhalt |
 |---|---|---|
-| [`core/`](core/README.md) | 1.11.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
+| [`core/`](core/README.md) | 1.11.1 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
 | [`core_inventory/`](core_inventory/README.md) | 1.4.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
 | [`core_lib/`](core_lib/README.md) | 1.4.2 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
-| [`core_factions/`](core_factions/README.md) | 1.1.0 | Organisationen: 30 Ränge, Rechte und Gehalt pro Rang, Divisionen, Abteilungen, Prüfungen, Erklärungen, Leitstelle mit Suche, Bonus, Archiv, Kasse, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Organisationsmenü in den Farben der Organisation |
-| [`core_ems/`](core_ems/README.md) | 1.3.0 | Rettungsdienst: Hochholen, Versorgen, Verbandskasten für alle, Verkauf, Behandlung, Krankheiten mit Stadien und Ansteckung, Krankenversicherung, Medizinische Datenbank |
+| [`core_factions/`](core_factions/README.md) | 1.2.0 | Organisationen: 30 Ränge, Rechte und Gehalt pro Rang, Divisionen, Abteilungen, Prüfungen, Erklärungen, Leitstelle mit Suche, Bonus, Archiv, Protokolle pro ID, Kasse, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Organisationsmenü in den Farben der Organisation |
+| [`core_ems/`](core_ems/README.md) | 1.4.0 | Rettungsdienst: Hochholen, Versorgen, Verbandskasten für alle, Verkauf, Behandlung, Krankheiten mit Stadien und Ansteckung, Krankenversicherung, Medizinische Datenbank mit Korrektur durch Leitung und Admins |
 | [`tests/`](tests/README.md) | | Tests für die Serverlogik aller Resources |
 
 Das Inventar 1.4.0 braucht mindestens die Core 1.8.2, die `core_lib` 1.4.0 die Core 1.9.0, `core_ems` die Core 1.10.3 und `core_factions` die Core 1.11.0. Empfohlen ist immer die neueste Core, darum alle Ordner zusammen aktualisieren.

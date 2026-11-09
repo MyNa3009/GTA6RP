@@ -67,6 +67,12 @@ local function above(ctx, member)
     return member.rank < ctx.rank
 end
 
+-- Eintrag im Protokoll der Organisation, ctx ist der Handelnde (Mitglied oder Admin)
+local function protocol(ctx, area, action, text, target, targetName)
+    Factions.Protocol(ctx.faction, { area = area, action = action, text = text, target = target, targetName = targetName,
+        actor = { source = ctx.source, characterId = ctx.characterId, name = ctx.name, admin = ctx.admin } })
+end
+
 local function register(name, handler)
     Network.RegisterCallback(name, function(source, data)
         if not Factions.Ready or not Factions.CharacterOf(source) then
@@ -178,6 +184,7 @@ local function overview(ctx)
             cash = can(ctx, 'cash.manage'),
             divisions = can(ctx, 'leitstelle.view'),
             info = true,
+            logs = can(ctx, 'logs.view'),
         },
     }
 end
@@ -207,6 +214,7 @@ withContext('faction_message_save', function(source, ctx, data)
     DB.Update('UPDATE faction_settings SET message = ?, message_by = ?, message_at = CURRENT_TIMESTAMP WHERE faction = ?',
         DB.Args(text, ctx.name, ctx.faction))
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'message', data = { faction = ctx.faction, text = text } })
+    protocol(ctx, 'anpassung', 'message', text and 'Nachricht vom Leader geändert' or 'Nachricht vom Leader gelöscht')
     return { ok = true, data = overview(ctx) }
 end)
 
@@ -343,11 +351,42 @@ withContext('faction_rank_save', function(source, ctx, data)
     if data.tasks ~= nil then
         tasks = Factions.Text(data.tasks, CFG.TextMax.rankTasks) or false
     end
+    -- Was sich aendert, fuers Protokoll (vor dem Speichern lesen)
+    local changes = {}
+    local oldName = Factions.RankName(ctx.faction, rank)
+    if oldName ~= name then
+        changes[#changes + 1] = ('Name %s statt %s'):format(name, oldName)
+    end
+    local added, removed = {}, {}
+    for _, def in ipairs(Factions.PermissionsOf(ctx.faction)) do
+        local before = Factions.RankHas(ctx.faction, rank, def.key) == true
+        if stored[def.key] and not before then
+            added[#added + 1] = def.label
+        elseif not stored[def.key] and before then
+            removed[#removed + 1] = def.label
+        end
+    end
+    if #added > 0 then
+        changes[#changes + 1] = 'Rechte dazu: ' .. table.concat(added, ', ')
+    end
+    if #removed > 0 then
+        changes[#changes + 1] = 'Rechte weg: ' .. table.concat(removed, ', ')
+    end
+    local oldSalary = Factions.RankSalary(ctx.faction, rank)
+    if oldSalary ~= salary then
+        changes[#changes + 1] = ('Gehalt %s statt %s'):format(Factions.Money(salary), Factions.Money(oldSalary))
+    end
+    if tasks ~= nil and (tasks or nil) ~= Factions.RankTasks(ctx.faction, rank) then
+        changes[#changes + 1] = 'Aufgaben geändert'
+    end
     if not Factions.SaveRank(ctx.faction, rank, name, stored, { salary = salary, tasks = tasks }) then
         return { ok = false, error = 'db_error' }
     end
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'rank_settings',
         data = { faction = ctx.faction, rank = rank, name = name, permissions = stored, salary = salary, tasks = tasks or nil } })
+    if #changes > 0 then
+        protocol(ctx, 'anpassung', 'rank_settings', ('Rang %d: %s'):format(rank, table.concat(changes, '; ')))
+    end
     Factions.PushFaction(ctx.faction)
     return { ok = true, data = ranksPayload(ctx) }
 end)
@@ -421,6 +460,8 @@ withContext('faction_department_save', function(source, ctx, data)
     end
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'department_save',
         data = { faction = ctx.faction, id = id, ranks = ranks } })
+    local saved = Members.ById(Members.Departments(ctx.faction))[id]
+    protocol(ctx, 'anpassung', 'department_save', ('Abteilung %s gespeichert, Ränge: %s'):format(saved and saved.name or tostring(id), table.concat(ranks, ', ')))
     return { ok = true, data = ranksPayload(ctx) }
 end)
 
@@ -429,9 +470,11 @@ withContext('faction_department_delete', function(source, ctx, data)
         return { ok = false, error = 'no_permission' }
     end
     local id = tonumber(data.id)
+    local department = id and Members.ById(Members.Departments(ctx.faction))[id]
     if not id or DB.Update('UPDATE faction_departments SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND faction = ? AND deleted_at IS NULL', { id, ctx.faction }) ~= 1 then
         return { ok = false, error = 'not_found' }
     end
+    protocol(ctx, 'anpassung', 'department_delete', ('Abteilung %s gelöscht'):format(department and department.name or tostring(id)))
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'department_delete', data = { faction = ctx.faction, id = id } })
     return { ok = true, data = ranksPayload(ctx) }
 end)
@@ -464,6 +507,7 @@ withContext('faction_exam_save', function(source, ctx, data)
         id = DB.Insert('INSERT INTO faction_exams (faction, name, description) VALUES (?, ?, ?)', DB.Args(ctx.faction, name, description))
     end
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'exam_save', data = { faction = ctx.faction, id = id, name = name } })
+    protocol(ctx, 'anpassung', 'exam_save', ('Prüfung %s gespeichert'):format(name))
     return { ok = true, data = ranksPayload(ctx) }
 end)
 
@@ -472,9 +516,11 @@ withContext('faction_exam_delete', function(source, ctx, data)
         return { ok = false, error = 'no_permission' }
     end
     local id = tonumber(data.id)
+    local exam = id and Members.ById(Members.Exams(ctx.faction))[id]
     if not id or DB.Update('UPDATE faction_exams SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND faction = ? AND deleted_at IS NULL', { id, ctx.faction }) ~= 1 then
         return { ok = false, error = 'not_found' }
     end
+    protocol(ctx, 'anpassung', 'exam_delete', ('Prüfung %s gelöscht'):format(exam and exam.name or tostring(id)))
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'exam_delete', data = { faction = ctx.faction, id = id } })
     return { ok = true, data = ranksPayload(ctx) }
 end)
@@ -530,6 +576,13 @@ withContext('faction_vehicle_save', function(source, ctx, data)
         { ctx.faction, data.model, minRank })
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'vehicle_rank',
         data = { faction = ctx.faction, model = data.model, minRank = minRank } })
+    local label = data.model
+    for _, vehicle in ipairs(ctx.org.vehicles) do
+        if vehicle.model == data.model then
+            label = vehicle.label or vehicle.model
+        end
+    end
+    protocol(ctx, 'anpassung', 'vehicle_rank', ('Fahrzeug %s ab Rang %d (%s)'):format(label, minRank, Factions.RankName(ctx.faction, minRank)))
     return { ok = true, data = vehiclesPayload(ctx) }
 end)
 
@@ -826,7 +879,8 @@ withContext('faction_member_bonus', function(source, ctx, data)
     local function undo()
         DB.Update('UPDATE faction_members SET last_bonus_at = ? WHERE character_id = ?', DB.Args(before, member.characterId))
     end
-    if not Factions.Withdraw(ctx.faction, amount, { actorSource = source, reason = 'Bonus', data = { to = member.characterId, reason = reason } }) then
+    if not Factions.Withdraw(ctx.faction, amount, { actorSource = source, reason = 'Bonus', data = { to = member.characterId, reason = reason },
+        target = member.characterId, protocolText = ('Bonus %s an %s%s'):format(Factions.Money(amount), member.name, reason and (': ' .. reason) or '') }) then
         undo()
         return { ok = false, error = 'not_enough_money' }
     end
@@ -924,6 +978,7 @@ withContext('faction_division_save', function(source, ctx, data)
     end
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'division_save',
         data = { faction = ctx.faction, id = id, name = name, minRank = minRank, maxRank = maxRank } })
+    protocol(ctx, 'anpassung', 'division_save', ('Division %s: Rang %d bis %d'):format(name, minRank, maxRank))
     return { ok = true, data = divisionsPayload(ctx) }
 end)
 
@@ -932,9 +987,11 @@ withContext('faction_division_delete', function(source, ctx, data)
         return { ok = false, error = 'no_permission' }
     end
     local id = tonumber(data.id)
+    local division = id and Members.ById(Members.Divisions(ctx.faction))[id]
     if not id or DB.Update('DELETE FROM faction_divisions WHERE id = ? AND faction = ?', { id, ctx.faction }) ~= 1 then
         return { ok = false, error = 'not_found' }
     end
+    protocol(ctx, 'anpassung', 'division_delete', ('Division %s gelöscht'):format(division and division.name or tostring(id)))
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'division_delete', data = { faction = ctx.faction, id = id } })
     return { ok = true, data = divisionsPayload(ctx) }
 end)
@@ -1019,6 +1076,7 @@ withContext('faction_info_save', function(source, ctx, data)
     end
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'info_save',
         data = { faction = ctx.faction, id = id, category = category, title = title } })
+    protocol(ctx, 'anpassung', 'info_save', ('Erklärung %s gespeichert'):format(title))
     return { ok = true, data = infoPayload(ctx) }
 end)
 
@@ -1027,9 +1085,11 @@ withContext('faction_info_delete', function(source, ctx, data)
         return { ok = false, error = 'no_permission' }
     end
     local id = tonumber(data.id)
+    local title = id and DB.Scalar('SELECT title FROM faction_info WHERE id = ? AND faction = ?', { id, ctx.faction })
     if not id or DB.Update('DELETE FROM faction_info WHERE id = ? AND faction = ?', { id, ctx.faction }) ~= 1 then
         return { ok = false, error = 'not_found' }
     end
+    protocol(ctx, 'anpassung', 'info_delete', ('Erklärung %s gelöscht'):format(title or tostring(id)))
     Factions.Log({ actor_account_id = ctx.accountId, character_id = ctx.characterId, action = 'info_delete', data = { faction = ctx.faction, id = id } })
     return { ok = true, data = infoPayload(ctx) }
 end)
@@ -1046,15 +1106,17 @@ withContext('faction_archive', function(source, ctx, data)
     local size = CFG.ArchivePageSize
     local search = Factions.Text(data.search, 50)
     local rows
-    local columns = "id, character_id, name, dn, last_rank, ranks, exams, DATE_FORMAT(hired_at, '%Y-%m-%d') AS hired_at, DATE_FORMAT(left_at, '%Y-%m-%d') AS left_at, left_reason, left_by, kind"
+    local columns = "id, character_id, name, dn, last_rank, ranks, exams, DATE_FORMAT(hired_at, '%Y-%m-%d') AS hired_at, DATE_FORMAT(left_at, '%Y-%m-%d') AS left_at, left_reason, left_by, kind, hidden_by"
+    -- Von einem Admin ausgeblendete Eintraege sehen nur Admins (markiert)
+    local visible = ctx.admin and '' or ' AND hidden_at IS NULL'
     if search and tonumber(search) then
-        rows = DB.Query('SELECT ' .. columns .. ' FROM faction_archive WHERE character_id = ? AND faction = ? ORDER BY left_at DESC, id DESC LIMIT ?',
+        rows = DB.Query('SELECT ' .. columns .. ' FROM faction_archive WHERE character_id = ? AND faction = ?' .. visible .. ' ORDER BY left_at DESC, id DESC LIMIT ?',
             { tonumber(search), ctx.faction, size + 1 })
     elseif search then
-        rows = DB.Query('SELECT ' .. columns .. ' FROM faction_archive WHERE faction = ? AND name LIKE ? ORDER BY left_at DESC, id DESC LIMIT ? OFFSET ?',
+        rows = DB.Query('SELECT ' .. columns .. ' FROM faction_archive WHERE faction = ? AND name LIKE ?' .. visible .. ' ORDER BY left_at DESC, id DESC LIMIT ? OFFSET ?',
             { ctx.faction, '%' .. search:gsub('[%%_\\]', '\\%0') .. '%', size + 1, (page - 1) * size })
     else
-        rows = DB.Query('SELECT ' .. columns .. ' FROM faction_archive WHERE faction = ? ORDER BY left_at DESC, id DESC LIMIT ? OFFSET ?',
+        rows = DB.Query('SELECT ' .. columns .. ' FROM faction_archive WHERE faction = ?' .. visible .. ' ORDER BY left_at DESC, id DESC LIMIT ? OFFSET ?',
             { ctx.faction, size + 1, (page - 1) * size })
     end
     rows = rows or {}
@@ -1067,9 +1129,58 @@ withContext('faction_archive', function(source, ctx, data)
             id = row.id, characterId = row.character_id, name = row.name, dn = row.dn, lastRank = row.last_rank,
             ranks = Factions.Decode(row.ranks, {}), exams = Factions.Decode(row.exams, {}),
             hiredAt = row.hired_at, leftAt = row.left_at, reason = row.left_reason, by = row.left_by, kind = row.kind,
+            hiddenBy = row.hidden_by,
         }
     end
-    return { ok = true, data = { entries = list, page = page, hasMore = #rows > size } }
+    return { ok = true, data = { entries = list, page = page, hasMore = #rows > size, canEdit = (ctx.admin and ctx.manage) or nil } }
+end)
+
+-- Nur Admins mit factions.manage: Grund im Archiv korrigieren, Eintrag ausblenden oder wieder zeigen.
+-- Ausgeblendet heisst nicht geloescht: Admins sehen den Eintrag weiter, markiert.
+withContext('faction_archive_update', function(source, ctx, data)
+    if not (ctx.admin and ctx.manage) then
+        return { ok = false, error = 'no_permission' }
+    end
+    local id = tonumber(data.id)
+    local row = id and DB.Single('SELECT character_id, name, left_reason, hidden_at IS NOT NULL AS hidden FROM faction_archive WHERE id = ? AND faction = ?', { id, ctx.faction })
+    if not row then
+        return { ok = false, error = 'not_found' }
+    end
+    local text
+    if data.reason ~= nil then
+        local reason = Factions.Text(data.reason, CFG.TextMax.reason)
+        DB.Update('UPDATE faction_archive SET left_reason = ? WHERE id = ?', DB.Args(reason, id))
+        text = ('Archiv: Grund %s statt %s'):format(reason or 'leer', row.left_reason or 'leer')
+    elseif data.hidden == true or data.hidden == false then
+        if data.hidden then
+            DB.Update('UPDATE faction_archive SET hidden_at = CURRENT_TIMESTAMP, hidden_by = ? WHERE id = ?', { ctx.name, id })
+        else
+            DB.Update('UPDATE faction_archive SET hidden_at = NULL, hidden_by = NULL WHERE id = ?', { id })
+        end
+        text = data.hidden and 'Archiv-Eintrag ausgeblendet' or 'Archiv-Eintrag wieder sichtbar'
+    else
+        return { ok = false, error = 'invalid_input' }
+    end
+    Factions.Log({ actor_account_id = ctx.accountId, character_id = row.character_id, action = 'archive_update',
+        data = { faction = ctx.faction, id = id, reason = data.reason, hidden = data.hidden } })
+    protocol(ctx, 'leitstelle', 'archive_update', text, row.character_id, row.name)
+    return { ok = true }
+end)
+
+------------------------------------------------------------------------
+-- Protokolle: alles, was passiert ist, pro permanenter ID (Recht logs.view, Admins mit factions.view)
+------------------------------------------------------------------------
+
+withContext('faction_logs', function(source, ctx, data)
+    if not can(ctx, 'logs.view') then
+        return { ok = false, error = 'no_permission' }
+    end
+    local characterId = Factions.Int(data.characterId, 1, 4294967295)
+    local role = (data.role == 'target' or data.role == 'actor') and data.role or 'all'
+    local page = Protocol.Page(ctx.faction, { characterId = characterId, role = role, area = data.area, before = data.before })
+    page.areas = CFG.Protocol.Areas
+    page.person = characterId and { id = characterId, name = Protocol.NameOf(characterId) } or nil
+    return { ok = true, data = page }
 end)
 
 ------------------------------------------------------------------------

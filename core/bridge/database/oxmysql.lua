@@ -62,9 +62,10 @@ function DB.Update(sql, params)
     return run(MySQL.update.await, sql, params)
 end
 
--- Ohne Warten, z. B. beim Herunterfahren
+-- Ohne Warten, z. B. beim Herunterfahren. Versteht DB.Args wie die anderen (seit Core 1.11.1).
 function DB.Fire(sql, params)
-    MySQL.query(sql, params or {})
+    sql, params = normalize(sql, params)
+    MySQL.query(sql, params)
 end
 
 function DB.Ready(fn)

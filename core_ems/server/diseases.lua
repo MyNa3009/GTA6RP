@@ -140,6 +140,34 @@ function Diseases.Add(characterId, disease, stage, actorName, cause)
     return entry
 end
 
+-- Stadium von Hand setzen (Akte korrigieren). Fehlt die Krankheit, kommt sie dazu. Nie ins Endstadium, damit
+-- niemand durch eine Korrektur zusammenbricht. Gibt den Eintrag zurueck oder nil und einen Fehlercode.
+function Diseases.SetStage(characterId, disease, stage, actorName)
+    local def = DEFS[disease]
+    if not def then
+        return nil, 'unknown_disease'
+    end
+    local top = def.cure == 'treatment' and def.stages - 1 or def.stages
+    stage = math.floor(tonumber(stage) or 0)
+    if stage < 1 or stage > top then
+        return nil, 'invalid_input'
+    end
+    local entry = find(characterId, disease)
+    if not entry then
+        return Diseases.Add(characterId, disease, stage, actorName, 'Korrektur')
+    end
+    if entry.stage == stage then
+        return entry
+    end
+    entry.stage = stage
+    entry.worsenIn = def.worsenMinutes * SECONDS_PER_MINUTE
+    entry.series, entry.seriesLeft = 0, 0
+    save(entry)
+    Ems.Record(characterId, 'correction', ('%s gesetzt (Korrektur)'):format(stageText(def, stage)), actorName)
+    Diseases.Push(characterId)
+    return entry
+end
+
 -- Geheilt (Tablette, Mediziner, Admin)
 function Diseases.Cure(characterId, disease, actorName, how)
     local entry, index = find(characterId, disease)
@@ -519,6 +547,8 @@ Platform.RegisterCommand('krankheit', function(source, args)
         return
     end
     Ems.Log({ actor_account_id = accountId, character_id = characterId, action = 'admin_disease', data = { disease = disease, stage = entry.stage } })
+    Ems.Protocol('datenbank', { action = 'admin_disease', admin = true, actorSource = source, actorName = ('Admin %s'):format(Ems.NameOf(source) or ''),
+        target = characterId, text = ('%s gegeben (/krankheit)'):format(stageText(DEFS[disease], entry.stage)) })
     Platform.Notify(source, ('ID %d hat jetzt %s.'):format(characterId, stageText(DEFS[disease], entry.stage)), 'success')
 end)
 
@@ -541,6 +571,10 @@ Platform.RegisterCommand('heilen', function(source, args)
         end
     end
     Ems.Log({ actor_account_id = accountId, character_id = characterId, action = 'admin_cure', data = { disease = disease, count = count } })
+    if count > 0 then
+        Ems.Protocol('datenbank', { action = 'admin_cure', admin = true, actorSource = source, actorName = ('Admin %s'):format(Ems.NameOf(source) or ''),
+            target = characterId, text = ('%d Krankheit(en) geheilt (/heilen)'):format(count) })
+    end
     Platform.Notify(source, ('%d Krankheit(en) bei ID %d geheilt.'):format(count, characterId), count > 0 and 'success' or 'info')
 end)
 

@@ -1,6 +1,14 @@
-# core_ems 1.3.0
+# core_ems 1.4.0
 
 Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskasten, Verkauf von Verbänden, Verbandskästen und Tabletten, Untersuchen und Behandeln, Krankheiten mit Stadien, Krankenversicherung und die Medizinische Datenbank. Ränge, Rechte, Dienst und Kasse kommen aus `core_factions` (Organisation `ems`).
+
+## Update von 1.3.0
+
+1. Erst `core_factions` 1.2.0, dann den Ordner `core_ems` ersetzen und neu starten. Vier neue Spalten in `ems_records` legt das Script selbst an (SQL zusätzlich in `database/ems.sql`).
+2. **Akte korrigieren:** In der Medizinischen Datenbank ändern oder löschen Leitung und Admins Einträge, setzen oder beenden die Versicherung und setzen Krankheiten auf ein Stadium oder heilen sie. Gelöschte Einträge sind nur markiert: Die Leitung sieht sie durchgestrichen mit "gelöscht von" und kann sie wiederherstellen, alle anderen sehen sie nicht mehr. Geänderte Einträge zeigen, wer sie wann geändert hat.
+3. **Wer darf:** Mediziner im Dienst mit dem neuen Recht `ems.records.manage` (Startwert ab Rang 29, also Leader und Vice) und Admins mit `factions.manage`, auch ohne Dienst. Admins mit `factions.manage` dürfen jetzt auch Einträge schreiben, Admins mit nur `factions.view` weiter nur lesen. Öffnen mit `/medizin` oder `/medizin <ID>`.
+4. Ins Endstadium setzen geht von Hand nicht, damit niemand durch eine Korrektur zusammenbricht.
+5. **Protokoll:** Hochholen (auch mit Verbandskasten, mit dem Namen und der ID der Person), Versorgen, Untersuchen, Behandeln, Verkaufen, Versicherung, Ausweis verlangen, jeder Blick in eine Akte, jeder Eintrag und jede Korrektur stehen im Protokoll des Rettungsdiensts (Organisationsmenü, Protokolle). Admin-Befehle (`/krankheit`, `/heilen`) auch.
 
 ## Update von 1.2.1
 
@@ -32,7 +40,7 @@ Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskaste
 
 ## Installation
 
-1. Braucht Core 1.10.3, `core_lib`, `core_factions` und `core_inventory` 1.4.0 (Tabletten und Verbandskasten als Items).
+1. Braucht Core 1.10.3, `core_lib`, `core_factions` 1.2.0 und `core_inventory` 1.4.0 (Tabletten und Verbandskasten als Items).
 2. Ordner `core_ems` nach `resources/[core]/` kopieren. Die Tabellen legt das Script beim Start selbst an, das SQL steht zusätzlich in `database/ems.sql`.
 3. In der `server.cfg` nach `core_factions`: `ensure core_ems`
 
@@ -48,7 +56,7 @@ Alles geht nur im Dienst (Umkleide am Krankenhaus, `E`) und nur mit dem passende
 | Verkaufen | Verbände, Verbandskästen, Tabletten zu festen Preisen |
 | Krankenversicherung | Verkaufen oder verlängern (30 Tage) |
 | Ausweis verlangen | Die Person entscheidet mit Y oder N, ob sie ihren Personalausweis zeigt |
-| Medizinische Datenbank | Jede Person suchen (Name oder ID), Krankenakte, Versicherung, Verlauf, eigene Einträge |
+| Medizinische Datenbank | Jede Person suchen (Name oder ID), Krankenakte, Versicherung, Verlauf, eigene Einträge. Mit `ems.records.manage` korrigieren |
 
 **Alle anderen** holen eine bewusstlose Person über das G-Menü (Person, Hochholen) mit einem Verbandskasten hoch. Der Eintrag erscheint nur, wenn man einen dabeihat. Den Kasten kauft man beim Rettungsdienst. Skillcheck mit `Z`, der Kasten wird nur bei Erfolg verbraucht. Selbst benutzt (Inventar) heilt er ein Stück.
 
@@ -84,7 +92,14 @@ Alle Werte (Chancen, Zeiten, Stadien, Symptome, Preise) stehen in `config.lua` u
 | `/krankheit <ID> <krankheit> [stadium]` | `player.heal` (ab Junior Administrator) | Krankheit geben: `cold`, `headache`, `stomach`, `hypertension`, `dementia` |
 | `/heilen <ID> [krankheit]` | `player.heal` | Alle oder eine Krankheit heilen |
 
-Admins mit `factions.view` öffnen auch die Medizinische Datenbank. Jeder Blick in eine Akte wird geloggt (Kategorie `ems`, Aktion `records_view`), ebenso jeder Verkauf, jede Behandlung und jedes Hochholen.
+Admins öffnen die Medizinische Datenbank mit `/medizin` (oder `/medizin <ID>`), auch ohne Dienst:
+
+| Core-Recht | Was geht |
+|---|---|
+| `factions.view` | Akten ansehen |
+| `factions.manage` | Ansehen, Einträge schreiben, ändern, löschen (markiert) und wiederherstellen, Versicherung setzen oder beenden, Krankheiten setzen oder heilen |
+
+Das Recht für die Korrektur steht in `config.lua` unter `Records.AdminPermission`. Jeder Blick in eine Akte wird geloggt (Kategorie `ems`, Aktion `records_view`), ebenso jeder Verkauf, jede Behandlung, jedes Hochholen und jede Korrektur (`records_edit`, `records_delete`, `records_restore`, `records_insurance`, `records_disease`). Alles steht zusätzlich im Protokoll des Rettungsdiensts.
 
 ## Für andere Scripts
 
@@ -98,10 +113,10 @@ exports.core_ems:CureDisease(characterId, 'cold')
 exports.core_ems:GetDiseases()                          -- eigene Krankheiten (nur Anzeige, z. B. HUD)
 ```
 
-Fehlercodes: `not_medic`, `not_on_duty`, `no_permission`, `too_far`, `not_dead`, `is_dead`, `hospital_only`, `target_busy`, `no_medkit` (nur beim Hochholen mit Verbandskasten), `not_diagnosed`, `too_fast`, `too_soon`, `not_sick`, `not_enough_money`, `target_full`, `consent_declined`, `consent_timeout`, `no_id_card`, `not_found`, `invalid_input`.
+Fehlercodes: `not_insured`, `not_sick`, `already_sick`, `unknown_disease` (Korrektur), `not_medic`, `not_on_duty`, `no_permission`, `too_far`, `not_dead`, `is_dead`, `hospital_only`, `target_busy`, `no_medkit` (nur beim Hochholen mit Verbandskasten), `not_diagnosed`, `too_fast`, `too_soon`, `not_sick`, `not_enough_money`, `target_full`, `consent_declined`, `consent_timeout`, `no_id_card`, `not_found`, `invalid_input`.
 
 ## Testen
 
-`tests/test_ems.py` gegen MariaDB (siehe `tests/README.md`). Im Browser: `html/records.html` (mit `?id=311` eine andere Akte, mit `?empty` ohne Auswahl).
+`tests/test_ems.py` gegen MariaDB (siehe `tests/README.md`). Im Browser: `html/records.html` (mit `?id=311` eine andere Akte, mit `?empty` ohne Auswahl, mit `?medic` ohne Korrektur-Recht, mit `?admin` als Admin).
 
 Nur im Spiel prüfbar: Symptome (Husten-Animation, Wackeln, Blackouts, Gangart, Stolpern), Animation beim Behandeln, wie stark sich die Symptome anfühlen.

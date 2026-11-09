@@ -36,3 +36,9 @@ CREATE TABLE IF NOT EXISTS ems_insurance (
     sold_by       VARCHAR(101) NULL,
     sold_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Seit 1.4.0: Eintraege korrigieren und als geloescht markieren (Leitung mit ems.records.manage, Admins)
+ALTER TABLE ems_records ADD COLUMN IF NOT EXISTS edited_at TIMESTAMP NULL;
+ALTER TABLE ems_records ADD COLUMN IF NOT EXISTS edited_by VARCHAR(101) NULL;
+ALTER TABLE ems_records ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE ems_records ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(101) NULL;

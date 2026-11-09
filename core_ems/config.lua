@@ -22,6 +22,7 @@ Config.Ems = {
         { key = 'ems.insurance',    group = 'Rettungsdienst', label = 'Krankenversicherung verkaufen',            minRank = 5 },
         { key = 'ems.records',      group = 'Rettungsdienst', label = 'Medizinische Datenbank, Ausweis verlangen', minRank = 1 },
         { key = 'ems.records.note', group = 'Rettungsdienst', label = 'Einträge in die Akte schreiben',           minRank = 3 },
+        { key = 'ems.records.manage', group = 'Rettungsdienst', label = 'Akte korrigieren (Einträge, Versicherung, Krankheiten)', minRank = 29 },
     },
 
     -- Abstand zur Person, den der Server prueft (Meter)
@@ -80,6 +81,10 @@ Config.Ems = {
         HistoryLimit = 100,
         NoteMaxLength = 255,
         Command = 'medizin',        -- oeffnet die Datenbank (Mediziner im Dienst mit Recht, Admins mit factions.view)
+        -- Akte korrigieren (Eintraege aendern und loeschen, Versicherung setzen, Krankheiten setzen oder heilen):
+        -- Mediziner mit dem Recht ems.records.manage und Admins mit diesem Core-Recht (auch ohne Dienst)
+        AdminPermission = 'factions.manage',
+        InsuranceMaxDays = 365,     -- so weit in die Zukunft darf man die Versicherung von Hand setzen
     },
 
     -- Krankheiten. Die Uhr laeuft nur, solange man online ist.

@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <!--
   UI: Organisationsmenue (core_factions)
-  CONTRACT_VERSION: 2
-  Tabs: Uebersicht, Divisionen, Erklaerungen, Anpassung, Fahrzeuge, Leitstelle, Archiv.
+  CONTRACT_VERSION: 3
+  Tabs: Uebersicht, Divisionen, Erklaerungen, Anpassung, Fahrzeuge, Leitstelle, Archiv, Protokolle.
   Tabs ohne Zugriff fehlen ganz. Die UI zeigt nur an, jede Aenderung prueft der Server.
   Farben und Logo kommen pro Organisation (overview.org.theme, overview.org.logo).
 
@@ -20,11 +20,11 @@
     onDuty: [{ name, dn, rank, rankName }], // gerade im Dienst
     counts: { members, onDuty },
     divisions: [{ id, name, minRank, maxRank, minRankName, maxRankName, count, onDuty }],
-    access: { structure, leitstelle, archive, message, cash, divisions, info }
+    access: { structure, leitstelle, archive, message, cash, divisions, info, logs }
   }
 
   AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
-  ui_ready      { ui: "orgmenu", version: 2 }                -> data.colors
+  ui_ready      { ui: "orgmenu", version: 3 }                -> data.colors
   orgmenu_close {}
   orgmenu_call  { name, data }                               // name aus der Liste unten, geht unveraendert an den Server
     faction_menu_open {}                                     -> Overview
@@ -50,7 +50,9 @@
     faction_member_fire { characterId, reason }              -> Members
     faction_member_bonus { characterId, amount, reason? }    -> Members (Leader und Vice, einmal pro Tag je Person)
     faction_hire { characterId }                             -> Members (Person muss online sein und zustimmen)
-    faction_archive { page, search? }                        -> { entries: Archived[], page, hasMore }
+    faction_archive { page, search? }                        -> { entries: Archived[], page, hasMore, canEdit? }
+    faction_archive_update { id, reason? | hidden?: boolean } -> {}   (nur Admins mit factions.manage)
+    faction_logs { characterId?, role?: "all"|"actor"|"target", area?, before? } -> Logs
 
   Divisions { divisions: [{ id, name, minRank, maxRank, minRankName, maxRankName,
               members: [{ characterId, name, dn, rank, rankName, online?, onDuty? }] }],  // id 0 = Ohne Division
@@ -69,7 +71,9 @@
             departments: [{ id, name, ranks }], exams: [{ id, name }], leads: number[], ranks: [{ rank, name, assignable? }],
             limits: { strikes, vacation, dn, reason, bonus } }
   Archived { id, characterId, name, dn, lastRank, ranks: [{ rank, name, at, leader }], exams: [{ name, at, by }],
-             hiredAt, leftAt, reason, by, kind: "fire" | "leave" | "admin" }
+             hiredAt, leftAt, reason, by, kind: "fire" | "leave" | "admin", hiddenBy? }   // hiddenBy nur fuer Admins
+  Logs    { entries: [{ id, area, action, text, at, actor?: { id?, name }, target?: { id, name }, admin? }],
+            more, next?, areas: [{ key, label }], person?: { id, name } }   // neueste zuerst, next = before fuer die naechste Seite
 
   FEHLERCODES: not_member, no_permission, invalid_input, invalid_rank, invalid_name, invalid_ranks, invalid_amount,
   invalid_salary, not_enough_money, limit_reached, not_found, dn_taken, already_member, target_offline, consent_declined,
@@ -725,6 +729,41 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .timeline small { display: block; color: var(--c-text-muted); font-size: var(--fs-xs); margin-top: 2px; }
 .pager { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
 
+/* ---------- Protokolle ---------- */
+.detail__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-4); }
+.detail__actions .btn .icon { width: 16px; height: 16px; }
+.idsearch { display: flex; gap: var(--space-2); align-items: center; }
+.idsearch .search { max-width: 340px; min-width: 220px; }
+.person-chip {
+  display: inline-flex; align-items: center; gap: var(--space-2); height: 44px; padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--c-accent-line); border-radius: var(--radius-md); background: var(--c-accent-soft); font-weight: 600;
+}
+.person-chip .num { color: var(--c-text-2); font-weight: 500; }
+.segmented { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: rgb(var(--rgb-ink) / 0.03); }
+.segmented .filter { border-color: transparent; }
+.filters--log { align-items: center; gap: var(--space-2); }
+.filters__label { color: var(--c-text-muted); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-right: var(--space-1); }
+.table--log td { height: auto; padding-top: var(--space-2); padding-bottom: var(--space-2); }
+.table--log td.log__text { white-space: normal; min-width: 280px; line-height: 1.45; color: var(--c-text); }
+.table--log td.log__time { width: 1%; color: var(--c-text-muted); }
+.area { display: inline-flex; align-items: center; gap: 6px; padding: 2px var(--space-2); border-radius: var(--radius-xs); font-size: var(--fs-xs); font-weight: 600;
+  color: var(--c-text); background: rgb(var(--tint) / var(--tint-a, 0.18)); box-shadow: inset 2px 0 0 rgb(var(--tint)); white-space: nowrap; }
+.link { padding: 0; border: 0; background: none; color: var(--c-text); font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
+.link:hover, .link:focus-visible { color: var(--c-accent); text-decoration: underline; outline: none; }
+.link small { margin-left: 6px; color: var(--c-text-muted); font-weight: 500; }
+.tag-admin { margin-left: 6px; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--c-signal-soft); color: var(--c-text); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.log-quote { margin: 0; padding: var(--space-3) var(--space-4); border-left: 3px solid var(--c-accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--c-surface); line-height: 1.55; }
+.party { display: grid; grid-template-columns: 40px 1fr auto; gap: var(--space-3); align-items: center; }
+.party .avatar { width: 40px; height: 40px; font-size: var(--fs-sm); }
+.party__role { color: var(--c-text-muted); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.area-bars { display: grid; gap: var(--space-2); }
+.area-bar { display: grid; grid-template-columns: 96px 1fr 40px; gap: var(--space-3); align-items: center; font-size: var(--fs-sm); }
+.area-bar__track { height: 8px; border-radius: 4px; background: rgb(var(--rgb-ink) / 0.06); overflow: hidden; }
+.area-bar__fill { height: 100%; border-radius: 4px; background: rgb(var(--tint)); }
+.lock-note { display: flex; gap: var(--space-2); align-items: flex-start; }
+.lock-note .icon { flex: none; margin-top: 2px; color: var(--c-accent); }
+.archive-hidden td { opacity: 0.55; }
+
 /* ---------- Modal und Meldung ---------- */
 .modal-back { position: fixed; inset: 0; z-index: var(--z-modal); background: rgb(var(--rgb-base) / 0.7); display: grid; place-items: center; }
 .modal { width: min(92vw, 500px); padding: var(--space-5); border: 1px solid var(--c-border-hi); border-top: 3px solid var(--c-accent); border-radius: var(--radius-lg); background: rgb(var(--rgb-base)); box-shadow: var(--shadow); }
@@ -789,6 +828,9 @@ kbd {
     <g id="i-book" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5Z"/><path d="M4 19a2 2 0 0 1 2-2h13M9 7h6M9 11h6"/></g>
     <g id="i-search" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></g>
     <g id="i-pulse" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-5 4 10 2-5h6"/></g>
+    <g id="i-scroll" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h11a1 1 0 0 1 1 1v12a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-1h12v1a3 3 0 0 0 3 3"/><path d="M8 4a2 2 0 0 0-2 2v10M10 8h6M10 12h6"/></g>
+    <g id="i-lock" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></g>
+    <g id="i-eye" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></g>
     <g id="i-cash" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M7 12h0M17 12h0"/></g>
   </defs>
 </svg>
@@ -843,7 +885,7 @@ kbd {
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script id="bridge">
-const CONTRACT_VERSION = 2;
+const CONTRACT_VERSION = 3;
 
 const Bridge = (() => {
   const handlers = {};
@@ -913,6 +955,7 @@ const Mock = (() => {
     { key: 'ems.records.note', group: 'Rettungsdienst', label: 'Einträge in die Akte schreiben', min: 3 },
   ];
   const ME_RANK = 30;
+  const ADMIN = new URLSearchParams(location.search).has('admin');   // ?admin: Admin mit factions.manage (Archiv korrigieren)
   const db = {
     message: { text: 'Ab Montag gilt der neue Dienstplan. Jede Schicht meldet sich bei Dienstbeginn über Funk bei der Leitstelle an.\n\nPrüfung Notfallsanitäter am Freitag um 19 Uhr im Schulungsraum, Anmeldung bei Dr. Weber.', by: 'Lena Hoffmann', at: '2026-11-06 18:42' },
     balance: 48250,
@@ -953,6 +996,44 @@ const Mock = (() => {
       { id: 2, characterId: 64, name: 'Paula Krüger', dn: 'EMS-005', lastRank: 'Rettungssanitäter', ranks: [{ rank: 1, name: 'Praktikant', at: '2026-09-25', leader: 'Lena Hoffmann' }, { rank: 3, name: 'Rettungssanitäter', at: '2026-10-08', leader: 'Lena Hoffmann' }], exams: [], hiredAt: '2026-09-25', leftAt: '2026-10-30', reason: 'Selbst gekündigt', by: 'Paula Krüger', kind: 'leave' },
     ],
   };
+  const AREAS = [{ key: 'leitstelle', label: 'Leitstelle' }, { key: 'einsatz', label: 'Einsatz' }, { key: 'datenbank', label: 'Datenbank' },
+    { key: 'kasse', label: 'Kasse' }, { key: 'dienst', label: 'Dienst' }, { key: 'anpassung', label: 'Anpassung' }];
+  const P = { lena: { id: 17, name: 'Lena Hoffmann' }, jonas: { id: 42, name: 'Jonas Weber' }, mira: { id: 108, name: 'Mira Schulz' },
+    tom: { id: 233, name: 'Tom Becker' }, fabian: { id: 256, name: 'Fabian Nandes' }, sara: { id: 311, name: 'Sara Yilmaz' },
+    paul: { id: 512, name: 'Paul Krüger' }, ina: { id: 530, name: 'Ina Roth' }, murat: { id: 402, name: 'Murat Demir' } };
+  const ADMIN_MAX = { id: 3, name: 'Admin Max Vogel' };
+  const LOG_SEED = [
+    ['2026-11-09 13:58', 'einsatz', 'Hochgeholt (Mediziner)', P.fabian, P.paul],
+    ['2026-11-09 13:52', 'datenbank', 'Akte angesehen', P.fabian, P.paul],
+    ['2026-11-09 13:41', 'einsatz', 'Behandelt: Bluthochdruck, 2 von 4, 250 $', P.mira, P.ina],
+    ['2026-11-09 13:40', 'kasse', '250 $ eingezahlt (Rettungsdienst: Behandlung Bluthochdruck), Kasse jetzt 48.570 $', P.mira, null],
+    ['2026-11-09 13:22', 'leitstelle', 'Strikes von 1 auf 2', P.lena, P.tom],
+    ['2026-11-09 13:05', 'einsatz', 'Mit Verbandskasten hochgeholt (kein Mediziner)', { id: 618, name: 'Kai Brandt' }, P.sara],
+    ['2026-11-09 12:47', 'datenbank', 'Eintrag geändert: Allergie gegen Penicillin und Ibuprofen. (vorher: Allergie gegen Penicillin.)', ADMIN_MAX, P.paul, true],
+    ['2026-11-09 12:31', 'dienst', 'Dienstfahrzeug Rettungswagen ausgeparkt, Kennzeichen EMS 4821', P.fabian, P.fabian],
+    ['2026-11-09 12:30', 'dienst', 'Dienst angetreten', P.fabian, P.fabian],
+    ['2026-11-09 11:58', 'kasse', 'Gehalt 400 $ als Notarzt, Kasse jetzt 48.320 $', null, P.mira],
+    ['2026-11-09 11:15', 'leitstelle', 'Befördert von Rettungssanitäter III (5) auf Notfallsanitäter-Anwärter (6)', P.jonas, P.tom],
+    ['2026-11-09 10:44', 'anpassung', 'Rang 18: Gehalt 400 $ statt 300 $; Rechte dazu: Strikes vergeben', P.lena, null],
+    ['2026-11-09 10:02', 'einsatz', 'Verkauft: 2x Verbandskasten für 300 $', P.murat, P.ina],
+    ['2026-11-08 22:17', 'kasse', 'Bonus 500 $ an Mira Schulz: Großeinsatz Paleto, Kasse jetzt 47.920 $', P.lena, P.mira],
+    ['2026-11-08 21:40', 'leitstelle', 'Prüfung eingetragen: Notfallsanitäter', P.mira, P.murat],
+    ['2026-11-08 20:12', 'einsatz', 'Krankenversicherung verlängert bis 2026-12-08, 250 $', P.fabian, P.paul],
+    ['2026-11-08 19:55', 'datenbank', 'Bluthochdruck auf Stadium 1 gesetzt (Korrektur)', P.lena, P.ina],
+    ['2026-11-08 18:30', 'leitstelle', 'Eingestellt als Praktikant (1), Dienstnummer EMS-011', P.lena, P.sara],
+    ['2026-11-08 18:02', 'anpassung', 'Division Command: Rang 18 bis 25', P.jonas, null],
+    ['2026-11-08 17:45', 'leitstelle', 'Archiv: Grund Unentschuldigt gefehlt statt Test', ADMIN_MAX, { id: 87, name: 'Kevin Lorenz' }, true],
+  ];
+  const logs = LOG_SEED.map(([at, area, text, actor, target, admin], i) => ({ id: 900 - i, at, area, action: area, text, actor: actor || undefined, target: target || undefined, admin }));
+  const LOG_PAGE = 14;
+  const logsPayload = (d) => {
+    let list = logs.filter((e) => !d.area || e.area === d.area);
+    if (d.characterId) list = list.filter((e) => (d.role !== 'target' && e.actor && e.actor.id === d.characterId) || (d.role !== 'actor' && e.target && e.target.id === d.characterId));
+    if (d.before) list = list.filter((e) => e.id < d.before);
+    const page = list.slice(0, LOG_PAGE);
+    const person = d.characterId ? Object.values(P).find((p) => p.id === d.characterId) || { id: d.characterId, name: 'Unbekannt' } : undefined;
+    return { entries: page, more: list.length > LOG_PAGE, next: page.length ? page[page.length - 1].id : undefined, areas: AREAS, person };
+  };
   const rankName = (r) => (db.ranks[r] && db.ranks[r].name) || RANK_NAMES[r - 1];
   const divisionOf = (r) => db.divisions.find((d) => r >= d.minRank && r <= d.maxRank);
   const theme = { base: '9 14 28', ink: '240 244 250', accent: '37 94 190', mark: '237 28 36' };
@@ -969,7 +1050,7 @@ const Mock = (() => {
     divisions: db.divisions.map((d) => ({ ...d, minRankName: rankName(d.minRank), maxRankName: rankName(d.maxRank),
       count: db.members.filter((m) => m.rank >= d.minRank && m.rank <= d.maxRank).length,
       onDuty: db.members.filter((m) => m.onDuty && m.rank >= d.minRank && m.rank <= d.maxRank).length })),
-    access: { structure: true, leitstelle: true, archive: true, message: true, cash: true, divisions: true, info: true },
+    access: { structure: true, leitstelle: true, archive: true, message: true, cash: true, divisions: true, info: true, logs: true },
   });
   const divisionsPayload = () => {
     const groups = [...db.divisions].sort((a, b) => b.maxRank - a.maxRank).map((d) => ({ ...d, minRankName: rankName(d.minRank), maxRankName: rankName(d.maxRank),
@@ -1069,7 +1150,14 @@ const Mock = (() => {
     faction_member_rank: (d) => { db.members.find((x) => x.characterId === d.characterId).rank = d.rank; return { ok: true, data: membersPayload() }; },
     faction_member_fire: (d) => { db.members = db.members.filter((x) => x.characterId !== d.characterId); return { ok: true, data: membersPayload() }; },
     faction_hire: (d) => d.characterId === 999 ? { ok: false, error: 'consent_declined' } : (db.members.push({ characterId: d.characterId, name: 'Neue Person', dn: 'EMS-012', rank: 1, strikes: 0, vacationDays: 0, departments: [], exams: [], hiredAt: '2026-11-07', online: true }), { ok: true, data: membersPayload() }),
-    faction_archive: (d) => ({ ok: true, data: { entries: db.archive.filter((a) => !d.search || a.name.toLowerCase().includes(d.search.toLowerCase()) || String(a.characterId) === d.search), page: 1, hasMore: false } }),
+    faction_archive: (d) => ({ ok: true, data: { entries: db.archive.filter((a) => (ADMIN || !a.hiddenBy) && (!d.search || a.name.toLowerCase().includes(d.search.toLowerCase()) || String(a.characterId) === d.search)), page: 1, hasMore: false, canEdit: ADMIN || undefined } }),
+    faction_archive_update: (d) => {
+      if (!ADMIN) return { ok: false, error: 'no_permission' };
+      const a = db.archive.find((x) => x.id === d.id);
+      if (d.reason !== undefined) a.reason = d.reason; else a.hiddenBy = d.hidden ? 'Admin Max Vogel' : undefined;
+      return { ok: true, data: {} };
+    },
+    faction_logs: (d) => ({ ok: true, data: logsPayload(d) }),
   };
   return {
     delay: 120,
@@ -1098,6 +1186,7 @@ const TEXT = {
     vehicles: 'Fahrzeuge',
     leitstelle: 'Leitstelle',
     archive: 'Archiv',
+    logs: 'Protokolle',
   },
   admin: (readOnly) => readOnly ? 'Admin, nur ansehen' : 'Admin, bearbeiten',
   close: 'Schließen',
@@ -1164,6 +1253,22 @@ const TEXT = {
     ranks: 'Ränge', exams: 'Prüfungen', none: 'Keine', under: (leader) => leader ? `unter ${leader}` : 'kein Leader eingetragen',
     dates: { hired: 'Einstellungsdatum', left: 'Kündigungsdatum' }, by: (by) => `durch ${by}`, reason: 'Grund',
     more: 'Mehr laden',
+    hidden: (by) => `Ausgeblendet von ${by}. Nur Admins sehen diesen Eintrag.`,
+    adminTitle: 'Admin: korrigieren', reasonSave: 'Grund speichern', hide: 'Ausblenden', show: 'Wieder zeigen',
+    adminHint: 'Ausblenden löscht nichts. Der Eintrag bleibt für Admins sichtbar und jede Änderung steht im Protokoll.',
+    protocol: 'Protokoll dieser ID',
+  },
+  logs: {
+    id: 'Permanente ID, z. B. 256', show: 'Anzeigen', clear: 'Alle Einträge', all: 'Alle',
+    roles: { all: 'Alles', actor: 'Hat gemacht', target: 'Betrifft' }, area: 'Bereich', role: 'Rolle',
+    cols: { at: 'Zeit', area: 'Bereich', text: 'Was', actor: 'Von', target: 'An' },
+    system: 'System', empty: 'Keine Einträge.', more: 'Ältere laden',
+    count: (n, more) => `${n}${more ? '+' : ''} Einträge`, of: (name, id) => `${name} · ID ${id}`,
+    pick: 'Wähle einen Eintrag oder gib oben eine ID ein. Ein Klick auf einen Namen zeigt alles zu dieser ID.',
+    actor: 'Von', target: 'An', open: 'Alles zu dieser ID', admin: 'Admin',
+    person: 'Person', byArea: 'Nach Bereich', loaded: (n) => `in den ${n} geladenen Einträgen`,
+    locked: 'Protokolle lassen sich nicht ändern oder löschen, auch nicht vom Leader. Admins sehen zusätzlich das zentrale Log.',
+    invalidId: 'Bitte eine permanente ID eingeben.',
   },
   saved: 'Gespeichert.',
   errors: {
@@ -1189,6 +1294,7 @@ const TEXT = {
     db_error: 'Datenbankfehler. Bitte einem Admin melden.',
     server_error: 'Fehler auf dem Server. Bitte nochmal versuchen.',
     timeout: 'Der Server antwortet nicht.',
+    not_insured: 'Die Person ist gerade nicht versichert.',
     default: 'Das hat nicht geklappt.',
   },
 };
@@ -1201,7 +1307,11 @@ const TABS = [
   { id: 'vehicles', icon: 'i-car', access: (a) => a.structure },
   { id: 'leitstelle', icon: 'i-radio', access: (a) => a.leitstelle },
   { id: 'archive', icon: 'i-archive', access: (a) => a.archive },
+  { id: 'logs', icon: 'i-scroll', access: (a) => a.logs },
 ];
+// Farben der Protokoll-Bereiche: Akzent und zweite Farbe der Organisation im Wechsel, in Deckkraft abgestuft
+const AREA_TINTS = { leitstelle: ['var(--rgb-accent)', 1], einsatz: ['var(--rgb-signal)', 1], datenbank: ['var(--rgb-accent)', 0.6],
+  kasse: ['var(--rgb-signal)', 0.6], dienst: ['var(--rgb-ink)', 0.5], anpassung: ['var(--rgb-ink)', 0.3] };
 // Farben der Divisionen: abwechselnd Akzent und zweite Farbe der Organisation, in Deckkraft abgestuft
 const DIVISION_TINTS = ['var(--rgb-accent)', 'var(--rgb-signal)', 'var(--rgb-accent)', 'var(--rgb-signal)', 'var(--rgb-accent)'];
 const DIVISION_ALPHA = [1, 1, 0.7, 0.7, 0.5];
@@ -1225,6 +1335,7 @@ const state = {
   filter: 'all',
   memoEdit: false,
   modal: null,
+  logs: null, logSel: null, logFilter: { characterId: null, role: 'all', area: '' },
 };
 
 const el = {
@@ -1409,7 +1520,24 @@ async function openTab(tab) {
   if (tab === 'archive' && !state.archive) state.archive = await call('faction_archive', { page: 1 });
   if (tab === 'divisions' && !state.divisions) state.divisions = await call('faction_divisions');
   if (tab === 'info' && !state.info) state.info = await call('faction_info');
+  if (tab === 'logs' && !state.logs) await loadLogs(true);
   render();
+}
+
+// Protokolle laden: reset = erste Seite mit dem aktuellen Filter, sonst die naechste Seite anhaengen
+async function loadLogs(reset) {
+  const f = state.logFilter;
+  const data = await call('faction_logs', { characterId: f.characterId || undefined, role: f.characterId ? f.role : undefined,
+    area: f.area || undefined, before: reset ? undefined : state.logs?.next });
+  if (!data) return;
+  if (reset || !state.logs) { state.logs = data; state.logSel = null; }
+  else state.logs = { ...data, entries: [...state.logs.entries, ...data.entries] };
+}
+
+async function showLogsFor(characterId) {
+  state.logFilter = { ...state.logFilter, characterId, role: 'all' };
+  state.logs = null;
+  await openTab('logs');
 }
 
 function render() {
@@ -1417,7 +1545,7 @@ function render() {
   renderFrame();
   el.view.className = 'view';
   ({ overview: renderOverview, divisions: renderDivisions, info: renderInfo, structure: renderStructure, vehicles: renderVehicles,
-    leitstelle: renderLeitstelle, archive: renderArchive })[state.tab]();
+    leitstelle: renderLeitstelle, archive: renderArchive, logs: renderLogs })[state.tab]();
 }
 
 /* ---------- Uebersicht ---------- */
@@ -2012,6 +2140,13 @@ function renderMemberDetail(box) {
   who.append(make('h2', 'detail__name', m.name), make('div', 'detail__meta num', `ID ${m.characterId} · ${m.dn || '-'} · ${st.label}`));
   head.append(make('div', 'avatar', initials(m.name)), who);
   box.append(head, datesTile([[TEXT.lst.dates.hired, m.hiredAt || '-'], [TEXT.lst.dates.promoted, m.lastPromotedAt || TEXT.lst.never]]));
+  if (state.overview.access.logs) {
+    const row = make('div', 'detail__actions');
+    const b = button('', 'logs-for', 'btn--sm', { id: m.characterId });
+    b.append(icon('i-scroll'), make('span', '', TEXT.archive.protocol));
+    row.append(b);
+    box.append(row);
+  }
   if (!m.above && !readOnly() && Object.keys(edit).length) box.append(make('div', 'note', TEXT.lst.above));
 
   const general = make('div', 'detail__block');
@@ -2121,6 +2256,7 @@ function renderArchive() {
       tr.dataset.id = a.id;
       tr.tabIndex = 0;
       tr.setAttribute('aria-selected', String(a.id === state.archiveSel));
+      if (a.hiddenBy) tr.className = 'archive-hidden';
       tr.append(make('td', 'who__name', a.name), make('td', 'r num muted', a.characterId), make('td', '', a.lastRank), make('td', 'num', a.hiredAt || '-'), make('td', 'num', a.leftAt), make('td', 'muted', TEXT.archive.kind[a.kind] || a.kind));
       body.append(tr);
     });
@@ -2141,6 +2277,14 @@ function renderArchive() {
     who.append(make('h2', 'detail__name', a.name), make('div', 'detail__meta num', `ID ${a.characterId} · ${a.dn || '-'} · ${a.lastRank}`));
     head.append(make('div', 'avatar', initials(a.name)), who);
     detail.append(head, datesTile([[TEXT.archive.dates.hired, a.hiredAt || '-'], [TEXT.archive.dates.left, a.leftAt || '-']]));
+    if (a.hiddenBy) detail.append(make('div', 'note', TEXT.archive.hidden(a.hiddenBy)));
+    if (state.overview.access.logs) {
+      const row = make('div', 'detail__actions');
+      const b = button('', 'logs-for', 'btn--sm', { id: a.characterId });
+      b.append(icon('i-scroll'), make('span', '', TEXT.archive.protocol));
+      row.append(b);
+      detail.append(row);
+    }
     const left = make('div', 'detail__block');
     left.append(make('span', 'pill pill--mark', `${TEXT.archive.kind[a.kind] || a.kind}${a.by ? `, ${TEXT.archive.by(a.by)}` : ''}`));
     if (a.reason) left.append(field(TEXT.archive.reason, make('div', '', a.reason)));
@@ -2170,7 +2314,181 @@ function renderArchive() {
     });
     exams.append(a.exams.length ? el2 : make('div', 'muted', TEXT.archive.none));
     detail.append(exams);
+    if (data.canEdit) {
+      const adm = make('div', 'detail__block');
+      adm.append(make('h3', 'section-title', TEXT.archive.adminTitle),
+        field(TEXT.archive.reason, input(a.reason || '', { id: 'archive-reason', maxlength: 120 })));
+      const row = make('div', 'detail__actions');
+      row.append(button(TEXT.archive.reasonSave, 'archive-reason', 'btn--primary', { id: a.id }),
+        button(a.hiddenBy ? TEXT.archive.show : TEXT.archive.hide, 'archive-hide', a.hiddenBy ? '' : 'btn--danger', { id: a.id, hidden: a.hiddenBy ? 'false' : 'true' }));
+      adm.append(row, make('div', 'note', TEXT.archive.adminHint));
+      detail.append(adm);
+    }
   }
+  el.view.replaceChildren(scroll, detail);
+}
+
+/* ---------- Protokolle ---------- */
+function areaLabel(key) {
+  const area = (state.logs?.areas || []).find((a) => a.key === key);
+  return area ? area.label : key;
+}
+function areaChip(key) {
+  const chip = make('span', 'area', areaLabel(key));
+  const [tint, alpha] = AREA_TINTS[key] || ['var(--rgb-ink)', 0.4];
+  chip.style.setProperty('--tint', tint);
+  chip.style.setProperty('--tint-a', String(0.14 + alpha * 0.14));
+  return chip;
+}
+function personLink(person) {
+  if (!person) return make('span', 'muted', TEXT.logs.system);
+  if (!person.id) return make('span', '', person.name || TEXT.logs.system);
+  const b = make('button', 'link', person.name || '?');
+  b.type = 'button';
+  b.dataset.action = 'logs-for';
+  b.dataset.id = person.id;
+  b.append(make('small', 'num', person.id));
+  return b;
+}
+
+function renderLogs() {
+  const data = state.logs;
+  const f = state.logFilter;
+  setHead(TEXT.tabs.logs, data ? TEXT.logs.count(data.entries.length, data.more) : '');
+  el.view.className = 'view view--split';
+  const scroll = make('div', 'scroll');
+
+  const bar = make('div', 'toolbar');
+  const idBox = make('div', 'idsearch');
+  const search = make('div', 'search');
+  search.append(icon('i-search'), input(f.characterId || '', { type: 'number', min: 1, step: 1, id: 'log-id', placeholder: TEXT.logs.id, 'aria-label': TEXT.logs.id }));
+  idBox.append(search, button(TEXT.logs.show, 'logs-id', 'btn--primary'));
+  bar.append(idBox);
+  if (f.characterId && data?.person) {
+    const chip = make('span', 'person-chip');
+    chip.append(make('span', '', data.person.name || '?'), make('span', 'num', `ID ${data.person.id}`));
+    const x = button('', 'logs-clear', 'btn--icon btn--ghost btn--sm');
+    x.append(icon('i-close'));
+    x.setAttribute('aria-label', TEXT.logs.clear);
+    chip.append(x);
+    bar.append(chip);
+  }
+  scroll.append(bar);
+
+  const filters = make('div', 'filters filters--log');
+  if (f.characterId) {
+    filters.append(make('span', 'filters__label', TEXT.logs.role));
+    const seg = make('div', 'segmented');
+    seg.setAttribute('role', 'group');
+    ['all', 'actor', 'target'].forEach((key) => {
+      const b = make('button', 'filter', TEXT.logs.roles[key]);
+      b.type = 'button';
+      b.dataset.action = 'logs-role';
+      b.dataset.role = key;
+      b.setAttribute('aria-pressed', String(f.role === key));
+      seg.append(b);
+    });
+    filters.append(seg);
+  }
+  filters.append(make('span', 'filters__label', TEXT.logs.area));
+  [{ key: '', label: TEXT.logs.all }, ...(data?.areas || [])].forEach((a) => {
+    const b = make('button', 'filter', a.label);
+    b.type = 'button';
+    b.dataset.action = 'logs-area';
+    b.dataset.area = a.key;
+    b.setAttribute('aria-pressed', String(f.area === a.key));
+    filters.append(b);
+  });
+  scroll.append(filters);
+
+  const entries = data ? data.entries : [];
+  if (!entries.length) scroll.append(make('div', 'empty', data ? TEXT.logs.empty : TEXT.errors.default));
+  else {
+    const table = make('table', 'table table--log');
+    const head = make('thead');
+    const hr = make('tr');
+    const c = TEXT.logs.cols;
+    [c.at, c.area, c.text, c.actor, c.target].forEach((t) => hr.append(make('th', '', t)));
+    head.append(hr);
+    const body = make('tbody');
+    entries.forEach((e) => {
+      const tr = make('tr');
+      tr.dataset.action = 'log-pick';
+      tr.dataset.id = e.id;
+      tr.tabIndex = 0;
+      tr.setAttribute('aria-selected', String(e.id === state.logSel));
+      const tdArea = make('td');
+      tdArea.append(areaChip(e.area));
+      const tdActor = make('td');
+      tdActor.append(personLink(e.actor));
+      if (e.admin) tdActor.append(make('span', 'tag-admin', TEXT.logs.admin));
+      const tdTarget = make('td');
+      const self = e.target && e.actor && e.target.id === e.actor.id;
+      tdTarget.append(e.target && !self ? personLink(e.target) : make('span', 'muted', '-'));
+      tr.append(make('td', 'num log__time', e.at), tdArea, make('td', 'log__text', e.text), tdActor, tdTarget);
+      body.append(tr);
+    });
+    table.append(head, body);
+    scroll.append(table);
+    if (data.more) {
+      const pager = make('div', 'pager');
+      pager.append(button(TEXT.logs.more, 'logs-more'));
+      scroll.append(pager);
+    }
+  }
+
+  const detail = make('aside', 'detail');
+  detail.setAttribute('aria-label', TEXT.tabs.logs);
+  const sel = entries.find((e) => e.id === state.logSel);
+  if (sel) {
+    const top = make('div', 'detail__actions');
+    top.append(areaChip(sel.area), make('span', 'num muted', sel.at));
+    detail.append(top, make('p', 'log-quote', sel.text));
+    [[TEXT.logs.actor, sel.actor, sel.admin], [TEXT.logs.target, sel.target]].forEach(([role, person, admin]) => {
+      if (!person) return;
+      const block = make('div', 'detail__block');
+      const row = make('div', 'party');
+      const who = make('div');
+      const name = make('div', 'who__name', person.name || TEXT.logs.system);
+      if (admin) name.append(make('span', 'tag-admin', TEXT.logs.admin));
+      who.append(make('div', 'party__role', role), name, make('div', 'detail__meta num', person.id ? `ID ${person.id}` : ''));
+      row.append(make('div', 'avatar', initials(person.name)), who);
+      if (person.id) row.append(button(TEXT.logs.open, 'logs-for', 'btn--sm', { id: person.id }));
+      block.append(row);
+      detail.append(block);
+    });
+  } else if (f.characterId && data?.person) {
+    const head = make('div', 'detail__head');
+    const who = make('div');
+    who.append(make('h2', 'detail__name', data.person.name || '?'), make('div', 'detail__meta num', `ID ${data.person.id}`));
+    head.append(make('div', 'avatar', initials(data.person.name)), who);
+    detail.append(head);
+    const block = make('div', 'detail__block');
+    block.append(make('h3', 'section-title', TEXT.logs.byArea));
+    const counts = {};
+    entries.forEach((e) => { counts[e.area] = (counts[e.area] || 0) + 1; });
+    const max = Math.max(1, ...Object.values(counts));
+    const bars = make('div', 'area-bars');
+    (data.areas || []).forEach((a) => {
+      const row = make('div', 'area-bar');
+      const track = make('div', 'area-bar__track');
+      const fill = make('div', 'area-bar__fill');
+      fill.style.width = `${((counts[a.key] || 0) / max) * 100}%`;
+      fill.style.setProperty('--tint', (AREA_TINTS[a.key] || ['var(--rgb-ink)'])[0]);
+      track.append(fill);
+      row.append(make('span', '', a.label), track, make('span', 'r num', counts[a.key] || 0));
+      bars.append(row);
+    });
+    block.append(bars, make('div', 'note', TEXT.logs.loaded(entries.length)));
+    detail.append(block);
+  } else {
+    detail.append(make('div', 'empty', TEXT.logs.pick));
+  }
+  const lock = make('div', 'detail__block');
+  const note = make('div', 'note lock-note');
+  note.append(icon('i-lock'), make('span', '', TEXT.logs.locked));
+  lock.append(note);
+  detail.append(lock);
   el.view.replaceChildren(scroll, detail);
 }
 
@@ -2353,6 +2671,28 @@ const actions = {
     const data = await call('faction_archive', { page: state.archivePage + 1, search: state.archiveSearch || undefined });
     if (data) { state.archivePage = data.page; state.archive = { ...data, entries: [...state.archive.entries, ...data.entries] }; render(); }
   },
+  'logs-for': (t) => showLogsFor(Number(t.dataset.id)),
+  'logs-id': async () => {
+    const id = Number(document.getElementById('log-id').value);
+    if (!Number.isInteger(id) || id <= 0) { toast(TEXT.logs.invalidId, true); return; }
+    state.logFilter = { ...state.logFilter, characterId: id, role: 'all' };
+    await loadLogs(true);
+    render();
+  },
+  'logs-clear': async () => { state.logFilter = { ...state.logFilter, characterId: null, role: 'all' }; await loadLogs(true); render(); },
+  'logs-role': async (t) => { state.logFilter = { ...state.logFilter, role: t.dataset.role }; await loadLogs(true); render(); },
+  'logs-area': async (t) => { state.logFilter = { ...state.logFilter, area: t.dataset.area }; await loadLogs(true); render(); },
+  'logs-more': async () => { await loadLogs(false); render(); },
+  'log-pick': (t) => { state.logSel = Number(t.dataset.id); render(); },
+  'archive-reason': async (t) => {
+    const reason = document.getElementById('archive-reason').value.trim();
+    const done = await call('faction_archive_update', { id: Number(t.dataset.id), reason });
+    if (done) { state.archive = await call('faction_archive', { page: 1, search: state.archiveSearch || undefined }); state.archivePage = 1; state.logs = null; toast(TEXT.saved); render(); }
+  },
+  'archive-hide': async (t) => {
+    const done = await call('faction_archive_update', { id: Number(t.dataset.id), hidden: t.dataset.hidden === 'true' });
+    if (done) { state.archive = await call('faction_archive', { page: 1, search: state.archiveSearch || undefined }); state.archivePage = 1; state.logs = null; toast(TEXT.saved); render(); }
+  },
   'modal-cancel': () => closeModal(),
   'modal-confirm': async () => {
     const options = state.modal;
@@ -2429,6 +2769,11 @@ document.addEventListener('keydown', (event) => {
     else close();
     return;
   }
+  if (event.key === 'Enter' && event.target.id === 'log-id') {
+    event.preventDefault();
+    actions['logs-id']();
+    return;
+  }
   if (event.key === 'Enter' && event.target.dataset?.action && event.target.tagName === 'TR') {
     actions[event.target.dataset.action]?.(event.target);
   }
@@ -2452,7 +2797,8 @@ Bridge.on('orgmenu_open', (data) => {
   applyTheme(data.overview?.org?.theme);
   Object.assign(state, { open: true, overview: data.overview, tab: 'overview', ranks: null, rankSel: null, sub: 'ranks', vehicles: null,
     members: null, memberSel: null, search: '', archive: null, archiveSel: null, archiveSearch: '', archivePage: 1, memoEdit: false,
-    divisions: null, info: null, infoSub: 'exams', infoEdit: null, filter: 'all' });
+    divisions: null, info: null, infoSub: 'exams', infoEdit: null, filter: 'all',
+    logs: null, logSel: null, logFilter: { characterId: null, role: 'all', area: '' } });
   el.panel.hidden = false;
   render();
   el.nav.querySelector('.nav__item')?.focus();
@@ -2474,6 +2820,9 @@ Bridge.on('orgmenu_close', () => {
       await openTab(tab);
       if (tab === 'leitstelle') { state.memberSel = 108; render(); }
       if (tab === 'archive') { state.archiveSel = 3; render(); }
+      const logId = Number(new URLSearchParams(location.search).get('id'));
+      if (tab === 'logs' && logId) { state.logFilter.characterId = logId; await loadLogs(true); render(); }
+      if (tab === 'logs' && new URLSearchParams(location.search).has('pick')) { state.logSel = state.logs.entries[0].id; render(); }
       if (tab === 'structure') { state.rankSel = 24; render(); }
       const sub = new URLSearchParams(location.search).get('sub');
       if (tab === 'info' && sub) { state.infoSub = sub; render(); }

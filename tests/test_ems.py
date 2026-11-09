@@ -264,5 +264,72 @@ env.flush_log()
 logs = env.sql("SELECT action FROM audit_log WHERE category = 'ems'")
 check('Blick in die Akte und Verkäufe geloggt', {'records_view', 'sell', 'treat', 'revive', 'heal', 'medkit_revive'} <= {l['action'] for l in logs}, {l['action'] for l in logs})
 
+print('Akte korrigieren (Leitung und Admins)')
+o = E(1, 'ems_records_open')['data']
+check('Leader darf korrigieren, Liste der Krankheiten', o['canManage'] is True and len(o['diseases']) == 5, o)
+note = [e for e in E(1, 'ems_records_get', {'characterId': ids[2]})['data']['history'] if e['kind'] == 'note'][0]
+r = E(1, 'ems_records_entry', {'id': note['id'], 'text': 'Allergie gegen Penicillin und Ibuprofen.'})
+edited = [e for e in r['data']['history'] if e['id'] == note['id']][0] if r['ok'] else {}
+check('Eintrag ändern: Text neu, "geändert von" steht dran', edited.get('text') == 'Allergie gegen Penicillin und Ibuprofen.' and edited.get('editedBy') == 'Lena Hoffmann', r)
+r = E(1, 'ems_records_entry', {'id': note['id'], 'delete': True})
+gone = [e for e in r['data']['history'] if e['id'] == note['id']]
+check('Eintrag löschen: nur markiert, Leitung sieht ihn mit "gelöscht von"', r['ok'] and gone and gone[0]['deletedBy'] == 'Lena Hoffmann', r)
+check('in der Datenbank noch da', env.sql('SELECT deleted_at FROM ems_records WHERE id = %s', (note['id'],))[0]['deleted_at'] is not None)
+check('gelöschter Eintrag nicht noch einmal löschen', E(1, 'ems_records_entry', {'id': note['id'], 'delete': True})['error'] == 'not_found')
+check('wiederherstellen', E(1, 'ems_records_entry', {'id': note['id'], 'restore': True})['ok']
+      and env.sql('SELECT deleted_at FROM ems_records WHERE id = %s', (note['id'],))[0]['deleted_at'] is None)
+E(1, 'ems_records_entry', {'id': note['id'], 'delete': True})
+r = E(1, 'ems_records_insurance', {'characterId': ids[2], 'days': 0})
+check('Versicherung beenden', r['ok'] and r['data'].get('insurance') and r['data']['insurance']['valid'] is False, r)
+check('nochmal beenden: not_insured', E(1, 'ems_records_insurance', {'characterId': ids[2], 'days': 0})['error'] == 'not_insured')
+check('über 365 Tage: invalid_input', E(1, 'ems_records_insurance', {'characterId': ids[2], 'days': 400})['error'] == 'invalid_input')
+r = E(1, 'ems_records_insurance', {'characterId': ids[2], 'days': 90})
+check('Versicherung auf 90 Tage setzen', r['ok'] and r['data']['insurance']['valid'] is True, r)
+r = E(1, 'ems_records_disease', {'characterId': ids[2], 'disease': 'hypertension', 'stage': 2})
+check('Bluthochdruck auf Stadium 2 setzen (neu)', r['ok'] and diseases(ids[2]).get('hypertension') == 2, r)
+r = E(1, 'ems_records_disease', {'characterId': ids[2], 'disease': 'hypertension', 'stage': 1})
+check('Stadium ändern', r['ok'] and diseases(ids[2]).get('hypertension') == 1, r)
+check('Endstadium von Hand: invalid_input', E(1, 'ems_records_disease', {'characterId': ids[2], 'disease': 'hypertension', 'stage': 4})['error'] == 'invalid_input')
+r = E(1, 'ems_records_disease', {'characterId': ids[2], 'disease': 'hypertension', 'stage': 0})
+check('heilen', r['ok'] and 'hypertension' not in diseases(ids[2]), r)
+check('unbekannte Krankheit: invalid_input', E(1, 'ems_records_disease', {'characterId': ids[2], 'disease': 'pest', 'stage': 1})['error'] == 'invalid_input')
+# Mira: im Dienst, Rang 1, darf ansehen, aber nicht korrigieren
+env.positions[3] = list(LOCKER)
+check('Mira tritt den Dienst an', F(3, 'faction_duty')['data']['onDuty'] is True)
+env.positions[3] = list(HOSPITAL)
+check('Mira im Dienst: ansehen ja, korrigieren nein', E(3, 'ems_records_open')['ok'] and E(3, 'ems_records_open')['data']['canManage'] is False
+      and E(3, 'ems_records_entry', {'id': note['id'], 'restore': True})['error'] == 'no_permission')
+check('Mira sieht den gelöschten Eintrag nicht', all(e['id'] != note['id'] for e in E(3, 'ems_records_get', {'characterId': ids[2]})['data']['history']))
+# Admin (Tom, kein Mediziner)
+env.command(0, f'setrank {ids[4]} assistant')
+env.command(4, 'aduty')
+a = E(4, 'ems_records_open')
+check('Admin-Assistent (factions.view): nur ansehen', a['ok'] and a['data']['canManage'] is False and a['data']['canNote'] is False, a)
+env.command(0, f'setrank {ids[4]} chief')
+a = E(4, 'ems_records_open')
+check('Admin mit factions.manage: korrigieren und schreiben', a['ok'] and a['data']['canManage'] is True and a['data']['canNote'] is True, a)
+r = E(4, 'ems_records_entry', {'id': note['id'], 'restore': True})
+check('Admin stellt den Eintrag wieder her', r['ok'], r)
+r = E(4, 'ems_records_note', {'characterId': ids[2], 'text': 'Akte geprüft, Daten korrigiert.'})
+check('Admin schreibt einen Eintrag, als Admin gekennzeichnet', r['ok'] and r['data']['history'][0]['by'].startswith('Admin'), r['data']['history'][0] if r.get('data') else r)
+
+print('Protokoll des Rettungsdiensts')
+env.tick(200)
+P = lambda src, data=None: F(src, 'faction_logs', data or {})
+paul = P(1, {'characterId': ids[2]})
+texts = [e['text'] for e in paul['data']['entries']] if paul['ok'] else []
+check('Pauls Protokoll: Hochholen, Verkauf, Behandlung, Versicherung, Akte', paul['ok'] and any('Hochgeholt' in t for t in texts)
+      and any(t.startswith('Verkauft') for t in texts) and any(t.startswith('Behandelt') for t in texts)
+      and any('Krankenversicherung' in t for t in texts) and any(t == 'Akte angesehen' for t in texts), texts)
+check('Korrekturen stehen drin', any(t.startswith('Eintrag geändert') for t in texts) and any(t.startswith('Eintrag gelöscht') for t in texts)
+      and any('Bluthochdruck auf Stadium 2' in t for t in texts), texts)
+adm = [e for e in paul['data']['entries'] if e['text'].startswith('Eintrag wiederhergestellt') and e.get('admin')]
+check('Admin-Aktion als Admin markiert, mit ID', adm and adm[0]['actor']['id'] == ids[4], adm)
+mk = [e for e in paul['data']['entries'] if 'Verbandskasten' in e['text']]
+check('Hochholen mit Verbandskasten: wer es war', mk and mk[0]['actor']['id'] in (ids[3], ids[4]) and mk[0]['area'] == 'einsatz', mk)
+db = P(1, {'characterId': ids[2], 'area': 'datenbank'})['data']['entries']
+check('Filter Datenbank', db and all(e['area'] == 'datenbank' for e in db))
+check('Mira (Rang 1) darf die Protokolle nicht sehen', P(3)['error'] == 'no_permission')
+
 print(f'\n{ok} ok, {fail} Fehler')
 sys.exit(1 if fail else 0)

@@ -147,6 +147,15 @@ Network.RegisterCallback('faction_garage_take', function(source, data)
     return { ok = true, data = { model = chosen.model, plate = plate, spawn = garage.spawn } }
 end)
 
+local function vehicleLabel(faction, model)
+    for _, vehicle in ipairs(Orgs[faction].vehicles) do
+        if vehicle.model == model then
+            return vehicle.label or model
+        end
+    end
+    return model
+end
+
 -- Der Client meldet das gespawnte Fahrzeug. Nur mit dem Kennzeichen, das der Server vergeben hat.
 Network.RegisterCallback('faction_garage_spawned', function(source, data)
     local wait = pending[source]
@@ -166,6 +175,8 @@ Network.RegisterCallback('faction_garage_spawned', function(source, data)
         action = 'vehicle_out',
         data = { faction = wait.faction, model = wait.model, plate = wait.plate },
     })
+    Factions.Protocol(wait.faction, { area = 'dienst', action = 'vehicle_out', actorSource = source, target = wait.characterId,
+        text = ('Dienstfahrzeug %s ausgeparkt, Kennzeichen %s'):format(vehicleLabel(wait.faction, wait.model), wait.plate) })
     return { ok = true }
 end)
 
@@ -197,6 +208,8 @@ Network.RegisterCallback('faction_garage_store', function(source, data)
         action = 'vehicle_in',
         data = { faction = member.faction, plate = vehicle.plate, model = vehicle.model },
     })
+    Factions.Protocol(member.faction, { area = 'dienst', action = 'vehicle_in', actorSource = source, target = member.characterId,
+        text = ('Dienstfahrzeug %s eingeparkt, Kennzeichen %s'):format(vehicleLabel(member.faction, vehicle.model), vehicle.plate) })
     return { ok = true }
 end)
 

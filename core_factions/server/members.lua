@@ -39,6 +39,15 @@ local function log(actor, action, characterId, data)
     })
 end
 
+-- Eintrag im Protokoll der Organisation (Bereich Leitstelle)
+local function protocol(faction, actor, characterId, action, text, targetName)
+    Factions.Protocol(faction, { area = 'leitstelle', action = action, text = text, actor = actor, target = characterId, targetName = targetName })
+end
+
+local function rankLabel(faction, rank)
+    return ('%s (%d)'):format(Factions.RankName(faction, rank), rank)
+end
+
 -- Naechste freie Dienstnummer, z. B. EMS-007
 local function nextDn(faction)
     local org = Orgs[faction]
@@ -199,6 +208,7 @@ function Members.Hire(faction, characterId, rank, actor)
     end
     history(faction, characterId, 'hire', nil, rank, actor)
     log(actor, 'hire', characterId, { faction = faction, rank = rank, dn = dn, admin = actor and actor.admin or nil })
+    protocol(faction, actor, characterId, 'hire', ('Eingestellt als %s, Dienstnummer %s'):format(rankLabel(faction, rank), dn or 'keine'), name)
     issueCard(faction, characterId, rank, dn, actor)
     Factions.Refresh(characterId)
     return true
@@ -220,6 +230,8 @@ function Members.SetRank(faction, characterId, rank, actor)
     DB.Update('UPDATE faction_members SET `rank` = ? WHERE character_id = ?', { rank, member.characterId })
     history(faction, member.characterId, 'rank', member.rank, rank, actor)
     log(actor, 'rank', member.characterId, { faction = faction, from = member.rank, to = rank, admin = actor and actor.admin or nil })
+    protocol(faction, actor, member.characterId, 'rank', ('%s von %s auf %s'):format(rank > member.rank and 'Befördert' or 'Degradiert',
+        rankLabel(faction, member.rank), rankLabel(faction, rank)), member.name)
     issueCard(faction, member.characterId, rank, member.dn, actor)
     Factions.Refresh(member.characterId)
     return true
@@ -264,6 +276,9 @@ function Members.Remove(faction, characterId, kind, reason, actor)
     DB.Update('DELETE FROM faction_members WHERE character_id = ?', { member.characterId })
     history(faction, member.characterId, kind == 'leave' and 'leave' or 'fire', member.rank, nil, actor)
     log(actor, kind == 'leave' and 'leave' or 'fire', member.characterId, { faction = faction, rank = member.rank, reason = reason, kind = kind })
+    local what = kind == 'leave' and 'Selbst gekündigt' or (kind == 'admin' and 'Vom Admin entfernt' or 'Entlassen')
+    protocol(faction, actor, member.characterId, kind == 'leave' and 'leave' or 'fire',
+        ('%s als %s%s'):format(what, rankLabel(faction, member.rank), (reason and kind ~= 'leave') and (': ' .. reason) or ''), member.name)
     revokeCard(member.characterId, kind == 'leave' and 'Gekündigt' or (reason or 'Entlassen'), actor)
     local source = Factions.SourceOf(member.characterId)
     if source and Factions.IsOnDuty(source) then
@@ -304,11 +319,64 @@ function Members.SetField(faction, characterId, field, value, actor)
         return false, 'db_error'
     end
     log(actor, 'member_' .. field, member.characterId, { faction = faction, value = value })
+    protocol(faction, actor, member.characterId, 'member_' .. field, Members.FieldText(faction, member, field, value), member.name)
     if field == 'dn' then
         issueCard(faction, member.characterId, member.rank, value, actor)
     end
     Factions.Refresh(member.characterId)
     return true
+end
+
+-- Text fuers Protokoll: was sich an einem Feld geaendert hat (alter Stand aus member, neuer aus value)
+local function departmentText(faction, list)
+    local names = byId(Members.Departments(faction, true))
+    local parts = {}
+    for _, entry in ipairs(list or {}) do
+        local department = names[entry.id]
+        if department then
+            parts[#parts + 1] = ('%s (%s)'):format(department.name, department.ranks[entry.rank] or ('Rang ' .. tostring(entry.rank)))
+        end
+    end
+    return #parts > 0 and table.concat(parts, ', ') or 'keine'
+end
+
+function Members.FieldText(faction, member, field, value)
+    if field == 'dn' then
+        return ('Dienstnummer von %s auf %s'):format(member.dn or 'keine', value or 'keine')
+    elseif field == 'strikes' then
+        return ('Strikes von %d auf %d'):format(member.strikes or 0, value or 0)
+    elseif field == 'vacation' then
+        return ('Urlaubstage von %d auf %d'):format(member.vacationDays or 0, value or 0)
+    elseif field == 'departments' then
+        return ('Abteilungen: %s (vorher %s)'):format(departmentText(faction, value), departmentText(faction, member.departments))
+    elseif field == 'exams' then
+        local names = byId(Members.Exams(faction, true))
+        local before, after = {}, {}
+        for _, entry in ipairs(member.exams or {}) do
+            before[entry.id] = true
+        end
+        local added, removed = {}, {}
+        for _, entry in ipairs(value or {}) do
+            after[entry.id] = true
+            if not before[entry.id] then
+                added[#added + 1] = names[entry.id] and names[entry.id].name or ('Prüfung ' .. tostring(entry.id))
+            end
+        end
+        for id in pairs(before) do
+            if not after[id] then
+                removed[#removed + 1] = names[id] and names[id].name or ('Prüfung ' .. tostring(id))
+            end
+        end
+        local parts = {}
+        if #added > 0 then
+            parts[#parts + 1] = 'Prüfung eingetragen: ' .. table.concat(added, ', ')
+        end
+        if #removed > 0 then
+            parts[#parts + 1] = 'Prüfung entfernt: ' .. table.concat(removed, ', ')
+        end
+        return #parts > 0 and table.concat(parts, '; ') or 'Prüfungen gespeichert'
+    end
+    return field
 end
 
 -- Leitstelle: alle Mitglieder einer Organisation, hoechster Rang zuerst

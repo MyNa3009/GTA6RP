@@ -49,6 +49,20 @@ Config.Factions = {
         { key = 'info',    label = 'Wichtig' },
     },
 
+    -- Protokolle (Organisationsmenue, Tab Protokolle): jede Aenderung mit wer, an wem, was. Lesen mit Recht logs.view.
+    -- Eintraege werden nie geaendert oder geloescht. Bereiche in dieser Reihenfolge als Filter.
+    Protocol = {
+        PageSize = 50,
+        Areas = {
+            { key = 'leitstelle', label = 'Leitstelle' },
+            { key = 'einsatz',    label = 'Einsatz' },      -- z. B. Hochholen, Behandeln, Verkaufen (core_ems)
+            { key = 'datenbank',  label = 'Datenbank' },    -- z. B. Akte angesehen, Eintrag geschrieben (core_ems)
+            { key = 'kasse',      label = 'Kasse' },
+            { key = 'dienst',     label = 'Dienst' },       -- Dienst an und aus, Dienstfahrzeuge
+            { key = 'anpassung',  label = 'Anpassung' },    -- Raenge, Rechte, Abteilungen, Pruefungen, Divisionen, Erklaerungen
+        },
+    },
+
     -- Abstand zur Umkleide und Garage, den der Server prueft (Meter)
     PlaceDistance = 3.0,
     GarageDistance = 6.0,
@@ -70,6 +84,7 @@ Config.Factions = {
         { key = 'message.edit',        group = 'Verwaltung', label = 'Nachricht vom Leader ändern',    minRank = 29 },
         { key = 'cash.view',           group = 'Verwaltung', label = 'Kasse ansehen',                  minRank = 25 },
         { key = 'cash.manage',         group = 'Verwaltung', label = 'Kasse ein- und auszahlen',       minRank = 28 },
+        { key = 'logs.view',           group = 'Verwaltung', label = 'Protokolle ansehen',             minRank = 27 },
     },
 
     Organizations = {

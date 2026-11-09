@@ -426,6 +426,8 @@ function Factions.IsOnDuty(source, faction)
     return current ~= nil and (faction == nil or current == faction)
 end
 
+local DUTY_REASONS = { logout = 'ausgeloggt', removed = 'nicht mehr in der Organisation' }
+
 function Factions.SetDuty(source, on, reason)
     local member = Factions.MemberOf(source)
     if on and not member then
@@ -442,6 +444,9 @@ function Factions.SetDuty(source, on, reason)
         action = on and 'duty_on' or 'duty_off',
         data = { faction = faction, reason = reason },
     })
+    local why = DUTY_REASONS[reason]
+    Factions.Protocol(faction, { area = 'dienst', action = on and 'duty_on' or 'duty_off', actorSource = source, target = active[source],
+        text = (on and 'Dienst angetreten' or 'Dienst beendet') .. (why and (' (' .. why .. ')') or '') })
     Platform.Emit('core_factions:duty', source, faction, on == true)
     if active[source] then
         Factions.PushState(source)
@@ -478,7 +483,8 @@ function Factions.PaySalary(source, faction)
     if amount <= 0 then
         return false, 'no_salary'
     end
-    if not Factions.Withdraw(faction, amount, { actorSource = source, reason = 'Gehalt', data = { rank = member.rank } }) then
+    if not Factions.Withdraw(faction, amount, { actorSource = source, reason = 'Gehalt', data = { rank = member.rank }, target = member.characterId,
+        protocolActor = false, protocolText = ('Gehalt %s als %s'):format(money(amount), Factions.RankName(faction, member.rank)) }) then
         Platform.Notify(source, ('Kein Gehalt: Die Kasse von %s reicht nicht.'):format(org.short), 'warning')
         return false, 'not_enough_money'
     end
@@ -548,6 +554,15 @@ function Factions.GetBalance(faction)
     return tonumber(DB.Scalar('SELECT balance FROM faction_settings WHERE faction = ?', { faction })) or 0
 end
 
+-- Kasse im Protokoll. info.protocolText ersetzt den Text, info.target ist die Person, die es betrifft (z. B. Gehalt),
+-- info.protocolActor = false: ohne Handelnden (Gehalt zahlt das System).
+local function protocolCash(faction, action, verb, amount, balance, info)
+    local text = info.protocolText or ('%s %s%s'):format(Factions.Money(amount), verb, info.reason and (' (' .. info.reason .. ')') or '')
+    Factions.Protocol(faction, { area = 'kasse', action = action, target = info.target,
+        actorSource = info.protocolActor ~= false and info.actorSource or nil,
+        text = ('%s, Kasse jetzt %s'):format(text, Factions.Money(balance)) })
+end
+
 -- Geld in die Kasse. info: { reason, actorSource, data }. Gibt den neuen Stand oder nil und einen Fehlercode zurueck.
 function Factions.Deposit(faction, amount, info)
     amount = validAmount(amount)
@@ -569,6 +584,7 @@ function Factions.Deposit(faction, amount, info)
         reason = info.reason,
         data = { faction = faction, resource = Platform.GetCallingResource(), extra = info.data },
     })
+    protocolCash(faction, 'cash_in', 'eingezahlt', amount, balance, info)
     return balance
 end
 
@@ -593,6 +609,7 @@ function Factions.Withdraw(faction, amount, info)
         reason = info.reason,
         data = { faction = faction, resource = Platform.GetCallingResource(), extra = info.data },
     })
+    protocolCash(faction, 'cash_out', 'ausgezahlt', amount, balance, info)
     return balance
 end
 

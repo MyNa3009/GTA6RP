@@ -45,7 +45,7 @@ BRIDGE = [(CORE, 'bridge/platform/fivem_server.lua'), (CORE, 'bridge/database/ox
 EXTRA_FILES = {
     'core_lib': [(CORE, 'shared/config.lua'), (LIB, 'config.lua')] + BRIDGE + [(LIB, 'server/main.lua')],
     'core_factions': [(CORE, 'shared/config.lua'), (FACTIONS, 'config.lua'), (FACTIONS, 'data/places_gta5.lua')] + BRIDGE + [
-        (LIB, 'init.lua'), (FACTIONS, 'server/schema.lua'), (FACTIONS, 'server/main.lua'), (FACTIONS, 'server/consent.lua'),
+        (LIB, 'init.lua'), (FACTIONS, 'server/schema.lua'), (FACTIONS, 'server/main.lua'), (FACTIONS, 'server/protocol.lua'), (FACTIONS, 'server/consent.lua'),
         (FACTIONS, 'server/members.lua'), (FACTIONS, 'server/menu.lua'), (FACTIONS, 'server/places.lua'), (FACTIONS, 'server/commands.lua')],
     'core_ems': [(CORE, 'shared/config.lua'), (EMS, 'config.lua')] + BRIDGE + [
         (LIB, 'init.lua'), (EMS, 'server/schema.lua'), (EMS, 'server/main.lua'), (EMS, 'server/diseases.lua'),
@@ -64,7 +64,7 @@ def reset_db():
         cur.execute('SET FOREIGN_KEY_CHECKS=0')
         for table in ['audit_log', 'account_links', 'account_identifiers', 'characters', 'accounts', 'bans', 'admin_jails', 'account_devices', 'account_ips', 'device_alerts', 'warns', 'tickets', 'ticket_messages', 'audit_log_archive', 'inventories', 'weapon_registry', 'licenses', 'admin_keys',
                       'faction_members', 'faction_settings', 'faction_ranks', 'faction_vehicles', 'faction_departments', 'faction_exams',
-                      'faction_history', 'faction_archive', 'faction_divisions', 'faction_info', 'ems_diseases', 'ems_records', 'ems_insurance']:
+                      'faction_history', 'faction_archive', 'faction_divisions', 'faction_info', 'faction_logs', 'ems_diseases', 'ems_records', 'ems_insurance']:
             cur.execute(f'DROP TABLE IF EXISTS {table}')
         cur.execute('SET FOREIGN_KEY_CHECKS=1')
         for statement in open(f'{CORE}/database/schema.sql').read().split(';'):

@@ -325,6 +325,63 @@ sec = info['sections'][0]
 check('Abschnitt bearbeiten', I(1, {'id': sec['id'], 'category': sec['category'], 'title': sec['title'], 'body': 'Neu.'})['ok'])
 check('Abschnitt löschen', F(1, 'faction_info_delete', {'id': sec['id']})['ok'] and len(F(1, 'faction_info')['data']['sections']) == 1)
 
+print('Protokolle')
+env.tick(200)
+P = lambda src, data=None: F(src, 'faction_logs', data or {})
+r = P(1)
+check('Leader sieht Protokolle, Bereiche als Filter', r['ok'] and len(r['data']['entries']) > 0 and len(r['data']['areas']) == 6, r.get('error'))
+check('Mira (Rang 18) ohne Recht logs.view: no_permission', P(3)['error'] == 'no_permission')
+check('Übersicht: Tab Protokolle nur mit Recht', F(1, 'faction_menu_open')['data']['access']['logs'] is True and not F(3, 'faction_menu_open')['data']['access']['logs'])
+tom = P(1, {'characterId': ids[4]})['data']
+texts = [e['text'] for e in tom['entries']]
+check('Tom: Einstellung, Beförderung, Bonus, Entlassung', any(t.startswith('Eingestellt') for t in texts) and any(t.startswith('Befördert') for t in texts)
+      and any(t.startswith('Bonus 250') for t in texts) and any(t.startswith('Entlassen') for t in texts), texts)
+check('Tom: Name zur ID', tom['person'] == {'id': ids[4], 'name': 'Tom Becker'}, tom.get('person'))
+promo = [e for e in tom['entries'] if e['text'].startswith('Befördert')][0]
+check('Beförderung: wer (mit ID) und wen', promo['actor']['id'] == ids[1] and promo['target']['id'] == ids[4] and promo['area'] == 'leitstelle', promo)
+mine = P(1, {'characterId': ids[1], 'role': 'actor'})['data']['entries']
+check('Nur was Lena selbst gemacht hat', mine and all(e['actor']['id'] == ids[1] for e in mine))
+about = P(1, {'characterId': ids[3], 'role': 'target'})['data']['entries']
+check('Nur was Mira betrifft', about and all(e['target']['id'] == ids[3] for e in about))
+an = P(1, {'area': 'anpassung'})['data']['entries']
+check('Filter Anpassung: Rang mit Gehalt, Division, Erklärung', all(e['area'] == 'anpassung' for e in an)
+      and any(e['text'].startswith('Rang 18') and 'Gehalt' in e['text'] for e in an) and any(e['text'].startswith('Division') for e in an)
+      and any(e['text'].startswith('Erklärung') for e in an), [e['text'] for e in an])
+duty = P(1, {'characterId': ids[3], 'area': 'dienst'})['data']['entries']
+check('Dienst an und aus', any(e['text'] == 'Dienst angetreten' for e in duty) and any(e['text'].startswith('Dienst beendet') for e in duty), [e['text'] for e in duty])
+kasse = P(1, {'area': 'kasse'})['data']['entries']
+check('Kasse: Gehalt ohne Handelnden, mit Empfänger', any(e['text'].startswith('Gehalt') and e.get('actor') is None and e['target']['id'] == ids[3] for e in kasse), kasse[:3])
+lst = [e['text'] for e in P(1, {'area': 'leitstelle'})['data']['entries']]
+check('Leitstelle: Strikes, Prüfungen, Dienstnummer', any(t.startswith('Strikes von') for t in lst) and any('Prüfung eingetragen' in t for t in lst)
+      and any(t.startswith('Dienstnummer von') for t in lst), lst)
+fac.execute('Config.Factions.Protocol.PageSize = 3')
+p1 = P(1)['data']
+p2 = P(1, {'before': p1['next']})['data']
+check('Seiten: 3 pro Seite, weiter mit "mehr"', len(p1['entries']) == 3 and p1['more'] and p2['entries'] and p2['entries'][0]['id'] < p1['entries'][-1]['id'])
+fac.execute('Config.Factions.Protocol.PageSize = 50')
+
+print('Admin: Archiv korrigieren')
+env.command(0, f'setrank {ids[9]} chief')
+env.command(9, 'orgaview ems')
+arch = F(9, 'faction_archive', {'page': 1})['data']
+check('Admin mit factions.manage darf das Archiv korrigieren', arch.get('canEdit') is True and not F(1, 'faction_archive', {})['data'].get('canEdit'))
+entry = arch['entries'][0]
+check('Leader darf nicht korrigieren', F(1, 'faction_archive_update', {'id': entry['id'], 'hidden': True})['error'] == 'no_permission')
+check('Grund korrigieren', F(9, 'faction_archive_update', {'id': entry['id'], 'reason': 'Unentschuldigt gefehlt'})['ok']
+      and F(9, 'faction_archive', {})['data']['entries'][0]['reason'] == 'Unentschuldigt gefehlt')
+check('ausblenden', F(9, 'faction_archive_update', {'id': entry['id'], 'hidden': True})['ok'])
+check('Leader sieht ihn nicht mehr', all(e['id'] != entry['id'] for e in F(1, 'faction_archive', {})['data']['entries']))
+seen = [e for e in F(9, 'faction_archive', {})['data']['entries'] if e['id'] == entry['id']]
+check('Admin sieht ihn markiert', seen and seen[0]['hiddenBy'].startswith('Admin'), seen)
+check('noch in der Datenbank', env.sql('SELECT COUNT(*) AS n FROM faction_archive WHERE id = %s', (entry['id'],))[0]['n'] == 1)
+check('wieder zeigen', F(9, 'faction_archive_update', {'id': entry['id'], 'hidden': False})['ok']
+      and any(e['id'] == entry['id'] for e in F(1, 'faction_archive', {})['data']['entries']))
+env.tick(100)
+adm = [e for e in P(1, {'characterId': entry['characterId']})['data']['entries'] if e['text'].startswith('Archiv')]
+check('im Protokoll als Admin', len(adm) == 3 and all(e.get('admin') for e in adm), adm)
+check('Admin sieht die Protokolle (factions.view)', P(9)['ok'])
+F(9, 'faction_menu_close')
+
 print('Log')
 env.flush_log()
 actions = {r['action'] for r in env.sql("SELECT action FROM audit_log WHERE category = 'faction'")}

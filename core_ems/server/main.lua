@@ -46,6 +46,15 @@ function Ems.Log(entry)
     Ems.Core('Log', entry)
 end
 
+-- Eintrag im Protokoll des Rettungsdiensts (Organisationsmenue, Tab Protokolle). area: 'einsatz' oder 'datenbank'.
+-- entry: { action, text, actorSource, actorName, target (permanente ID), admin }
+function Ems.Protocol(area, entry)
+    if Platform.IsResourceStarted(FACTIONS) then
+        entry.area = area
+        Ems.Factions('AddProtocol', CFG.Faction, entry)
+    end
+end
+
 function Ems.Text(value, maxLength)
     if type(value) ~= 'string' then
         return nil

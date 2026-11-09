@@ -1,6 +1,15 @@
-# core_factions 1.1.0
+# core_factions 1.2.0
 
-Organisationen für die eigene Core: Ränge, Rechte und Gehalt pro Rang, Divisionen, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Abteilungen mit eigenen Rängen, Prüfungen, Erklärungen, Leitstelle mit Suche, Bonus, Mitarbeiter-Archiv und eine Kasse. Alles läuft über das Organisationsmenü (in den Farben und mit dem Logo der Organisation) und das G-Menü. Als erste Organisation ist der Rettungsdienst (EMS) eingerichtet, LSPD und andere kommen später in dieselbe Config.
+Organisationen für die eigene Core: Ränge, Rechte und Gehalt pro Rang, Divisionen, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Abteilungen mit eigenen Rängen, Prüfungen, Erklärungen, Leitstelle mit Suche, Bonus, Mitarbeiter-Archiv, Protokolle pro ID und eine Kasse. Alles läuft über das Organisationsmenü (in den Farben und mit dem Logo der Organisation) und das G-Menü. Als erste Organisation ist der Rettungsdienst (EMS) eingerichtet, LSPD und andere kommen später in dieselbe Config.
+
+## Update von 1.1.0
+
+1. Den Ordner `core_factions` ersetzen und neu starten (Core ab 1.11.0, empfohlen 1.11.1). Die neue Tabelle `faction_logs` und zwei Spalten im Archiv legt das Script beim Start selbst an (SQL zusätzlich in `database/factions.sql`).
+2. **Protokolle:** neuer Tab im Organisationsmenü. Jede Änderung steht dort mit Zeit, Bereich, was passiert ist, wer es war (Name und ID) und wen es betrifft (Name und ID). Bereiche: Leitstelle, Einsatz, Datenbank, Kasse, Dienst, Anpassung. Suche nach einer permanenten ID zeigt alles zu dieser Person, wahlweise nur was sie gemacht hat oder nur was sie betrifft. Ein Klick auf einen Namen springt zu dessen Protokoll, ebenso der Knopf in der Leitstelle und im Archiv.
+3. **Neues Recht `logs.view`** (Protokolle ansehen), Startwert ab Rang 27. Die Leitung stellt es pro Rang unter Anpassung ein. Admins mit `factions.view` sehen die Protokolle über `/orgaview`.
+4. Protokolle lassen sich nicht ändern oder löschen, auch nicht vom Leader oder von Admins. Das zentrale Log der Core bekommt weiterhin alles.
+5. **Admins (factions.manage) im Archiv:** Grund korrigieren und Einträge ausblenden oder wieder zeigen. Ausgeblendet heißt nicht gelöscht: Admins sehen den Eintrag weiter, markiert. Jede Korrektur steht im Protokoll, als Admin gekennzeichnet.
+6. Neuer Export `AddProtocol` für andere Scripts (siehe unten). `core_ems` 1.4.0 schreibt damit Hochholen, Versorgen, Behandlungen, Verkäufe, Versicherungen und alles aus der Medizinischen Datenbank ins Protokoll.
 
 ## Update von 1.0.0
 
@@ -15,7 +24,7 @@ Organisationen für die eigene Core: Ränge, Rechte und Gehalt pro Rang, Divisio
 
 ## Installation
 
-1. Braucht Core 1.11.0, `core_lib` und `core_inventory` (für den Dienstausweis).
+1. Braucht Core 1.11.0 (empfohlen die neueste), `core_lib` und `core_inventory` (für den Dienstausweis).
 2. Ordner `core_factions` nach `resources/[core]/` kopieren. Die Tabellen legt das Script beim Start selbst an, das SQL steht zusätzlich in `database/factions.sql`.
 3. In der `server.cfg` nach `core_lib`: `ensure core_factions`
 4. Die Leitung setzt ein Admin: `/setorga <ID> ems 30` (Leader) und `/setorga <ID> ems 29` (Vice Leader). Alles Weitere macht die Leitung im Spiel.
@@ -40,7 +49,8 @@ Organisationen für die eigene Core: Ränge, Rechte und Gehalt pro Rang, Divisio
 | Anpassung | Rangnamen, Rechte, Gehalt und Aufgaben pro Rang, Abteilungen (jeweils bis zu 5 eigene Ränge), Prüfungen. Nur Leader und Vice Leader |
 | Fahrzeuge | Welches Dienstfahrzeug ab welchem Rang. Nur Leader und Vice Leader |
 | Leitstelle | Suche und Filter, eine Zeile pro Mitarbeiter: Name, ID, Dienstnummer, Rang, Division, Strikes, Urlaubstage, Abteilungen, Prüfungen, Eingestellt, letzter Uprank. Bearbeiten je nach Recht, Bonus nur Leader und Vice Leader |
-| Archiv | Alle ehemaligen Mitarbeiter mit Grund, Einstellungs- und Kündigungsdatum, allen Rängen, unter welchem Leader sie die hatten, und ihren Prüfungen |
+| Archiv | Alle ehemaligen Mitarbeiter mit Grund, Einstellungs- und Kündigungsdatum, allen Rängen, unter welchem Leader sie die hatten, und ihren Prüfungen. Admins mit `factions.manage` korrigieren den Grund oder blenden Einträge aus |
+| Protokolle | Alles, was passiert ist, pro permanenter ID: Leitstelle, Einsatz, Datenbank, Kasse, Dienst, Anpassung. Filter nach Bereich und Rolle (hat gemacht, betrifft). Nur mit Recht `logs.view` |
 
 ## G-Menü
 
@@ -68,7 +78,7 @@ Unter Organisation, immer mit der Person, die man anschaut:
 |---|---|---|
 | `/setorga <ID> <orga> <rang>` | `factions.manage` (ab Senior Administrator) | Einstellen oder Rang setzen, auch den Leader. Geht offline |
 | `/removeorga <ID> [grund]` | `factions.manage` | Entfernen, kommt ins Archiv |
-| `/orgaview <orga>` | `factions.view` (ab Administrator Assistant) | Organisationsmenü einer Organisation ansehen, mit `factions.manage` bearbeiten |
+| `/orgaview <orga>` | `factions.view` (ab Administrator Assistant) | Organisationsmenü einer Organisation ansehen (auch Protokolle), mit `factions.manage` bearbeiten wie der Leader und das Archiv korrigieren |
 
 Alles wird geloggt (Kategorie `faction`).
 
@@ -84,6 +94,8 @@ exports.core_factions:GetOnDuty('ems')                        -- Liste der Leute
 exports.core_factions:GetBalance('ems')
 exports.core_factions:Deposit('ems', 250, { actorSource = source, reason = 'Verkauf' })
 exports.core_factions:Withdraw('ems', 250, { actorSource = source, reason = 'Einkauf' })
+-- Eintrag im Protokoll (area: leitstelle, einsatz, datenbank, kasse, dienst, anpassung). Namen sucht das Script selbst.
+exports.core_factions:AddProtocol('ems', { area = 'einsatz', action = 'revive', text = 'Hochgeholt', actorSource = source, target = permanenteId })
 
 -- Client
 exports.core_factions:GetState()                              -- eigene Organisation, Rang, Dienst, Rechte
@@ -98,6 +110,6 @@ Fehlercodes: `division_overlap`, `bonus_today`, `invalid_salary`, `not_member`, 
 
 ## Testen
 
-`tests/test_factions.py` gegen MariaDB (siehe `tests/README.md`). Im Browser: `html/orgmenu.html?tab=leitstelle` (auch `overview`, `divisions`, `info`, `structure`, `vehicles`, `archive`, bei `info` mit `&sub=exams`, `ranks`, `rules`, `process` oder `info`).
+`tests/test_factions.py` gegen MariaDB (siehe `tests/README.md`). Im Browser: `html/orgmenu.html?tab=leitstelle` (auch `overview`, `divisions`, `info`, `structure`, `vehicles`, `archive`, `logs`, bei `info` mit `&sub=exams`, `ranks`, `rules`, `process` oder `info`, bei `logs` mit `&id=512`, bei `archive` mit `&admin` für die Admin-Korrektur).
 
 Nur im Spiel prüfbar: Blip und Markierungen, Ausparken an der richtigen Stelle, Setzen ans Steuer, Gehalt nach echten 60 Minuten Dienst.

@@ -111,6 +111,7 @@ register('ems_revive', 'ems.revive', function(source, data)
         end
         Ems.Record(Ems.CharacterOf(target), 'revive', 'Vor Ort hochgeholt', medicName(source))
         Ems.Log({ actor_account_id = accountOf(source), character_id = Ems.CharacterOf(target), action = 'revive', data = { medic = Ems.CharacterOf(source) } })
+        Ems.Protocol('einsatz', { action = 'revive', text = 'Hochgeholt (Mediziner)', actorSource = source, target = Ems.CharacterOf(target) })
         Platform.Notify(target, 'Der Rettungsdienst hat dich hochgeholt.', 'success')
         Platform.Notify(source, 'Person hochgeholt.', 'success')
     end)
@@ -149,6 +150,7 @@ register('ems_heal', 'ems.heal', function(source, data)
         Ems.Core('Heal', target, CFG.Heal.Amount)
         Ems.Record(Ems.CharacterOf(target), 'heal', 'Verletzungen versorgt', medicName(source))
         Ems.Log({ actor_account_id = accountOf(source), character_id = Ems.CharacterOf(target), action = 'heal', data = { medic = Ems.CharacterOf(source) } })
+        Ems.Protocol('einsatz', { action = 'heal', text = 'Versorgt', actorSource = source, target = Ems.CharacterOf(target) })
         Platform.Notify(target, 'Der Rettungsdienst hat dich versorgt.', 'success')
         Platform.Notify(source, 'Person versorgt.', 'success')
     end)
@@ -247,6 +249,8 @@ register('ems_medkit_revive', nil, function(source, data)
         Ems.Record(Ems.CharacterOf(target), 'revive', 'Mit Verbandskasten hochgeholt', helper)
         Ems.Log({ actor_account_id = accountOf(source), character_id = Ems.CharacterOf(target), action = 'medkit_revive',
             data = { helper = Ems.CharacterOf(source) } })
+        Ems.Protocol('einsatz', { action = 'medkit_revive', text = 'Mit Verbandskasten hochgeholt (kein Mediziner)', actorSource = source,
+            actorName = helper, target = Ems.CharacterOf(target) })
         Platform.Notify(target, 'Jemand hat dich mit einem Verbandskasten hochgeholt.', 'success')
         Platform.Notify(source, 'Person hochgeholt. Der Verbandskasten ist verbraucht.', 'success')
     end)
@@ -336,6 +340,8 @@ register('ems_sell', 'ems.sell', function(source, data)
     Ems.ToCash(total, reason, source, { item = entry.item, count = count, buyer = Ems.CharacterOf(target) })
     Ems.Log({ actor_account_id = accountOf(source), character_id = Ems.CharacterOf(target), action = 'sell',
         amount = total, data = { item = entry.item, count = count, medic = Ems.CharacterOf(source), account = account } })
+    Ems.Protocol('einsatz', { action = 'sell', text = ('Verkauft: %dx %s für %s'):format(count, label, Ems.Money(total)), actorSource = source,
+        target = Ems.CharacterOf(target) })
     Platform.Notify(target, ('Du hast %dx %s für %s gekauft.'):format(count, label, Ems.Money(total)), 'success')
     return { ok = true, data = { total = total } }
 end)
@@ -378,7 +384,9 @@ register('ems_diagnose', 'ems.treat', function(source, data)
     for _, entry in ipairs(list) do
         names[#names + 1] = Diseases.StageText(DEFS[entry.disease], entry.stage)
     end
-    Ems.Record(characterId, 'diagnosis', #names > 0 and ('Untersucht: %s'):format(table.concat(names, '; ')) or 'Untersucht: ohne Befund', medicName(source))
+    local finding = #names > 0 and ('Untersucht: %s'):format(table.concat(names, '; ')) or 'Untersucht: ohne Befund'
+    Ems.Record(characterId, 'diagnosis', finding, medicName(source))
+    Ems.Protocol('einsatz', { action = 'diagnose', text = finding, actorSource = source, target = characterId })
     return { ok = true, data = { diseases = list, insured = insured, treatMs = CFG.TreatDurationMs } }
 end)
 
@@ -422,6 +430,9 @@ register('ems_treat', 'ems.treat', function(source, data)
     Ems.ToCash(price, reason, source, { disease = disease, patient = characterId })
     Ems.Log({ actor_account_id = accountOf(source), character_id = characterId, action = 'treat', amount = price,
         data = { disease = disease, result = result, medic = Ems.CharacterOf(source) } })
+    Ems.Protocol('einsatz', { action = 'treat', actorSource = source, target = characterId,
+        text = result.cured and ('Behandelt: %s, geheilt, %s'):format(label, Ems.Money(price))
+            or ('Behandelt: %s, %d von %d, %s'):format(label, result.series, result.needed, Ems.Money(price)) })
     if not result.cured then
         Platform.Notify(target, ('Behandlung %d von %d gegen %s. Komm in der nächsten Stunde wieder.'):format(result.series, result.needed, label), 'info')
     end
@@ -458,6 +469,8 @@ register('ems_insurance', 'ems.insurance', function(source, data)
     Ems.ToCash(price, reason, source, { patient = characterId })
     Ems.Log({ actor_account_id = accountOf(source), character_id = characterId, action = 'insurance', amount = price,
         data = { days = days, validUntil = untilDate, medic = Ems.CharacterOf(source) } })
+    Ems.Protocol('einsatz', { action = 'insurance', actorSource = source, target = characterId,
+        text = ('Krankenversicherung %s bis %s, %s'):format(current and 'verlängert' or 'verkauft', untilDate or '?', Ems.Money(price)) })
     Platform.Notify(target, ('Du bist jetzt bis %s krankenversichert.'):format(untilDate or '?'), 'success')
     return { ok = true, data = { validUntil = untilDate } }
 end)
@@ -479,6 +492,7 @@ register('ems_request_id', 'ems.records', function(source, data)
     if not shown then
         return { ok = false, error = showError == 'no_document' and 'no_id_card' or (showError or 'server_error') }
     end
+    Ems.Protocol('datenbank', { action = 'request_id', text = 'Personalausweis gezeigt bekommen', actorSource = source, target = Ems.CharacterOf(target) })
     return { ok = true }
 end)
 
