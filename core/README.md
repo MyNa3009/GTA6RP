@@ -1,10 +1,22 @@
-# Core 1.12.1 (Testserver)
+# Core 1.13.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.12.1
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. **Neues Aussehen des Admin-Menüs**, Aufbau, Reiter und Funktionen bleiben gleich:
+   - Verlaufskante in den Serverfarben oben am Fenster, Titel groß, Servername als Etikett daneben.
+   - Der Kopf der Akte ist das Highlight: Name groß auf getönter Fläche, Online-Status mit Punkt.
+   - Gewählter Spieler und gewählte Liste sind in der Akzentfarbe getönt, der aktive Reiter hat eine Verlaufslinie.
+   - Abschnittstitel haben eine kurze Verlaufslinie davor, Tabellenköpfe und Listentitel sind Etiketten.
+   - Ohne gewählten Spieler steht rechts ein Leerzustand mit Hinweis und den Tasten `Enter` (Suchen) und `Esc` (Schließen).
+   - A-Jail, Eingefroren und die Befehle in der Befehlsliste stehen in der zweiten Farbe (`mark`), Rot bleibt Strafen, Warnungen und Fehlern vorbehalten.
+3. Das Admin-Menü nimmt jetzt auch `mark` aus `Config.UI.Colors`. Alle Farben bleiben über die Config änderbar.
 
 ## Update von 1.12.0
 

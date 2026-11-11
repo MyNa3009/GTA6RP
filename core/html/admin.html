@@ -6,7 +6,7 @@
 
   EINGEHEND (Server -> UI)
   admin_open  {
-    colors: { base: string, ink: string, accent: string, signal: string },  // RGB-Kanaele
+    colors: { base: string, ink: string, accent: string, mark?: string, signal: string },  // RGB-Kanaele
     currency: string, serverName: string,
     self: Self, players: OnlinePlayer[]
   }
@@ -91,14 +91,32 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
 <style>
+/*
+  Oberflaechentyp: Operate (Admin-Menue), sekundaer Inspect (Akte). Grosses Panel, Liste links, Akte rechts.
+  Dichte 7, Bewegung 4, Varianz 4, Ausdruck 6.
+
+  Richtung
+  Zweck:     Spieler finden, Akte pruefen, handeln.
+  Charakter: wach, genau, dienstlich.
+  Welt:      Leitstand des Serverteams, Akte und Protokoll.
+  Highlight: der Kopf der Akte, Name gross auf getoenter Flaeche.
+  Signatur:  kurze Verlaufslinie vor Abschnittstiteln, wie im Logo vor "Roleplay".
+  Form:      rund.
+  Buehne:    Marken-Schein in zwei Ecken des Panels.
+
+  Feste Plaetze der Farbe: Kante der Kopfzeile, Hauptbutton, gewaehlter Spieler, aktiver Reiter, Signatur.
+  Rot (signal) bleibt Strafen, Warnungen und Fehlern vorbehalten. Neutrale Zustaende (A-Jail, eingefroren,
+  Befehle) stehen in der zweiten Farbe (mark), damit sie sich klar vom Rot und vom Magenta abheben.
+*/
 :root {
-  /* Die 4 Grundfarben, werden aus der Config ueberschrieben */
+  /* Grundfarben, werden aus der Config ueberschrieben */
   --rgb-base:   16 17 20;
   --rgb-ink:    255 245 236;
   --rgb-accent: 231 62 192;
+  --rgb-mark:   244 154 102;
   --rgb-signal: 244 67 54;
 
   --c-bg:          rgb(var(--rgb-base) / 0.97);
@@ -115,11 +133,20 @@
   --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
   --c-accent-line: rgb(var(--rgb-accent) / 0.5);
   --c-on-accent:   rgb(var(--rgb-base));
+  --c-mark:        rgb(var(--rgb-mark));
   --c-signal:      rgb(var(--rgb-signal));
   --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
   --c-signal-line: rgb(var(--rgb-signal) / 0.45);
 
   --shadow-panel: 0 20px 60px rgb(var(--rgb-base) / 0.6);
+
+  /* Marke: Verlauf wie im Schriftzug, Buehne in zwei Ecken des Panels */
+  --grad-brand: linear-gradient(90deg, rgb(var(--rgb-accent)), rgb(var(--rgb-mark)));
+  --grad-stage:
+    radial-gradient(60% 55% at 0% 0%, rgb(var(--rgb-accent) / 0.16), transparent 70%),
+    radial-gradient(50% 50% at 100% 100%, rgb(var(--rgb-mark) / 0.09), transparent 70%);
+  --grad-head: linear-gradient(180deg, rgb(var(--rgb-accent) / 0.1), rgb(var(--rgb-accent) / 0));
+  --glow-select: inset 0 0 20px rgb(var(--rgb-accent) / 0.22);
 
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
   --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
@@ -131,6 +158,12 @@
   --fs-md: clamp(14px, 0.75vw, 16px);
   --fs-lg: clamp(17px, 0.95vw, 20px);
   --fs-xl: clamp(21px, 1.25vw, 26px);
+  --fs-2xl: clamp(28px, 1.7vw, 36px);
+  --ls-label: 0.08em;
+  --ls-display: -0.01em;
+  --sign-w: 16px; --sign-h: 3px;     /* Signatur: Verlaufslinie vor Titeln */
+  --edge-h: 2px;                     /* Verlaufskante an Kopfzeile und aktivem Reiter */
+  --empty-icon: 72px;
 
   --dur-fast: 120ms; --dur-panel: 200ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -183,7 +216,7 @@ button, input { font: inherit; color: inherit; }
   height: var(--panel-height);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  background: var(--c-bg);
+  background: var(--grad-stage), var(--c-bg);
   border: 1px solid var(--c-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-panel);
@@ -199,15 +232,41 @@ button, input { font: inherit; color: inherit; }
 /* ---------- Kopfzeile ---------- */
 
 .topbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--c-border);
 }
+/* Verlaufskante: fester Platz der Marke im Panel */
+.topbar::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: var(--edge-h);
+  background: var(--grad-brand);
+}
 
-.topbar__title { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
-.topbar__server { font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-2); }
+.topbar__title { margin: 0; font-size: var(--fs-xl); font-weight: 800; letter-spacing: var(--ls-display); text-transform: uppercase; line-height: 1; }
+.topbar__server {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--c-text-muted);
+}
+.topbar__server::before {
+  content: '';
+  width: var(--sign-w);
+  height: var(--sign-h);
+  border-radius: var(--sign-h);
+  background: var(--grad-brand);
+}
+.topbar__server:empty { display: none; }
 .topbar__spacer { flex: 1; }
 
 .chip {
@@ -258,8 +317,8 @@ button, input { font: inherit; color: inherit; }
 .btn[hidden] { display: none; }
 
 .btn[aria-pressed="true"] { border-color: var(--c-accent-line); background: var(--c-accent-soft); }
-.btn--primary { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); }
-.btn--primary:hover:not(:disabled) { background: var(--c-accent); border-color: transparent; opacity: 0.9; }
+.btn--primary { background: var(--grad-brand); border-color: transparent; color: var(--c-on-accent); font-weight: 700; }
+.btn--primary:hover:not(:disabled) { background: var(--grad-brand); border-color: transparent; opacity: 0.9; }
 .btn--danger { border-color: var(--c-signal-line); color: var(--c-text); background: var(--c-signal-soft); }
 .btn--danger:hover:not(:disabled) { border-color: var(--c-signal); background: var(--c-signal-soft); }
 
@@ -347,7 +406,7 @@ button, input { font: inherit; color: inherit; }
 }
 .mode:hover { color: var(--c-text); }
 .mode:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
-.mode[aria-selected="true"] { background: var(--c-surface-hi); color: var(--c-text); }
+.mode[aria-selected="true"] { background: var(--c-accent-soft); box-shadow: inset 0 0 0 1px var(--c-accent-line); color: var(--c-text); }
 .mode__count {
   min-width: 2ch;
   padding: 0 var(--space-1);
@@ -362,11 +421,14 @@ button, input { font: inherit; color: inherit; }
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4) var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-2);
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-2);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--c-text-muted);
 }
+.list-head .link { letter-spacing: 0; text-transform: none; }
 
 .link {
   border: 0;
@@ -391,6 +453,7 @@ button, input { font: inherit; color: inherit; }
 }
 
 .player {
+  position: relative;
   width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -407,7 +470,7 @@ button, input { font: inherit; color: inherit; }
 .player:hover:not(:disabled) { background: var(--c-surface-hi); }
 .player:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
 .player:disabled { cursor: default; opacity: 0.55; }
-.player[aria-pressed="true"] { background: var(--c-surface-hi); border-color: var(--c-accent-line); }
+.player[aria-pressed="true"] { background: var(--c-accent-soft); border-color: var(--c-accent-line); box-shadow: var(--glow-select); }
 
 .player__text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .player__name, .player__meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -445,7 +508,7 @@ button, input { font: inherit; color: inherit; }
 .warning__meta { color: var(--c-text-2); font-size: var(--fs-xs); }
 
 .links { margin-top: var(--space-6); }
-.links__title { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; }
+.links__title { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; }
 .links .warning { margin: 0 0 var(--space-2); }
 /* In der Uebersicht neutral: die Warnung selbst steht schon rechts unter Hinweise */
 .links .warning:not(.warning--off) { border-color: var(--c-border); background: var(--c-surface); }
@@ -492,18 +555,44 @@ button, input { font: inherit; color: inherit; }
   min-height: 0;
 }
 
+/* Leerzustand: sagt, was zu tun ist, und zeigt die zwei Tasten, die hier gelten */
 .placeholder {
   margin: auto;
-  max-width: 40ch;
+  max-width: 44ch;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5);
   text-align: center;
-  font-size: var(--fs-md);
-  color: var(--c-text-2);
-  line-height: 1.55;
 }
 .placeholder[hidden] { display: none; }
+.placeholder__icon {
+  display: grid;
+  place-items: center;
+  width: var(--empty-icon);
+  height: var(--empty-icon);
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--c-accent-line);
+  border-radius: 50%;
+  background: var(--c-accent-soft);
+  color: var(--c-accent);
+}
+.placeholder__icon .icon { width: calc(var(--empty-icon) * 0.42); height: calc(var(--empty-icon) * 0.42); }
+.placeholder__title { margin: 0; font-size: var(--fs-xl); font-weight: 700; text-wrap: balance; }
+.placeholder__text { margin: 0; font-size: var(--fs-md); line-height: 1.55; color: var(--c-text-2); text-wrap: balance; }
+.placeholder__keys { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4); margin-top: var(--space-2); font-size: var(--fs-xs); color: var(--c-text-2); }
+.placeholder__key { display: inline-flex; align-items: center; gap: var(--space-2); }
+.keycap {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--c-border-hi);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface);
+  font-weight: 700;
+  color: var(--c-text);
+}
 
 .inventory__weight { margin: 0 0 var(--space-4); font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
-.inventory__title { margin: var(--space-5) 0 var(--space-2); font-size: var(--fs-sm); font-weight: 700; }
+.inventory__title { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-5) 0 var(--space-2); font-size: var(--fs-sm); font-weight: 700; }
 
 .archive-bar {
   display: flex;
@@ -535,10 +624,11 @@ button, input { font: inherit; color: inherit; }
 .commands__empty[hidden] { display: none; }
 .cmd-table { width: 100%; margin-top: var(--space-5); border-collapse: collapse; table-layout: fixed; }
 .cmd-table caption { text-align: left; padding-bottom: var(--space-2); }
-.cmd-table__title { display: block; font-size: var(--fs-sm); font-weight: 700; }
+.cmd-table__title { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-xs); font-weight: 700; letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--c-text-2); }
+.cmd-table__title::before { content: ''; flex: none; width: var(--sign-w); height: var(--sign-h); border-radius: var(--sign-h); background: var(--grad-brand); }
 .cmd-table__hint { display: block; margin-top: var(--space-1); font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-2); }
 .cmd-table td { padding: var(--space-2) var(--space-4) var(--space-2) 0; border-top: 1px solid var(--c-border); vertical-align: baseline; font-size: var(--fs-sm); line-height: 1.45; overflow-wrap: anywhere; }
-.cmd-usage { width: var(--cmd-usage-width); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cmd-usage { width: var(--cmd-usage-width); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--c-mark); }
 .cmd-text { color: var(--c-text-2); }
 .cmd-rank { width: var(--cmd-rank-width); padding-right: 0; text-align: right; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
 
@@ -594,11 +684,13 @@ button, input { font: inherit; color: inherit; }
   gap: var(--space-5);
   flex-wrap: wrap;
   padding: var(--space-5) var(--space-6) var(--space-4);
+  background: var(--grad-head);
 }
 
-.profile__title { margin: 0 0 var(--space-1); font-size: var(--fs-xl); font-weight: 700; overflow-wrap: anywhere; }
+.profile__title { margin: 0 0 var(--space-2); font-size: var(--fs-2xl); font-weight: 800; letter-spacing: var(--ls-display); line-height: 1.1; overflow-wrap: anywhere; }
 .profile__meta { margin: 0; font-size: var(--fs-sm); color: var(--c-text-2); font-variant-numeric: tabular-nums; display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center; }
-.status-online { color: var(--c-text); font-weight: 600; }
+.status-online { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--c-text); font-weight: 600; }
+.status-online::before { content: ''; width: var(--dot-size); height: var(--dot-size); border-radius: 50%; background: var(--c-accent); }
 
 .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 .actions__hint { font-size: var(--fs-xs); color: var(--c-text-2); }
@@ -647,9 +739,11 @@ button, input { font: inherit; color: inherit; }
   left: var(--space-3);
   right: var(--space-3);
   bottom: -1px;
-  height: 2px;
-  background: var(--c-accent);
+  height: var(--edge-h);
+  border-radius: var(--edge-h) var(--edge-h) 0 0;
+  background: var(--grad-brand);
 }
+.tab[aria-selected="true"] .tab__count { background: var(--c-accent-soft); color: var(--c-text); }
 .tab__count {
   min-width: 2ch;
   padding: 0 var(--space-1);
@@ -697,7 +791,9 @@ button, input { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--c-border);
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-2);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--c-text-muted);
   text-align: left;
   white-space: nowrap;
 }
@@ -788,10 +884,11 @@ button, input { font: inherit; color: inherit; }
 .choice:disabled { opacity: 0.45; cursor: default; }
 .choice[aria-pressed="true"] { background: var(--c-signal-soft); border-color: var(--c-signal); color: var(--c-text); }
 
-.player__jail { font-size: var(--fs-xs); font-weight: 700; color: var(--c-accent); }
+.player__jail { font-size: var(--fs-xs); font-weight: 700; color: var(--c-mark); }
 .player__dim { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); font-variant-numeric: tabular-nums; }
 
-.section-title { margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; }
+.section-title { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); font-size: var(--fs-md); font-weight: 700; }
+.section-title::before, .links__title::before, .inventory__title::before { content: ''; flex: none; width: var(--sign-w); height: var(--sign-h); border-radius: var(--sign-h); background: var(--grad-brand); }
 .section-title + .empty { padding-top: 0; }
 .section { margin-bottom: var(--space-6); }
 .btn--small { height: calc(var(--control-height) - var(--space-2)); padding: 0 var(--space-3); font-size: var(--fs-xs); }
@@ -854,7 +951,14 @@ button, input { font: inherit; color: inherit; }
       </aside>
 
       <main class="main">
-        <p class="placeholder" id="placeholder"></p>
+        <div class="placeholder" id="placeholder">
+          <span class="placeholder__icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 19.5c.6-3.4 3.2-5.5 6.5-5.5 1 0 1.9.2 2.7.5"/><circle cx="17" cy="16.5" r="3"/><path d="M21.5 21l-2.3-2.3"/></svg>
+          </span>
+          <p class="placeholder__title" id="placeholder-title"></p>
+          <p class="placeholder__text" id="placeholder-text"></p>
+          <p class="placeholder__keys" id="placeholder-keys"></p>
+        </div>
 
         <section class="commands" id="commands" hidden aria-labelledby="commands-title">
           <div class="commands__head">
@@ -1308,7 +1412,9 @@ const TEXT = {
   deletedCharacter: 'gelöscht',
   playerMeta: (p) => [p.characterId ? `ID ${p.characterId}` : null, p.accountId ? `Login ${p.accountId}` : null, `Server ${p.serverId}`, p.rank].filter(Boolean).join(' · '),
   resultMeta: (r) => [r.characterId ? `ID ${r.characterId}` : null, `Login ${r.accountId}`, r.serverId ? `Server ${r.serverId}` : 'offline', r.rank].filter(Boolean).join(' · '),
+  placeholderTitle: 'Kein Spieler gewählt',
   placeholder: 'Wähle links einen Spieler aus oder such nach der permanenten ID, der Login-Nummer oder einem Namen.',
+  placeholderKeys: [['Enter', 'Suchen'], ['Esc', 'Schließen']],
   loadingProfile: 'Lädt…',
   accountTitle: (id) => `Login ${id}`,
   metaId: (id) => `Permanente ID ${id}`,
@@ -1604,7 +1710,7 @@ const TEXT = {
 };
 
 const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
-const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const COLOR_KEYS = ['base', 'ink', 'accent', 'mark', 'signal'];
 const TAB_KEYS = ['overview', 'characters', 'punishments', 'inventory', 'twink', 'money', 'item', 'death', 'connection', 'account', 'admin', 'security', 'all'];
 const LOG_TABS = new Set(['twink', 'money', 'item', 'death', 'connection', 'account', 'admin', 'security', 'all']);
 // Inventar nur, wenn core_inventory laeuft
@@ -1661,7 +1767,8 @@ const el = {
   modeOnline: $('mode-online'), modeWarnings: $('mode-warnings'), modeAll: $('mode-all'), modeAllLabel: $('mode-all-label'),
   modeOnlineLabel: $('mode-online-label'), modeWarningsLabel: $('mode-warnings-label'),
   modeOnlineCount: $('mode-online-count'), modeWarningsCount: $('mode-warnings-count'),
-  placeholder: $('placeholder'), profile: $('profile'), profileTitle: $('profile-title'), profileMeta: $('profile-meta'),
+  placeholder: $('placeholder'), placeholderTitle: $('placeholder-title'), placeholderText: $('placeholder-text'), placeholderKeys: $('placeholder-keys'),
+  profile: $('profile'), profileTitle: $('profile-title'), profileMeta: $('profile-meta'),
   actionsHint: $('actions-hint'), actRevive: $('act-revive'), actGoto: $('act-goto'), actBring: $('act-bring'),
   message: $('message'), tabs: $('tabs'), content: $('content'),
   warning: $('warning'), warningTitle: $('warning-title'), warningRows: $('warning-rows'),
@@ -3532,14 +3639,20 @@ el.refreshBtn.setAttribute('aria-label', TEXT.refresh);
 el.closeBtn.setAttribute('aria-label', TEXT.close);
 setText(el.dutyChipLabel, TEXT.dutyActive);
 setText(el.clearSearch, TEXT.backToOnline);
-setText(el.placeholder, TEXT.placeholder);
+setText(el.placeholderTitle, TEXT.placeholderTitle);
+setText(el.placeholderText, TEXT.placeholder);
+el.placeholderKeys.replaceChildren(...TEXT.placeholderKeys.map(([key, label]) => {
+  const item = make('span', 'placeholder__key');
+  item.append(make('span', 'keycap', key), make('span', null, label));
+  return item;
+}));
 buildPresets();
 Bridge.send('ui_ready', { ui: 'admin', version: CONTRACT_VERSION });
 
 if (Bridge.platform === 'mock') {
   // Im Browser: vier Spieler, Akte von ID 12 mit Beispiel-Einträgen. Aktionen gehen erst nach "Admin-Dienst starten".
   Mock.push('admin_open', {
-    colors: { base: '16 17 20', ink: '255 245 236', accent: '231 62 192', signal: '244 67 54' },
+    colors: { base: '16 17 20', ink: '255 245 236', accent: '231 62 192', mark: '244 154 102', signal: '244 67 54' },
     currency: 'USD', serverName: 'Testserver', self: Mock.self, players: Mock.players, warningCount: 3,
     ticketsOpen: 2,
     // Befehlsliste aus der Core, Ansicht eines Junior Administrators

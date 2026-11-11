@@ -4,7 +4,7 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 
 | Ordner | Version | Inhalt |
 |---|---|---|
-| [`core/`](core/README.md) | 1.12.1 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
+| [`core/`](core/README.md) | 1.13.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
 | [`core_inventory/`](core_inventory/README.md) | 1.5.0 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
 | [`core_lib/`](core_lib/README.md) | 1.4.3 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
 | [`core_factions/`](core_factions/README.md) | 1.3.1 | Organisationen: 30 Ränge, Rechte und Gehalt pro Rang, Divisionen, Abteilungen, Prüfungen, Erklärungen, Leitstelle mit Suche, Bonus, Archiv, Protokolle pro ID, Kasse, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Organisationsmenü in den Farben der Organisation |
