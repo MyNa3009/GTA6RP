@@ -54,8 +54,14 @@
 
 <style>
 /*
-  Oberflaechentyp: Operate. Liste links, ein Ticket rechts, Verlauf wie im MDT statt Chat-Blasen.
-  Dichte 7, Bewegung 2, Varianz 3. Gold nur fuer die eine Hauptaktion und den Status "wartet".
+  Oberflaechentyp: Operate. Liste links, ein Ticket rechts, Verlauf als Protokoll statt Chat-Blasen.
+  Dichte 7, Bewegung 2, Varianz 3.
+
+  Hausstil der Fenster (Vorbild: Medizinische Datenbank in core_ems)
+    Aufbau:    linke Spalte auf eigener Flaeche mit Kopf (Icon, Titel, Unterzeile), rechts Leiste mit Schliessen.
+    Highlight: der Stand des Tickets als Karte mit Punkt unter dem grossen Titel.
+    Farbe:     Akzent nur fuer Punkt, Team-Namen und "wartet". Hauptbuttons sind hell (Tinte), nicht farbig.
+    Etiketten: klein, gesperrt, in Grossbuchstaben.
 */
 :root {
   /* Grundfarben, werden aus der Config ueberschrieben */
@@ -64,12 +70,20 @@
   --rgb-accent: 231 62 192;
   --rgb-signal: 244 67 54;
 
-  --c-bg:         rgb(var(--rgb-base) / 0.97);
+  --c-bg:         rgb(var(--rgb-base) / 0.96);
+  --c-side:       rgb(var(--rgb-ink) / 0.03);
+  --c-surface:    rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi: rgb(var(--rgb-ink) / 0.09);
+  --c-primary:    rgb(var(--rgb-ink) / 0.92);
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
+  --c-ring:       rgb(var(--rgb-ink) / 0.1);
+  --edge-light:   inset 0 1px 0 rgb(var(--rgb-ink) / 0.08);
   --c-scrim:      rgb(var(--rgb-base) / 0.45);
   --c-field:      rgb(var(--rgb-base) / 0.6);
   --c-hover:      rgb(var(--rgb-ink) / 0.05);
   --c-selected:   rgb(var(--rgb-ink) / 0.08);
-  --c-line:       rgb(var(--rgb-ink) / 0.09);
+  --c-line:       rgb(var(--rgb-ink) / 0.08);
   --c-line-hi:    rgb(var(--rgb-ink) / 0.2);
   --c-text:       rgb(var(--rgb-ink) / 0.94);
   --c-text-2:     rgb(var(--rgb-ink) / 0.72);
@@ -78,17 +92,19 @@
   --c-on-accent:  rgb(var(--rgb-base));
   --c-signal:     rgb(var(--rgb-signal));
 
-  --shadow-panel: 0 20px 60px rgb(var(--rgb-base) / 0.6);
+  --shadow-panel: 0 16px 48px rgb(var(--rgb-base) / 0.6);
 
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
   --space-4: 16px; --space-5: 24px; --space-6: 32px;
 
-  --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
 
   --fs-xs: clamp(11px, 0.55vw, 13px);
   --fs-sm: clamp(12px, 0.65vw, 14px);
   --fs-md: clamp(14px, 0.75vw, 16px);
-  --fs-lg: clamp(16px, 0.9vw, 19px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xxl: clamp(26px, 1.7vw, 36px);
+  --ls-label: 0.05em;
 
   --dur-fast: 120ms; --dur-panel: 180ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -103,6 +119,10 @@
   --small-height: clamp(28px, 1.5vw, 32px);
   --icon-size: 18px;
   --text-max: 70ch;
+  --head-h: 64px;
+  --dot: 12px;
+  --dot-ring: 4px;
+  --cover-max: 620px;
 }
 
 /* Spieler-Ansicht: man schreibt nur, darum kein Vollbild, aber genug Flaeche fuer Liste und Verlauf */
@@ -141,7 +161,7 @@ h1, h2, p { margin: 0; }
   width: var(--panel-width);
   height: var(--panel-height);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   background: var(--c-bg);
   border: 1px solid var(--c-line);
   border-radius: var(--radius-lg);
@@ -154,18 +174,41 @@ h1, h2, p { margin: 0; }
   to   { opacity: 1; transform: scale(1); }
 }
 
-/* ---------- Kopfzeile ---------- */
+/* ---------- Koepfe: links Icon, Titel, Unterzeile. Rechts Hinweis und Schliessen. ---------- */
 
-.topbar {
+.side-head {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  gap: var(--space-3);
+  flex: none;
+  height: var(--head-h);
+  padding: 0 var(--space-5);
   border-bottom: 1px solid var(--c-line);
 }
-.topbar__title { font-size: var(--fs-md); font-weight: 700; }
-.topbar .icon-btn { margin-left: auto; }
-.topbar__hint { flex: 1; font-size: var(--fs-xs); font-weight: 500; color: var(--c-signal); }
+.side-head__icon { width: var(--icon-size); height: var(--icon-size); flex: none; color: var(--c-accent); }
+.side-head__names { min-width: 0; }
+.side-head__title { font-size: var(--fs-md); font-weight: 700; }
+.side-head__sub { font-size: var(--fs-xs); color: var(--c-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.main-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+  height: var(--head-h);
+  padding: 0 var(--space-3) 0 var(--space-5);
+  border-bottom: 1px solid var(--c-line);
+}
+.main-bar .icon-btn { margin-left: auto; }
+.topbar__hint { flex: 1; font-size: var(--fs-xs); font-weight: 600; color: var(--c-signal); }
+
+.section-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--c-text-muted);
+}
 
 /* ---------- Bedienelemente ---------- */
 
@@ -176,22 +219,23 @@ h1, h2, p { margin: 0; }
   height: var(--control-height);
   padding: 0 var(--space-4);
   border: 1px solid var(--c-line-hi);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   font-size: var(--fs-sm);
   font-weight: 600;
+  color: var(--c-text-2);
   cursor: pointer;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
-.btn:hover:not(:disabled) { background: var(--c-hover); }
+.btn:hover:not(:disabled) { background: var(--c-hover); color: var(--c-text); }
 .btn:active:not(:disabled) { transform: scale(0.97); }
 .btn:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .btn[hidden] { display: none; }
-.btn--primary { background: var(--c-accent); border-color: transparent; color: var(--c-on-accent); }
-.btn--primary:hover:not(:disabled) { background: var(--c-accent); opacity: 0.9; }
+.btn--primary { background: var(--c-primary); border-color: transparent; color: var(--c-on-accent); }
+.btn--primary:hover:not(:disabled) { background: rgb(var(--rgb-ink)); color: var(--c-on-accent); }
 .btn--small { height: var(--small-height); padding: 0 var(--space-3); font-size: var(--fs-xs); }
 
 .text-btn {
@@ -217,7 +261,7 @@ h1, h2, p { margin: 0; }
   width: var(--control-height);
   height: var(--control-height);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--c-text-2);
   cursor: pointer;
@@ -230,7 +274,7 @@ h1, h2, p { margin: 0; }
   width: 100%;
   min-width: 0;
   border: 1px solid var(--c-line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--c-field);
   font-size: var(--fs-sm);
   font-weight: 500;
@@ -240,7 +284,7 @@ h1, h2, p { margin: 0; }
 .textarea { padding: var(--space-2) var(--space-3); resize: none; }
 .input::placeholder, .textarea::placeholder { color: var(--c-text-muted); }
 .input:hover, .textarea:hover { border-color: var(--c-line-hi); }
-.input:focus-visible, .textarea:focus-visible { outline: none; border-color: var(--c-text-2); }
+.input:focus-visible, .textarea:focus-visible { outline: none; border-color: var(--c-accent-line); }
 
 /* Umschalter: Filter (Team) und Kategorie (Spieler) sehen gleich aus */
 .switch {
@@ -267,7 +311,7 @@ h1, h2, p { margin: 0; }
 }
 .switch__item:hover { color: var(--c-text); background: var(--c-hover); }
 .switch__item:focus-visible, .switch__item:has(input:focus-visible) { outline: 2px solid var(--c-accent); outline-offset: 1px; }
-.switch__item[aria-selected="true"], .switch__item:has(input:checked) { color: var(--c-text); background: var(--c-selected); }
+.switch__item[aria-selected="true"], .switch__item:has(input:checked) { color: var(--c-text); background: var(--c-surface-hi); box-shadow: var(--edge-light); }
 .switch__item input { position: absolute; opacity: 0; pointer-events: none; }
 .switch__count { font-variant-numeric: tabular-nums; color: var(--c-text-muted); }
 .switch__count:empty { display: none; }
@@ -284,6 +328,7 @@ h1, h2, p { margin: 0; }
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: var(--c-side);
   border-right: 1px solid var(--c-line);
 }
 .sidebar__tools {
@@ -300,20 +345,23 @@ h1, h2, p { margin: 0; }
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4) var(--space-2);
+  padding: var(--space-4) var(--space-5) var(--space-2);
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text-2);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--c-text-muted);
 }
+.list-head .text-btn { letter-spacing: 0; text-transform: none; }
 
-.empty { padding: var(--space-2) var(--space-4); font-size: var(--fs-sm); line-height: 1.5; color: var(--c-text-2); }
+.empty { padding: var(--space-2) var(--space-5); font-size: var(--fs-sm); line-height: 1.5; color: var(--c-text-2); }
 .empty[hidden] { display: none; }
 
 .tickets {
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 0;
+  padding: 0 var(--space-2) var(--space-4);
   list-style: none;
   overflow-y: auto;
 }
@@ -321,50 +369,50 @@ h1, h2, p { margin: 0; }
   display: grid;
   gap: var(--space-1);
   width: 100%;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3);
   border: 0;
-  border-bottom: 1px solid var(--c-line);
+  border-radius: var(--radius-sm);
   background: transparent;
   text-align: left;
   cursor: pointer;
 }
-.row:hover { background: var(--c-hover); }
+.row:hover { background: var(--c-surface); }
 .row:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
-.row[aria-current="true"] { background: var(--c-selected); }
+.row[aria-current="true"] { background: var(--c-surface-hi); box-shadow: var(--edge-light); }
 .row__top { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .row__id { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
 .row__who { flex: 1; min-width: 0; font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row__who[data-offline] { color: var(--c-text-2); }
 .row__time { font-size: var(--fs-xs); color: var(--c-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.row__line { font-size: var(--fs-xs); color: var(--c-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row__line { font-size: var(--fs-xs); color: var(--c-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .state { font-weight: 600; color: var(--c-text-2); }
-.state--waiting { color: var(--c-accent); }
+.state--waiting { color: var(--c-accent); font-weight: 600; }
 .state--closed { color: var(--c-text-muted); }
 
 /* ---------- Rechte Seite ---------- */
 
 .main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 
-.blank { padding: var(--space-5); }
+.blank { flex: 1; display: grid; place-content: center; justify-items: center; gap: var(--space-2); padding: var(--space-6); text-align: center; }
 .blank[hidden] { display: none; }
-.blank__title { font-size: var(--fs-md); font-weight: 600; }
-.blank__text { margin-top: var(--space-1); max-width: var(--text-max); font-size: var(--fs-sm); line-height: 1.5; color: var(--c-text-2); }
+.blank__title { font-size: var(--fs-lg); font-weight: 700; }
+.blank__text { max-width: 48ch; font-size: var(--fs-md); line-height: 1.6; color: var(--c-text-muted); }
 
 /* Neues Ticket */
 .create {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-5);
-  max-width: calc(var(--text-max) + 2 * var(--space-5));
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  max-width: calc(var(--text-max) + 2 * var(--space-6));
 }
 .create[hidden] { display: none; }
-.create__title { font-size: var(--fs-lg); font-weight: 700; }
-.create__lead { margin-top: var(--space-1); font-size: var(--fs-sm); line-height: 1.5; color: var(--c-text-2); }
+.create__title { font-size: var(--fs-xxl); font-weight: 700; line-height: 1.15; }
+.create__lead { margin-top: var(--space-2); font-size: var(--fs-sm); line-height: 1.5; color: var(--c-text-2); }
 .field { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 .field--set { margin: 0; padding: 0; border: 0; }
-.field__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
+.field__label { padding: 0; font-size: var(--fs-xs); font-weight: 600; letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--c-text-muted); }
 .create .textarea { min-height: clamp(110px, 16vh, 180px); }
 .create__foot { display: flex; align-items: center; gap: var(--space-3); }
 
@@ -382,29 +430,48 @@ h1, h2, p { margin: 0; }
   display: flex;
   align-items: flex-start;
   gap: var(--space-4);
-  padding: var(--space-4) var(--space-5);
-  border-bottom: 1px solid var(--c-line);
+  padding: var(--space-5) var(--space-6) var(--space-4);
 }
 .ticket__titles { flex: 1; min-width: 0; }
-.ticket__title { font-size: var(--fs-lg); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ticket__title-id { margin-left: var(--space-2); font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-2); font-variant-numeric: tabular-nums; }
+.ticket__title { font-size: var(--fs-xxl); font-weight: 700; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ticket__title-id { margin-left: var(--space-3); font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+/* Stand des Tickets: das Highlight. Punkt mit Ring, Stand gross, Angaben darunter. */
 .ticket__meta {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-1) var(--space-3);
-  margin-top: var(--space-2);
-  font-size: var(--fs-xs);
-  color: var(--c-text-2);
+  gap: var(--space-1) var(--space-4);
+  max-width: var(--cover-max);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-5);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+  font-size: var(--fs-sm);
+  color: var(--c-text-muted);
   font-variant-numeric: tabular-nums;
 }
-.ticket__travel { display: inline-flex; gap: var(--space-3); }
+.ticket__meta::before {
+  content: '';
+  grid-row: span 2;
+  width: var(--dot);
+  height: var(--dot);
+  border-radius: 50%;
+  background: var(--c-text-2);
+  box-shadow: 0 0 0 var(--dot-ring) var(--c-ring);
+}
+.ticket__meta[data-state="waiting"]::before { background: var(--c-accent); box-shadow: 0 0 0 var(--dot-ring) var(--c-accent-soft); }
+.ticket__meta[data-state="closed"]::before { background: var(--c-text-muted); box-shadow: none; }
+.ticket__meta .state { grid-column: 2; font-size: var(--fs-lg); font-weight: 700; color: var(--c-text); }
+.ticket__meta .state--waiting { color: var(--c-text); }
+#ticket-info { grid-column: 2; }
+#ticket-info:empty { display: none; }
+.ticket__travel { grid-column: 3; grid-row: 1 / span 2; display: inline-flex; gap: var(--space-3); }
 .ticket__travel[hidden] { display: none; }
 .ticket__actions { display: flex; align-items: center; gap: var(--space-3); }
 
 .error-line {
-  padding: var(--space-2) var(--space-5);
-  border-bottom: 1px solid var(--c-line);
+  padding: var(--space-2) var(--space-6);
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--c-signal);
@@ -416,20 +483,22 @@ h1, h2, p { margin: 0; }
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: var(--space-3) var(--space-5) var(--space-4);
+  padding: var(--space-3) var(--space-6) var(--space-4);
   list-style: none;
   overflow-y: auto;
 }
+.log-title { padding: var(--space-4) var(--space-6) 0; }
 .entry {
   display: grid;
   grid-template-columns: var(--author-width) minmax(0, 1fr);
   gap: var(--space-4);
-  padding: var(--space-2) 0;
+  padding: var(--space-3) 0;
 }
 .entry + .entry:not([data-follow]) { border-top: 1px solid var(--c-line); }
 .entry[data-follow] { padding-top: 0; }
 .entry__author { min-width: 0; font-size: var(--fs-xs); line-height: 1.6; }
 .entry__name { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry__name { font-size: var(--fs-sm); }
 .entry__name[data-team] { color: var(--c-accent); }
 .entry__info { display: block; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
 .entry__body {
@@ -447,7 +516,7 @@ h1, h2, p { margin: 0; }
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: var(--space-2) var(--space-3);
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--c-line);
 }
 .composer[hidden] { display: none; }
@@ -456,7 +525,7 @@ h1, h2, p { margin: 0; }
 .composer .form-error { grid-column: 1 / -1; }
 
 .locked {
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--c-line);
   font-size: var(--fs-xs);
   color: var(--c-text-2);
@@ -482,16 +551,15 @@ h1, h2, p { margin: 0; }
 <div class="screen" id="screen" hidden>
   <div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="title">
 
-    <header class="topbar">
-      <h1 class="topbar__title" id="title"></h1>
-      <p class="topbar__hint" id="duty-hint"></p>
-      <button class="icon-btn" type="button" data-action="close" id="close-btn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      </button>
-    </header>
-
     <div class="body">
       <aside class="sidebar">
+        <header class="side-head">
+          <svg class="side-head__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4A2.5 2.5 0 0 1 4 13.5z"/><path d="M8.5 9h7M8.5 12h4"/></svg>
+          <div class="side-head__names">
+            <h1 class="side-head__title" id="title"></h1>
+            <p class="side-head__sub" id="subtitle"></p>
+          </div>
+        </header>
         <div class="sidebar__tools" id="admin-tools" hidden>
           <div class="switch" role="tablist" id="filters">
             <button class="switch__item" type="button" role="tab" data-action="filter" data-filter="open"><span id="f-open"></span><span class="switch__count" id="f-open-count"></span></button>
@@ -513,6 +581,12 @@ h1, h2, p { margin: 0; }
       </aside>
 
       <main class="main">
+        <div class="main-bar">
+          <p class="topbar__hint" id="duty-hint"></p>
+          <button class="icon-btn" type="button" data-action="close" id="close-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
         <div class="blank" id="blank">
           <p class="blank__title" id="blank-title"></p>
           <p class="blank__text" id="blank-text"></p>
@@ -559,7 +633,8 @@ h1, h2, p { margin: 0; }
             </div>
           </div>
           <p class="error-line" id="ticket-error" role="alert" hidden></p>
-          <ol class="log" id="log" aria-live="polite"></ol>
+          <h3 class="section-title log-title" id="log-title"></h3>
+          <ol class="log" id="log" aria-live="polite" aria-labelledby="log-title"></ol>
           <form class="composer" id="composer" hidden novalidate>
             <label class="visually-hidden" for="composer-text" id="composer-label"></label>
             <textarea class="textarea" id="composer-text" name="text" spellcheck="true"></textarea>
@@ -696,6 +771,8 @@ const Mock = {
 <script id="app">
 const TEXT = {
   title: 'Tickets',
+  subtitle: { player: 'Hilfe vom Serverteam', admin: 'Anliegen der Spieler' },
+  logTitle: 'Verlauf',
   close: 'Schließen',
   newTicket: 'Neues Ticket',
   filters: { open: 'Offen', mine: 'Meine', closed: 'Geschlossen' },
@@ -805,7 +882,7 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const el = {
-  screen: $('screen'), panel: $('panel'), title: $('title'), closeBtn: $('close-btn'), dutyHint: $('duty-hint'),
+  screen: $('screen'), panel: $('panel'), title: $('title'), subtitle: $('subtitle'), logTitle: $('log-title'), closeBtn: $('close-btn'), dutyHint: $('duty-hint'),
   adminTools: $('admin-tools'), filters: $('filters'),
   fOpen: $('f-open'), fOpenCount: $('f-open-count'), fMine: $('f-mine'), fMineCount: $('f-mine-count'), fClosed: $('f-closed'),
   searchForm: $('search-form'), search: $('search'),
@@ -1040,6 +1117,7 @@ function renderTicket() {
 
   const status = statusOf(ticket);
   el.ticketState.className = status.tone ? `state state--${status.tone}` : 'state';
+  el.ticketState.parentElement.dataset.state = status.tone || 'active';
   setText(el.ticketState, status.text);
   const info = admin ? [ticket.categoryLabel, TEXT.created(formatTime(ticket.createdAt)), ticket.serverId ? TEXT.online : TEXT.offline]
     : [TEXT.created(formatTime(ticket.createdAt))];
@@ -1139,6 +1217,7 @@ function render() {
   el.screen.hidden = !state.open;
   if (!state.open) return;
   el.panel.dataset.mode = state.mode;
+  setText(el.subtitle, TEXT.subtitle[state.mode] || TEXT.subtitle.player);
   renderList();
   renderDetail();
 }
@@ -1418,6 +1497,8 @@ Bridge.on('ticket_close', () => {
 /* ---------- Feste Texte ---------- */
 
 setText(el.title, TEXT.title);
+setText(el.subtitle, TEXT.subtitle.player);
+setText(el.logTitle, TEXT.logTitle);
 el.closeBtn.setAttribute('aria-label', TEXT.close);
 setText(el.newBtn, TEXT.newTicket);
 setText(el.fOpen, TEXT.filters.open);

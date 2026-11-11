@@ -50,19 +50,14 @@
 <style>
 /*
   Oberflaechentyp: Explore (Inventar). Vollbild, Aktionen per Rechtsklick.
-  Dichte 7, Bewegung 2 (per Taste geoeffnet, sehr oft), Varianz 3, Ausdruck 7.
+  Dichte 7, Bewegung 2 (per Taste geoeffnet, sehr oft), Varianz 3.
 
-  Richtung
-  Zweck:     Sachen ansehen, verschieben, benutzen, anziehen.
-  Charakter: warm, griffig, nachts.
-  Welt:      Vice RP bei Sonnenuntergang, Taschen und Rucksack.
-  Highlight: das Gewicht als Balken im Marken-Verlauf unter Taschen und Rucksack.
-  Signatur:  kurze Verlaufslinie vor jedem Abschnittstitel, wie im Logo vor "Roleplay".
-  Form:      rund (Kacheln 10, Tasten 4).
-  Buehne:    Marken-Schein in zwei Ecken ueber dem abgedunkelten Spielbild.
-
-  Feste Plaetze der Farbe: Gewichtsbalken, Signatur, Auswahl, Ziel beim Ziehen, Geldbetrag. Der Rest sind
-  Stufen aus --rgb-ink. Belegte Kacheln sind heller als leere, damit man den Inhalt sofort sieht.
+  Hausstil der Fenster (Vorbild: Medizinische Datenbank in core_ems)
+    Kopf:      Icon, Titel und Unterzeile oben links, wie der Kopf der linken Spalte in den Fenstern.
+    Highlight: das Gewicht als Balken unter Taschen und Rucksack (Akzent, rot wenn voll).
+    Farbe:     Akzent nur fuer Icon, Gewichtsbalken, Auswahl und Ziel beim Ziehen. Der Rest sind Stufen aus --rgb-ink.
+    Etiketten: Abschnittstitel klein, gesperrt, in Grossbuchstaben.
+  Belegte Kacheln sind heller als leere, damit man den Inhalt sofort sieht.
 */
 :root {
   /* Grundfarben, werden aus der Config der Core ueberschrieben */
@@ -90,19 +85,13 @@
   --c-accent:      rgb(var(--rgb-accent));
   --c-accent-soft: rgb(var(--rgb-accent) / 0.16);
   --c-accent-line: rgb(var(--rgb-accent) / 0.6);
-  --c-mark:        rgb(var(--rgb-mark));
+
   --c-signal:      rgb(var(--rgb-signal));
   --c-menu:        rgb(var(--rgb-base) / 0.98);
   --c-menu-line:   rgb(var(--rgb-ink) / 0.12);
 
   --shadow-float: 0 12px 32px rgb(var(--rgb-base) / 0.7);
 
-  /* Marke: Verlauf wie im Schriftzug, Buehne in zwei Ecken, Schein nur an der Auswahl */
-  --grad-brand: linear-gradient(90deg, rgb(var(--rgb-accent)), rgb(var(--rgb-mark)));
-  --grad-stage:
-    radial-gradient(70% 60% at 0% 0%, rgb(var(--rgb-accent) / 0.2), transparent 70%),
-    radial-gradient(60% 55% at 100% 100%, rgb(var(--rgb-mark) / 0.13), transparent 70%);
-  --glow-select: inset 0 0 18px rgb(var(--rgb-accent) / 0.42);
 
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
   --radius-sm: 4px; --radius-md: 8px; --radius-slot: 10px;
@@ -110,14 +99,14 @@
   --fs-xs: clamp(10px, 0.55vw, 12px);
   --fs-sm: clamp(11px, 0.62vw, 13px);
   --fs-md: clamp(13px, 0.72vw, 15px);
-  --fs-display: clamp(26px, 2.2vw, 44px);
-  --ls-label: 0.08em;
-  --ls-display: -0.01em;
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --ls-label: 0.05em;
+  --icon-size: 18px;
 
-  --sign-w: 16px; --sign-h: 3px;   /* Signatur: Verlaufslinie vor Titeln */
+  --head-h: 64px;
   --meter-h: 4px;
   --page-x: clamp(24px, 3vw, 64px);
-  --page-top: clamp(16px, 2.6vh, 32px);
+
 
   --dur-fast: 100ms; --dur-hud: 180ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -160,29 +149,23 @@ svg { display: block; }
   z-index: var(--z-screen);
   display: grid;
   grid-template-rows: auto 1fr auto;
-  background: var(--grad-stage), var(--c-screen);
+  background: var(--c-screen);
   outline: none;
 }
 .screen[hidden] { display: none; }
 
-/* Kopfzeile: der eine Display-Titel der Ansicht, darunter die Signatur */
-.head { padding: var(--page-top) var(--page-x) 0; }
-.head__title {
-  font-size: var(--fs-display);
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: var(--ls-display);
-  text-transform: uppercase;
+/* Kopf oben links: Icon, Titel, Unterzeile. Gleich aufgebaut wie der Kopf der linken Spalte in den Fenstern. */
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--head-h);
+  padding: 0 var(--page-x);
 }
-.head__title::after {
-  content: '';
-  display: block;
-  width: calc(var(--sign-w) * 3);
-  height: var(--sign-h);
-  margin-top: var(--space-2);
-  border-radius: var(--sign-h);
-  background: var(--grad-brand);
-}
+.head__icon { width: var(--icon-size); height: var(--icon-size); flex: none; color: var(--c-accent); }
+.head__names { min-width: 0; }
+.head__title { font-size: var(--fs-lg); font-weight: 700; line-height: 1.2; }
+.head__sub { font-size: var(--fs-xs); color: var(--c-text-muted); }
 
 .layout {
   display: grid;
@@ -235,25 +218,15 @@ svg { display: block; }
 }
 .strip--meter::after { display: none; }
 .strip__title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
   min-width: 0;
   font-size: var(--fs-xs);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: var(--ls-label);
   text-transform: uppercase;
-  color: var(--c-text-2);
+  color: var(--c-text-muted);
   white-space: nowrap;
 }
-.strip__title::before {
-  content: '';
-  flex: none;
-  width: var(--sign-w);
-  height: var(--sign-h);
-  border-radius: var(--sign-h);
-  background: var(--grad-brand);
-}
+
 .strip__meta {
   font-size: var(--fs-sm);
   font-weight: 700;
@@ -270,7 +243,7 @@ svg { display: block; }
 }
 .meter__fill {
   height: 100%;
-  background: var(--grad-brand);
+  background: var(--c-accent);
   transform-origin: left center;
   transform: scaleX(var(--fill, 0));
   transition: transform var(--dur-fast) var(--ease-out);
@@ -290,7 +263,7 @@ svg { display: block; }
   letter-spacing: var(--ls-label);
   text-transform: uppercase;
   text-align: center;
-  color: var(--c-text-2);
+  color: var(--c-text-muted);
   white-space: pre-line;
 }
 .quick__list { display: flex; flex-direction: column; gap: var(--gap); padding-left: calc(var(--badge) * 0.6); }
@@ -336,17 +309,6 @@ svg { display: block; }
   touch-action: none;
   transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
-/* Schein der Auswahl: liegt innen, weil die Kachel ihren Inhalt beschneidet. Nur die Deckkraft wechselt. */
-.slot::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: var(--glow-select);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease-out);
-}
 .slot[data-filled] {
   cursor: grab;
   border-color: var(--c-slot-line-filled);
@@ -358,7 +320,7 @@ svg { display: block; }
 .slot[data-filled]:active { transform: scale(0.97); }
 .slot:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
 .slot[aria-pressed="true"] { border-color: var(--c-accent); background: var(--c-accent-soft); }
-.slot[aria-pressed="true"]::after { opacity: 1; }
+
 .slot[data-target] { border-color: var(--c-accent); background: var(--c-accent-soft); }
 .slot[data-dragging] { opacity: 0.3; }
 .slot[data-locked] { cursor: not-allowed; }
@@ -382,7 +344,7 @@ svg { display: block; }
   color: var(--c-text-2);
   pointer-events: none;
 }
-.slot__count--money { color: var(--c-mark); }
+
 .slot__name {
   position: absolute;
   left: calc(var(--slot) * 0.08);
@@ -607,7 +569,7 @@ svg { display: block; }
 }
 .hud .slot { background: rgb(var(--rgb-base) / 0.82); border-color: rgb(var(--rgb-ink) / 0.10); }
 .hud .slot[aria-current="true"] { border-color: var(--c-accent); }
-.hud .slot[aria-current="true"]::after { opacity: 1; }
+
 .hud .slot__name { display: none; }
 .hud__key {
   position: absolute;
@@ -806,7 +768,7 @@ svg { display: block; }
 
 @media (prefers-reduced-motion: reduce) {
   .menu, .hud, .doc { animation: none; }
-  .slot, .slot::after, .meter__fill { transition: none; }
+  .slot, .meter__fill { transition: none; }
   .slot[data-filled]:hover, .slot[data-filled]:active { transform: none; }
 }
 </style>
@@ -815,7 +777,11 @@ svg { display: block; }
 
 <div class="screen" id="screen" hidden tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="title">
   <header class="head">
-    <h1 class="head__title" id="title"></h1>
+    <svg class="head__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9.500A2.500 2.500 0 0 1 7.500 7h9A2.500 2.500 0 0 1 19 9.500V18a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/><path d="M9 7V5.500A1.500 1.500 0 0 1 10.500 4h3A1.500 1.500 0 0 1 15 5.500V7M5 13h14M10 13v2h4v-2"/></svg>
+    <div class="head__names">
+      <h1 class="head__title" id="title"></h1>
+      <p class="head__sub" id="subtitle"></p>
+    </div>
   </header>
   <main class="layout">
     <div class="left">
@@ -1012,6 +978,7 @@ const Mock = {
 <script id="app">
 const TEXT = {
   title: 'Inventar',
+  subtitle: 'Taschen, Rucksack, Kleidung und Dokumente',
   quick: 'Schnell-\nzugriff',
   pocket: 'Taschen',
   bag: 'Rucksack',
@@ -1163,7 +1130,7 @@ const missingImages = new Set();
 const $ = (id) => document.getElementById(id);
 const el = {
   screen: $('screen'), foot: $('foot'),
-  title: $('title'),
+  title: $('title'), subtitle: $('subtitle'),
   quick: $('quick'), quickTitle: $('quick-title'),
   pocket: $('pocket'), pocketTitle: $('pocket-title'), pocketWeight: $('pocket-weight'),
   bag: $('bag'), bagTitle: $('bag-title'), bagWeight: $('bag-weight'),
@@ -1264,7 +1231,7 @@ function itemContent(node, entry) {
   if (item.document) countText = docBadge(entry.meta || {});
   else if (item.money) countText = TEXT.money(entry.count);
   else if (ammo !== undefined && ammo !== null) countText = TEXT.rounds(ammo);
-  node.append(make('span', item.money ? 'slot__count slot__count--money' : 'slot__count', countText));
+  node.append(make('span', 'slot__count', countText));
   const fallback = () => make('span', 'slot__fallback', (labelOf(entry) || '?').charAt(0).toUpperCase());
   if (missingImages.has(entry.name)) {
     node.append(fallback());
@@ -2047,6 +2014,7 @@ Bridge.on('inv_document', (data) => {
 /* ---------- Feste Texte ---------- */
 
 setText(el.title, TEXT.title);
+setText(el.subtitle, TEXT.subtitle);
 setText(el.quickTitle, TEXT.quick);
 setText(el.pocketTitle, TEXT.pocket);
 setText(el.bagTitle, TEXT.bag);

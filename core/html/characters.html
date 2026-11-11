@@ -56,8 +56,17 @@
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <style>
+/*
+  Oberflaechentyp: Configure (Charakter waehlen oder anlegen). Dichte 4, Bewegung 4, Varianz 3.
+
+  Hausstil der Fenster (Vorbild: Medizinische Datenbank in core_ems)
+    Aufbau:    linke Spalte auf eigener Flaeche mit Kopf (Icon, Servername, belegte Plaetze), rechts der Charakter.
+    Highlight: der Name gross, darunter die Angaben als Karte. Eine Sperre steht als Karte mit Punkt.
+    Farbe:     Akzent nur fuer Icon und Fokus. Der Hauptbutton ist hell (Tinte), nicht farbig.
+    Etiketten: klein, gesperrt, in Grossbuchstaben.
+*/
 :root {
-  /* Die 4 Grundfarben, werden aus der Config ueberschrieben */
+  /* Grundfarben, werden aus der Config ueberschrieben */
   --rgb-base:   16 17 20;
   --rgb-ink:    255 245 236;
   --rgb-accent: 231 62 192;
@@ -67,27 +76,31 @@
   --c-bg:          rgb(var(--rgb-base) / 0.96);
   --c-scrim:       rgb(var(--rgb-base) / 0.45);
   --c-sunken:      rgb(var(--rgb-base) / 0.35);
+  --c-side:        rgb(var(--rgb-ink) / 0.03);
+  --c-field:       rgb(var(--rgb-base) / 0.6);
+  --c-primary:     rgb(var(--rgb-ink) / 0.92);
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.08);
   --c-surface:     rgb(var(--rgb-ink) / 0.05);
   --c-surface-hi:  rgb(var(--rgb-ink) / 0.09);
-  --c-border:      rgb(var(--rgb-ink) / 0.10);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
   --c-border-hi:   rgb(var(--rgb-ink) / 0.20);
   --c-text:        rgb(var(--rgb-ink) / 0.94);
   --c-text-2:      rgb(var(--rgb-ink) / 0.72);
   --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
   --c-accent:      rgb(var(--rgb-accent));
-  --c-accent-soft: rgb(var(--rgb-accent) / 0.16);
-  --c-accent-line: rgb(var(--rgb-accent) / 0.55);
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.45);
   --c-on-accent:   rgb(var(--rgb-base));
   --c-signal:      rgb(var(--rgb-signal));
   --c-signal-soft: rgb(var(--rgb-signal) / 0.12);
   --c-signal-line: rgb(var(--rgb-signal) / 0.35);
 
-  --shadow-panel: 0 16px 48px rgb(var(--rgb-base) / 0.55);
+  --shadow-panel: 0 16px 48px rgb(var(--rgb-base) / 0.6);
 
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
   --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
 
-  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px; --radius-full: 999px;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px; --radius-full: 999px;
 
   --fs-xs: clamp(11px, 0.55vw, 13px);
   --fs-sm: clamp(12px, 0.65vw, 14px);
@@ -105,8 +118,12 @@
   --sheet-min-height: clamp(480px, 56vh, 680px);
   --sheet-pad: clamp(var(--space-6), 3vw, var(--space-8));
   --field-height: clamp(44px, 2.4vw, 48px);
-  --icon-size: 20px;
+  --icon-size: 18px;
   --text-max: 52ch;
+  --head-h: 64px;
+  --ls-label: 0.05em;
+  --dot: 12px;
+  --dot-ring: 4px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -160,24 +177,27 @@ button, input { font: inherit; color: inherit; }
 .sheet__aside {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
   min-height: 0;
-  padding: var(--sheet-pad);
-  background-color: var(--c-surface);
+  background-color: var(--c-side);
   border-right: 1px solid var(--c-border);
 }
 
+/* Kopf der Spalte: Icon, Servername, darunter die belegten Plaetze */
 .aside__top {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-3);
+  flex: none;
+  height: var(--head-h);
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--c-border);
 }
+.aside__icon { width: var(--icon-size); height: var(--icon-size); flex: none; color: var(--c-accent); }
+.aside__names { min-width: 0; }
 
 .brand {
   margin: 0;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-md);
   font-weight: 700;
   min-width: 0;
   overflow: hidden;
@@ -185,27 +205,28 @@ button, input { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 
-/* Belegte Plaetze: schlichter Text, kein Abzeichen */
 .pill {
   margin: 0;
   font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--c-text-2);
+  color: var(--c-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .aside__title {
-  margin: var(--space-2) 0 0;
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  text-wrap: balance;
+  margin: 0;
+  padding: var(--space-4) var(--space-5) var(--space-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--c-text-muted);
 }
 
 .chars {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 var(--space-2);
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -219,9 +240,9 @@ button, input { font: inherit; color: inherit; }
   width: 100%;
   display: flex;
   align-items: center;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -230,7 +251,7 @@ button, input { font: inherit; color: inherit; }
 .char:hover:not(:disabled) { background: var(--c-surface); }
 .char:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
 .char:disabled { cursor: default; opacity: 0.6; }
-.char[aria-pressed="true"] { background: var(--c-surface-hi); }
+.char[aria-pressed="true"] { background: var(--c-surface-hi); box-shadow: var(--edge-light); }
 
 .char__text {
   min-width: 0;
@@ -243,8 +264,8 @@ button, input { font: inherit; color: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.char__name { font-size: var(--fs-md); font-weight: 600; }
-.char__meta { font-size: var(--fs-xs); color: var(--c-text-2); font-variant-numeric: tabular-nums; }
+.char__name { font-size: var(--fs-sm); font-weight: 600; }
+.char__meta { font-size: var(--fs-xs); color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
 
 .char--banned .char__meta { color: var(--c-signal); font-weight: 600; }
 
@@ -252,7 +273,7 @@ button, input { font: inherit; color: inherit; }
 .char--new:hover:not(:disabled) { color: var(--c-text); }
 
 .aside__foot {
-  padding-top: var(--space-4);
+  padding: var(--space-3) var(--space-5);
   border-top: 1px solid var(--c-border);
 }
 
@@ -273,6 +294,8 @@ button, input { font: inherit; color: inherit; }
   margin: 0 0 var(--space-2);
   font-size: var(--fs-xs);
   font-weight: 600;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
   color: var(--c-text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -296,9 +319,10 @@ button, input { font: inherit; color: inherit; }
 
 .facts {
   margin: var(--space-5) 0 var(--space-6);
-  padding: var(--space-5) 0;
-  border-top: 1px solid var(--c-border);
-  border-bottom: 1px solid var(--c-border);
+  padding: var(--space-5);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-5) var(--space-5);
@@ -307,8 +331,10 @@ button, input { font: inherit; color: inherit; }
 .fact dt {
   margin-bottom: var(--space-1);
   font-size: var(--fs-xs);
-  font-weight: 500;
-  color: var(--c-text-2);
+  font-weight: 600;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--c-text-muted);
 }
 .fact dd {
   margin: 0;
@@ -345,18 +371,20 @@ button, input { font: inherit; color: inherit; }
 
 .field__label {
   padding: 0;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--c-text);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--c-text-muted);
 }
 
 .input {
   width: 100%;
   height: var(--field-height);
   padding: 0 var(--space-4);
-  background: var(--c-surface);
+  background: var(--c-field);
   border: 1px solid var(--c-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   font-size: var(--fs-md);
   font-weight: 500;
   color-scheme: dark;
@@ -366,12 +394,10 @@ button, input { font: inherit; color: inherit; }
 .input:hover { border-color: var(--c-border-hi); }
 .input:focus-visible {
   outline: none;
-  border-color: var(--c-accent);
-  background: var(--c-surface-hi);
-  box-shadow: 0 0 0 3px var(--c-accent-soft);
+  border-color: var(--c-accent-line);
 }
 .input[aria-invalid="true"] { border-color: var(--c-signal); }
-.input[aria-invalid="true"]:focus-visible { box-shadow: 0 0 0 3px var(--c-signal-soft); }
+
 
 legend.field__label { margin-bottom: var(--space-2); }
 
@@ -381,9 +407,9 @@ legend.field__label { margin-bottom: var(--space-2); }
   gap: var(--space-1);
   height: var(--field-height);
   padding: var(--space-1);
-  background: var(--c-surface);
+  background: var(--c-field);
   border: 1px solid var(--c-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
 }
 .field[aria-invalid="true"] .segmented { border-color: var(--c-signal); }
 
@@ -398,14 +424,14 @@ legend.field__label { margin-bottom: var(--space-2); }
 .seg span {
   display: grid;
   place-items: center;
-  border-radius: calc(var(--radius-md) - var(--space-1));
+  border-radius: var(--space-1);
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--c-text-2);
   transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .seg:hover span { color: var(--c-text); }
-.seg input:checked + span { background: var(--c-surface-hi); color: var(--c-text); }
+.seg input:checked + span { background: var(--c-surface-hi); box-shadow: var(--edge-light); color: var(--c-text); }
 .seg input:focus-visible + span { outline: 2px solid var(--c-accent); outline-offset: 1px; }
 
 .field__hint, .field__error {
@@ -437,8 +463,14 @@ legend.field__label { margin-bottom: var(--space-2); }
 }
 .message:empty { display: none; }
 .form__footer .message { margin: 0; }
+/* Meldung als Karte mit Punkt, wie der Stand in der Datenbank */
+.message[data-tone] { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-4); padding: var(--space-4) var(--space-5); }
+.message[data-tone]:empty { display: none; }
+.message[data-tone]::before { content: ''; width: var(--dot); height: var(--dot); border-radius: 50%; }
 .message[data-tone="error"]   { background: var(--c-signal-soft); border: 1px solid var(--c-signal-line); }
-.message[data-tone="success"] { background: var(--c-accent-soft); border: 1px solid var(--c-accent-line); }
+.message[data-tone="error"]::before { background: var(--c-signal); box-shadow: 0 0 0 var(--dot-ring) rgb(var(--rgb-signal) / 0.2); }
+.message[data-tone="success"] { background: var(--c-surface); border: 1px solid var(--c-border); }
+.message[data-tone="success"]::before { background: var(--c-accent); box-shadow: 0 0 0 var(--dot-ring) var(--c-accent-soft); }
 
 .btn-primary {
   display: inline-flex;
@@ -449,17 +481,17 @@ legend.field__label { margin-bottom: var(--space-2); }
   height: var(--field-height);
   padding: 0 var(--space-6);
   border: 0;
-  border-radius: var(--radius-md);
-  background: var(--c-accent);
+  border-radius: var(--radius-sm);
+  background: var(--c-primary);
   color: var(--c-on-accent);
   font-size: var(--fs-md);
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
-  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
-.btn-primary:hover { opacity: 0.9; }
+.btn-primary:hover { background: rgb(var(--rgb-ink)); }
 .btn-primary:active { transform: scale(0.98); }
-.btn-primary:focus-visible { outline: 2px solid var(--c-text); outline-offset: 3px; }
+.btn-primary:focus-visible { outline: 2px solid var(--c-accent-line); outline-offset: 3px; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 .btn-primary[aria-busy="true"] { cursor: progress; }
 
@@ -509,8 +541,11 @@ legend.field__label { margin-bottom: var(--space-2); }
 
     <aside class="sheet__aside">
       <div class="aside__top">
-        <p class="brand" id="server-name"></p>
-        <p class="pill" id="slots"></p>
+        <svg class="aside__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c.6-3.4 3.2-5.5 6.5-5.5s5.9 2.1 6.5 5.5"/><path d="M16 4.7a3.5 3.5 0 0 1 0 6.6M18.5 14.6c1.6.9 2.7 2.6 3 4.9"/></svg>
+        <div class="aside__names">
+          <p class="brand" id="server-name"></p>
+          <p class="pill" id="slots"></p>
+        </div>
       </div>
 
       <h1 class="aside__title" id="aside-title"></h1>

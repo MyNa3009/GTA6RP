@@ -1,10 +1,21 @@
-# Core 1.13.0 (Testserver)
+# Core 1.14.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.13.0
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. **Ein Hausstil für alle Fenster**, Vorbild ist die Medizinische Datenbank aus `core_ems`. Aufbau und Funktionen bleiben überall gleich:
+   - Linke Spalte auf eigener Fläche, ihr Kopf mit Icon, Titel und Unterzeile. Rechts eine Leiste mit Schließen.
+   - Der wichtigste Stand steht als Karte mit Punkt (Ticket: wer sich kümmert, Charakter: Sperre).
+   - Abschnitte, Feldnamen und Tabellenköpfe sind kleine Etiketten in Großbuchstaben.
+   - Hauptbuttons sind hell statt farbig. Die Akzentfarbe steht nur noch an Icon, Punkt, aktivem Reiter und Fokus.
+3. Umgestellt sind Tickets, Charakterauswahl, Admin-Menü und Admin-Key. Im Admin-Menü sind Verlaufskante, Verlaufsbutton und die Linien vor Abschnittstiteln aus 1.13.0 wieder raus.
+4. Alle Farben bleiben über `Config.UI.Colors` änderbar.
 
 ## Update von 1.12.1
 

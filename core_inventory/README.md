@@ -1,6 +1,12 @@
-# core_inventory 1.5.0
+# core_inventory 1.5.1
 
 Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in der Hand, Rucksack mit eigenem Inhalt, Schnellzugriff, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`. Eigene Resource, damit man sie neu starten kann, ohne dass alle aus dem Spiel fliegen.
+
+## Update von 1.5.0
+
+1. Den Ordner `core_inventory` ersetzen und neu starten. Keine Migration.
+2. **Inventar im Hausstil der Fenster** (Vorbild ist die Medizinische Datenbank): Kopf oben links mit Icon, Titel und Unterzeile, Abschnittstitel als kleine Etiketten, Gewichtsbalken in der Akzentfarbe statt im Verlauf. Farbschein im Hintergrund, Verlaufslinien und das Leuchten der Auswahl aus 1.5.0 sind wieder raus.
+3. Geblieben sind der Gewichtsbalken, die helleren belegten Plätze und die getönte Auswahl. Aufbau und Bedienung sind unverändert.
 
 ## Update von 1.4.0
 
