@@ -1,6 +1,12 @@
-# core_dispatch 1.0.0
+# core_dispatch 1.1.0
 
 Notrufe und MDT für die eigene Core. Jeder setzt mit `/dispatch Text` einen Notruf ab. Die Einheiten im Dienst bekommen einen Alarm am Bildschirmrand und arbeiten den Einsatz im MDT ab: übernehmen, Route setzen, dem Anrufer antworten, Notizen, abschließen mit Ergebnis und Bericht. Dazu Funkstatus wie beim echten FMS (0 bis 8), Disponieren für die Leitstelle, Archiv und Statistik. Als erster Dienst ist der Rettungsdienst (`ems` aus `core_factions`) eingerichtet. LSPD und andere kommen als weiterer Eintrag in `config.lua` dazu.
+
+## Update von 1.0.0
+
+1. Den Ordner `core_dispatch` ersetzen und neu starten. Keine Migration.
+2. **MDT im G-Menü:** Unter Organisation steht jetzt der Eintrag MDT. Er ist nur für Einheiten im Dienst sichtbar und öffnet dasselbe MDT wie `F6` und `/mdt`.
+3. Dafür braucht `core_dispatch` jetzt auch `core_lib`. In der `server.cfg` muss `core_lib` vor `core_dispatch` starten.
 
 ## Installation
 
@@ -25,7 +31,7 @@ Notrufe und MDT für die eigene Core. Jeder setzt mit `/dispatch Text` einen Not
 
 ## Für Einheiten: MDT
 
-Öffnen mit `F6`, `/mdt` oder `/dispatch` ohne Text (im Dienst). Den letzten Alarm übernimmt man ohne MDT mit `J`.
+Öffnen mit `F6`, `/mdt`, `/dispatch` ohne Text oder im G-Menü unter Organisation, MDT (jeweils im Dienst). Wer nicht im Dienst ist, sieht den Eintrag im G-Menü nicht. Den letzten Alarm übernimmt man ohne MDT mit `J`.
 
 | Bereich | Inhalt |
 |---|---|

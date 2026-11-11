@@ -1,4 +1,4 @@
--- core_dispatch im Client: /dispatch (Notruf oder Formular), /mdt, /status, Tasten, Alarm am Bildschirmrand,
+-- core_dispatch im Client: /dispatch (Notruf oder Formular), /mdt, /status, Tasten, G-Menue, Alarm am Bildschirmrand,
 -- Blips und Route zu Einsaetzen. Werte hier sind nur Anzeige (Entfernung, Ortsname). Der Server entscheidet alles.
 
 -- Braucht Core 1.12.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
@@ -358,6 +358,27 @@ end)
 Platform.RegisterKeyCommand(CFG.Commands.Mdt, 'MDT öffnen (Leitstelle)', CFG.Keys.Mdt, function(args)
     openMdt(args and args[1])
 end)
+
+-- G-Menue: Organisation/MDT. Nur Einheiten im Dienst sehen den Eintrag, alle anderen gar nicht.
+-- Ob man das MDT wirklich oeffnen darf, prueft wie immer der Server (dispatch_mdt_open).
+if type(lib) == 'table' and type(lib.addInteraction) == 'function' then
+    lib.addInteraction({
+        id = 'mdt',
+        path = 'Organisation',
+        label = 'MDT',
+        description = 'Einsätze, Funkstatus, Leitstelle',
+        icon = 'phone',
+        order = 15,
+        canShow = function()
+            return me.service ~= nil
+        end,
+        onSelect = function()
+            openMdt()
+        end,
+    })
+else
+    Platform.Print('warn', 'core_dispatch: core_lib fehlt, das MDT steht nicht im G-Menü. /mdt und die Taste gehen weiter.')
+end
 
 Platform.RegisterClientCommand(CFG.Commands.Status, function(args)
     local status = tonumber(args and args[1])

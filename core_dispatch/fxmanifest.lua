@@ -4,10 +4,11 @@ lua54 'yes'
 
 name 'core_dispatch'
 description 'Notrufe und MDT fuer die eigene Core: Notruf per /dispatch, Einsaetze annehmen, FMS-Status, Leitstelle, Archiv'
-version '1.0.0'
+version '1.1.0'
 
 dependencies {
     'core',
+    'core_lib',
     'core_factions',
     'oxmysql',
 }
@@ -31,6 +32,7 @@ server_scripts {
 client_scripts {
     '@core/bridge/platform/fivem_client.lua',
     '@core/bridge/network/fivem_client.lua',
+    '@core_lib/init.lua',
     'data/blips_gta5.lua',
     'client/main.lua',
 }
