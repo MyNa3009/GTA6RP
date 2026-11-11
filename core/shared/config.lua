@@ -1,8 +1,10 @@
 Config = {}
 
 ------------------------------------------------------------------------
--- Aussehen der Core-UIs (Login usw.)
--- Farben als RGB-Kanaele mit Leerzeichen, z. B. '214 164 72'
+-- Aussehen aller UIs des Servers
+-- Farben als RGB-Kanaele mit Leerzeichen, z. B. '231 62 192'. Das hier ist der Standard fuer jede UI.
+-- Addons kopieren diese Werte nicht, sie ueberschreiben nur, was bewusst anders sein soll.
+-- Organisationen bringen ihre eigenen Farben mit (theme in core_factions/config.lua).
 ------------------------------------------------------------------------
 -- Tastatur der Spieler. Alle Standardtasten in dieser Datei sind so geschrieben, wie sie auf DIESER Tastatur stehen.
 -- 'de' = deutsche Tastatur (QWERTZ), 'us' = englische Tastatur (QWERTY). FiveM selbst rechnet immer mit QWERTY,
@@ -14,10 +16,11 @@ Config.Keyboard = {
 Config.UI = {
     ServerName = 'Testserver',
     Colors = {
-        base   = '14 15 18',    -- Hintergrund
-        ink    = '232 234 237', -- Text und neutrale Flaechen
-        accent = '214 164 72',  -- Hauptaktion, Auswahl
-        signal = '220 82 72',   -- Fehler und Warnungen
+        base   = '16 17 20',    -- Hintergrund: neutrales Dunkel, bewusst keine Markenfarbe
+        ink    = '255 245 236', -- Text und neutrale Flaechen (Creme aus dem Logo)
+        accent = '231 62 192',  -- Hauptaktion, Auswahl (Magenta aus dem Logo)
+        mark   = '244 154 102', -- zweite Farbe: Hervorhebungen, Ende des Verlaufs (Pfirsich aus dem Logo)
+        signal = '244 67 54',   -- Fehler und Warnungen
     },
     -- So lange bleibt die Erfolgsmeldung nach dem Login sichtbar
     SuccessDelayMs = 900,

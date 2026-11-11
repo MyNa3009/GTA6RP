@@ -174,10 +174,17 @@ local RECORD_CALLS = { ems_records_search = true, ems_records_get = true, ems_re
     ems_records_entry = true, ems_records_insurance = true, ems_records_disease = true }
 local uiReady, pending, open = false, nil, false
 
-local function colors()
+-- Reihenfolge: eigene Abweichung (Config.Ems.Colors), dann Farben der Organisation, dann Farben des Servers
+local function colors(org)
     local core = Config.UI.Colors
     local own = CFG.Colors or {}
-    return { base = own.base or core.base, ink = own.ink or core.ink, accent = own.accent or core.accent, signal = own.signal or core.signal }
+    local theme = type(org) == 'table' and type(org.theme) == 'table' and org.theme or {}
+    return {
+        base = own.base or theme.base or core.base,
+        ink = own.ink or theme.ink or core.ink,
+        accent = own.accent or theme.accent or core.accent,
+        signal = own.signal or theme.signal or core.signal,
+    }
 end
 
 Platform.UiOn('ui_ready', function()
@@ -199,7 +206,9 @@ function EmsClient.OpenRecords(characterId)
     end
     open = true
     Platform.UiFocus(true, true)
-    local data = { colors = colors(), canNote = info.canNote, canManage = info.canManage, admin = info.admin, noteMax = info.noteMax,
+    local org = type(info.org) == 'table' and info.org or nil
+    local data = { colors = colors(org), org = org and { label = org.label, short = org.short, logo = org.logo } or nil,
+        canNote = info.canNote, canManage = info.canManage, admin = info.admin, noteMax = info.noteMax,
         insuranceMaxDays = info.insuranceMaxDays, diseases = info.diseases, characterId = characterId }
     if uiReady then
         Platform.UiSend('records_open', data)

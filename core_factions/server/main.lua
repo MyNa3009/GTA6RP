@@ -671,7 +671,8 @@ end)
 Platform.Export('RegisterPermissions', Factions.RegisterPermissions)
 Platform.Export('GetOnDuty', Factions.OnDutyList)
 -- Aussehen und Namen einer Organisation fuer andere UIs (z. B. MDT von core_dispatch):
--- { id, label, short, ranks, logo = 'nui://core_factions/html/logos/ems.png' oder nil, theme = { base, ink, accent, signal } }
+-- { id, label, short, ranks, logo = 'nui://core_factions/html/logos/ems.png' oder nil, theme = { base, ink, accent, mark, signal } }
+-- signal ist dieselbe Farbe wie mark: die zweite Farbe der Organisation ist auch ihre Warnfarbe.
 Platform.Export('GetOrg', function(faction)
     local org = Factions.Org(faction)
     if not org then
@@ -680,7 +681,7 @@ Platform.Export('GetOrg', function(faction)
     return {
         id = org.id, label = org.label, short = org.short, ranks = org.ranks,
         logo = org.logo and ('nui://core_factions/html/%s'):format(org.logo) or nil,
-        theme = { base = org.theme.base, ink = org.theme.ink, accent = org.theme.accent, signal = org.theme.mark },
+        theme = { base = org.theme.base, ink = org.theme.ink, accent = org.theme.accent, mark = org.theme.mark, signal = org.theme.mark },
     }
 end)
 Platform.Export('GetBalance', Factions.GetBalance)

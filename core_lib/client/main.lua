@@ -158,13 +158,13 @@ Platform.UiOn('ui_ready', function(data)
             end
         end)
     end
-    -- Farben aus dem Logo: das Menue hat eigene (mark statt signal), alle anderen Fenster Config.Lib.Colors.
-    -- Fehlt ein Wert, gilt der aus Config.UI.Colors der Core.
+    -- Farben des Servers aus Config.UI.Colors der Core. Config.Lib.Colors und Config.Lib.Menu.Colors
+    -- ueberschreiben nur einzelne Werte. Das Menue nutzt mark statt signal.
     local core = Config.UI.Colors
-    local own = ui == 'menu' and Config.Lib.Menu.Colors or Config.Lib.Colors
+    local own = (ui == 'menu' and Config.Lib.Menu.Colors or Config.Lib.Colors) or {}
     local colors = { base = own.base or core.base, ink = own.ink or core.ink, accent = own.accent or core.accent }
     if ui == 'menu' then
-        colors.mark = own.mark
+        colors.mark = own.mark or core.mark
     else
         colors.signal = own.signal or core.signal
     end

@@ -4,14 +4,10 @@
 -- Pruefungen), liegt in der Datenbank. Die Werte hier sind nur der Anfang.
 
 Config.Factions = {
-    -- Grundfarben des Organisationsmenues als 'R G B'. Jede Organisation kann sie mit eigenen Farben (theme)
-    -- ueberschreiben, siehe unten. Fehlt ein Wert, gilt Config.UI.Colors der Core.
-    Colors = {
-        base   = '24 15 36',     -- Hintergrund (Aubergine)
-        ink    = '253 241 233',  -- Text (Creme)
-        accent = '232 64 190',   -- Auswahl, Hauptaktion (Magenta)
-        signal = '240 84 96',    -- Fehler, Entlassen, Strikes (Korallrot)
-    },
+    -- Grundfarben des Organisationsmenues. Leer lassen: dann gelten die Farben des Servers aus Config.UI.Colors
+    -- der Core. Nur eintragen, was bewusst anders sein soll, als 'R G B': base, ink, accent, signal.
+    -- Jede Organisation bringt ihre eigenen Farben mit (theme), siehe unten.
+    Colors = {},
 
     -- Organisationsmenue auch per Befehl (sonst G-Menue, Organisation)
     MenuCommand = 'orga',
@@ -93,7 +89,8 @@ Config.Factions = {
             short = 'EMS',               -- auch Kuerzel auf dem Dienstausweis
             -- Logo im Organisationsmenue (Datei in html/logos/) und Farben der Organisation als 'R G B'.
             -- accent: Auswahl, Hauptaktion, Kopf. mark: zweite Farbe (Hervorhebungen, Entlassen, Strikes).
-            -- base: Hintergrund (dunkel, leicht in Richtung der Organisation getoent). ink: Schrift.
+            -- base: Hintergrund. Weglassen fuer das neutrale Dunkel des Servers. Eine eigene Basis nur, wenn die
+            -- Farbe einen ruhigen dunklen Hintergrund hergibt (Dunkelblau ja, Magenta, Gelb, Orange, Rot nein). ink: Schrift.
             logo = 'logos/ems.png',
             theme = {
                 base   = '9 14 28',

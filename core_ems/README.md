@@ -1,6 +1,12 @@
-# core_ems 1.4.0
+# core_ems 1.4.1
 
 Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskasten, Verkauf von Verbänden, Verbandskästen und Tabletten, Untersuchen und Behandeln, Krankheiten mit Stadien, Krankenversicherung und die Medizinische Datenbank. Ränge, Rechte, Dienst und Kasse kommen aus `core_factions` (Organisation `ems`).
+
+## Update von 1.4.0
+
+1. Erst Core 1.12.1 und `core_factions` 1.3.1, dann den Ordner `core_ems` ersetzen und neu starten. Keine Migration.
+2. **Medizinische Datenbank in den Farben des EMS:** Sie nimmt jetzt Farben und Logo der Organisation aus `core_factions` (`theme` und `logo` der Organisation `ems`), genau wie Leitstelle und Organisationsmenü. Vorher hatte sie eigene Farben in Magenta und Lila.
+3. `Config.Ems.Colors` ist jetzt leer. Reihenfolge der Farben: Abweichung in `Config.Ems.Colors`, dann `theme` der Organisation, dann `Config.UI.Colors` der Core.
 
 ## Update von 1.3.0
 

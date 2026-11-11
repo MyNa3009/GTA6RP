@@ -1,8 +1,14 @@
-# core_lib 1.4.2
+# core_lib 1.4.3
 
 Bibliothek für alle Scripts des Servers, ähnlich wie ox_lib, aber im Design des Servers und mit mehr Minigames. Dazu das **G-Menü**: ein Interaktionsmenü, über das später fast alles läuft, immer in Kategorien geteilt (`Person`, `Fahrzeug`, `Organisation > Leader > Entlassen`).
 
 Alles, was die Core schon kann, bleibt in der Core und wird nicht doppelt gebaut: Callbacks (`Network.Call`), Tasten (`Platform.RegisterKeyCommand`), Meldungen (`core:notify`), Logging (`exports.core:Log`).
+
+## Update von 1.4.2
+
+1. Den Ordner `core_lib` ersetzen und neu starten. Zusammen mit Core 1.12.1 einspielen, sonst fehlen die Farben.
+2. **Farben kommen aus der Core:** `Config.Lib.Colors` und `Config.Lib.Menu.Colors` sind jetzt leer. Alle Fenster und das G-Menü nehmen die Farben des Servers aus `Config.UI.Colors` der Core (neutraler dunkler Hintergrund statt Lila). In die beiden Tabellen kommt nur noch, was bewusst anders sein soll.
+3. Das G-Menü holt seine zweite Farbe (`mark`) aus der Core, wenn in `Config.Lib.Menu.Colors` keine steht.
 
 ## Update von 1.4.1
 
@@ -332,7 +338,7 @@ Wer `init.lua` nicht nutzen will, ruft die Exports direkt. Die Start-Exports war
 
 ## Config
 
-Alles in `config.lua` unter `Config.Lib`: Farben des Menüs (`Menu.Colors`, alle vier aus dem Logo), Taste und Befehl des G-Menüs, Reichweite für Personen und Fahrzeuge, Blickziel, Kreis und Umrandung (`Interact.Target`), feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Alle anderen Fenster der core_lib nehmen `Config.Lib.Colors`, ebenfalls aus dem Logo. Fehlt dort ein Wert, gilt `Config.UI.Colors` der Core.
+Alles in `config.lua` unter `Config.Lib`: Abweichende Farben (`Colors` und `Menu.Colors`, leer heißt Farben des Servers aus der Core), Taste und Befehl des G-Menüs, Reichweite für Personen und Fahrzeuge, Blickziel, Kreis und Umrandung (`Interact.Target`), feste Kategorien, Dokumente, Grenzen für Geld geben, Schwierigkeiten und Grenzen der Minigames, Mindestzeiten auf dem Server. Alle anderen Fenster der core_lib nehmen `Config.Lib.Colors`, ebenfalls aus dem Logo. Fehlt dort ein Wert, gilt `Config.UI.Colors` der Core.
 
 ## Aufbau
 

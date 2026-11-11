@@ -205,13 +205,14 @@ check('Nachricht vor ui_ready wird nicht gesendet', not [a for a in calls(lua, '
 for name in ['menu', 'dialog', 'game', 'progress', 'textui']:
     reply = ui(lua, 'ui_ready', {'ui': name})
 c = reply.data.colors
-check('ui_ready liefert die Logo-Farben der Lib (TextUI)', reply.ok and (c.base, c.ink, c.accent, c.signal) == ('24 15 36', '253 241 233', '232 64 190', '240 84 96'))
-lua.execute("Config.Lib.Colors.signal = nil")
-check('fehlt ein Wert in Config.Lib.Colors, gilt der der Core', ui(lua, 'ui_ready', {'ui': 'dialog'}).data.colors.signal == '220 82 72')
+check('ui_ready liefert die Farben des Servers aus der Core (TextUI)', reply.ok and (c.base, c.ink, c.accent, c.signal) == ('16 17 20', '255 245 236', '231 62 192', '244 67 54'))
 lua.execute("Config.Lib.Colors.signal = '240 84 96'")
+check('ein Wert in Config.Lib.Colors ueberschreibt den der Core', ui(lua, 'ui_ready', {'ui': 'dialog'}).data.colors.signal == '240 84 96')
+lua.execute("Config.Lib.Colors.signal = nil")
+check('fehlt ein Wert in Config.Lib.Colors, gilt der der Core', ui(lua, 'ui_ready', {'ui': 'dialog'}).data.colors.signal == '244 67 54')
 menu_colors = ui(lua, 'ui_ready', {'ui': 'menu'}).data.colors
-check('Menue hat die Logo-Farben (Aubergine, Creme, Magenta, Pfirsich)',
-      (menu_colors.base, menu_colors.ink, menu_colors.accent, menu_colors.mark) == ('24 15 36', '253 241 233', '232 64 190', '244 152 105'))
+check('Menue hat die Farben des Servers (neutrale Basis, Creme, Magenta, Pfirsich)',
+      (menu_colors.base, menu_colors.ink, menu_colors.accent, menu_colors.mark) == ('16 17 20', '255 245 236', '231 62 192', '244 154 102'))
 lua.globals().Tick(10)
 check('wartende Nachricht nach ui_ready gesendet', [a for a in calls(lua, 'UiSend') if a[0] == 'textui_open'])
 g.Exports['HideTextUI']()
@@ -461,7 +462,7 @@ check('erlaubter Eintrag ist da, ohne Schloss', find(payload.tabs[1]['items'], '
 g.Menu.Close()
 for fn in g.StopHandlers.values():
     fn('org2')
-check('Menue holt eigene Farben', ui(lua, 'ui_ready', {'ui': 'menu'}).data.colors.mark == '244 152 105')
+check('Menue holt die zweite Farbe (mark) aus der Core', ui(lua, 'ui_ready', {'ui': 'menu'}).data.colors.mark == '244 154 102')
 
 print('G-Menue: Pausemenue und Fahrzeug')
 lua.execute("Nearby = { { serverId = 4, distance = 1.0 } }; Sight = { serverId = 4, distance = 1.0 }; Paused = true")

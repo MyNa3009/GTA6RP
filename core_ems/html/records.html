@@ -7,9 +7,11 @@
   factions.manage korrigiert man die Akte: Eintraege aendern oder loeschen (nur markiert, wiederherstellbar),
   Versicherung setzen oder beenden, Krankheiten setzen oder heilen. Die UI zeigt nur an, jede Anfrage prueft der Server.
   Jede Korrektur steht im Protokoll des Rettungsdiensts (Organisationsmenue, Protokolle).
+  Farben und Logo kommen von der Organisation (theme in core_factions), wie bei Leitstelle und Organisationsmenue.
 
   EINGEHEND (Lua -> UI)
-  records_open  { colors: { base, ink, accent, signal }, canNote: boolean, canManage?: boolean, admin?: boolean, noteMax: number,
+  records_open  { colors: { base, ink, accent, signal }, org?: { label, short, logo }, canNote: boolean, canManage?: boolean,
+                  admin?: boolean, noteMax: number,
                   insuranceMaxDays?: number, diseases?: [{ disease, label, stages }], characterId?: number }
   records_close {}
 
@@ -54,10 +56,10 @@
   Flaeche: grosses Panel, links Suche, rechts die Akte.
 */
 :root {
-  --rgb-base:   24 15 36;
-  --rgb-ink:    253 241 233;
-  --rgb-accent: 232 64 190;
-  --rgb-signal: 240 84 96;
+  --rgb-base:   16 17 20;
+  --rgb-ink:    255 245 236;
+  --rgb-accent: 231 62 192;
+  --rgb-signal: 244 67 54;
 
   --c-bg:          rgb(var(--rgb-base) / 0.96);
   --c-side:        rgb(var(--rgb-ink) / 0.03);
@@ -120,7 +122,10 @@ button, input, textarea { font: inherit; color: inherit; }
 /* ---------- Suche ---------- */
 .search { display: grid; grid-template-rows: auto auto 1fr; min-height: 0; background: var(--c-side); border-right: 1px solid var(--c-border); }
 .search__head { display: flex; align-items: center; gap: var(--space-3); height: var(--head-h); padding: 0 var(--space-5); border-bottom: 1px solid var(--c-border); }
+.search__logo { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none; }
+.search__names { min-width: 0; }
 .search__title { margin: 0; font-size: var(--fs-md); font-weight: 700; }
+.search__org { margin: 0; font-size: var(--fs-xs); color: var(--c-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .search__title .icon { color: var(--c-accent); }
 .search__bar { padding: var(--space-4) var(--space-4) var(--space-3); }
 .input, .textarea {
@@ -250,8 +255,12 @@ button, input, textarea { font: inherit; color: inherit; }
 <div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="title" hidden>
   <section class="search">
     <header class="search__head">
-      <svg class="icon" viewBox="0 0 24 24" style="color: var(--c-accent)"><use href="#i-pulse"/></svg>
-      <h1 class="search__title" id="title"></h1>
+      <img class="search__logo" id="org-logo" alt="" width="36" height="36" hidden>
+      <svg class="icon" id="org-icon" viewBox="0 0 24 24" style="color: var(--c-accent)" aria-hidden="true"><use href="#i-pulse"/></svg>
+      <div class="search__names">
+        <h1 class="search__title" id="title"></h1>
+        <p class="search__org" id="org-name" hidden></p>
+      </div>
     </header>
     <div class="search__bar"><input class="input" id="search" type="search" autocomplete="off"></div>
     <ul class="results" id="results" role="listbox"></ul>
@@ -444,6 +453,9 @@ const DEFAULT_INSURANCE_DAYS = 30;
 const el = {
   panel: document.getElementById('panel'),
   title: document.getElementById('title'),
+  orgLogo: document.getElementById('org-logo'),
+  orgIcon: document.getElementById('org-icon'),
+  orgName: document.getElementById('org-name'),
   search: document.getElementById('search'),
   results: document.getElementById('results'),
   record: document.getElementById('record'),
@@ -763,8 +775,20 @@ function close() {
   Bridge.send('records_close', {});
 }
 
+// Logo und Name der Organisation in der Kopfzeile. Ohne Organisation bleibt das Puls-Icon.
+function renderOrg(org) {
+  const logo = org && typeof org.logo === 'string' ? org.logo : '';
+  el.orgLogo.hidden = !logo;
+  el.orgIcon.toggleAttribute('hidden', Boolean(logo));
+  if (logo && el.orgLogo.getAttribute('src') !== logo) el.orgLogo.src = logo;
+  const label = org && typeof org.label === 'string' ? org.label : '';
+  el.orgName.hidden = !label;
+  el.orgName.textContent = label;
+}
+
 Bridge.on('records_open', async (data) => {
   applyColors(data.colors);
+  renderOrg(data.org);
   Object.assign(state, { open: true, canNote: data.canNote === true, canManage: data.canManage === true, admin: data.admin === true,
     noteMax: Number(data.noteMax) || 255, insuranceMaxDays: Number(data.insuranceMaxDays) || 365,
     diseaseList: Array.isArray(data.diseases) ? data.diseases : [], results: [], selected: null, record: null, editEntry: null });
@@ -792,7 +816,8 @@ el.close.setAttribute('aria-label', TEXT.close);
   if (Bridge.platform === 'mock') {
     const params = new URLSearchParams(location.search);
     const manage = !params.has('medic');   // ?medic: ohne Korrektur-Recht
-    Mock.push('records_open', { canNote: true, canManage: manage, admin: params.has('admin'), noteMax: 255, insuranceMaxDays: 365, diseases: Mock.DISEASES,
+    Mock.push('records_open', { colors: { base: '9 14 28', ink: '240 244 250', accent: '37 94 190', signal: '237 28 36' },
+      org: { label: 'Emergency Medical Service', short: 'EMS', logo: '../../core_factions/html/logos/ems.png' }, canNote: true, canManage: manage, admin: params.has('admin'), noteMax: 255, insuranceMaxDays: 365, diseases: Mock.DISEASES,
       characterId: params.has('empty') ? undefined : Number(params.get('id') || 256) });
   }
 })();

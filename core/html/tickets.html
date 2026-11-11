@@ -8,7 +8,7 @@
   EINGEHEND (Lua -> UI)
   ticket_open {
     mode: "player" | "admin",
-    colors: { base, ink, accent, signal, info },          // RGB-Kanaele als Text, z. B. "214 164 72"
+    colors: { base, ink, accent, signal, info },          // RGB-Kanaele als Text, z. B. "231 62 192"
     categories: { id: string, label: string }[],
     limits: { cooldown: number, minLength: number, maxLength: number },
     tickets?: Ticket[], cooldown?: number,                 // nur player
@@ -59,10 +59,10 @@
 */
 :root {
   /* Grundfarben, werden aus der Config ueberschrieben */
-  --rgb-base:   14 15 18;
-  --rgb-ink:    232 234 237;
-  --rgb-accent: 214 164 72;
-  --rgb-signal: 220 82 72;
+  --rgb-base:   16 17 20;
+  --rgb-ink:    255 245 236;
+  --rgb-accent: 231 62 192;
+  --rgb-signal: 244 67 54;
 
   --c-bg:         rgb(var(--rgb-base) / 0.97);
   --c-scrim:      rgb(var(--rgb-base) / 0.45);
@@ -1443,7 +1443,7 @@ Bridge.send('ui_ready', { ui: 'ticket', version: CONTRACT_VERSION });
 /* Nur im Browser: Beispieldaten laden. tickets.html#admin zeigt die Team-Ansicht, #new das Formular. */
 if (Bridge.platform === 'mock') {
   Mock.init();
-  const colors = { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72' };
+  const colors = { base: '16 17 20', ink: '255 245 236', accent: '231 62 192', signal: '244 67 54' };
   const categories = [{ id: 'question', label: 'Frage' }, { id: 'bug', label: 'Bug oder Fehler' }, { id: 'report', label: 'Regelverstoß melden' }, { id: 'other', label: 'Sonstiges' }];
   if (location.hash === '#admin') {
     Bridge.emit('ticket_open', { mode: 'admin', colors, categories, limits: DEFAULT_LIMITS, list: Mock.list(), selectId: 40 });

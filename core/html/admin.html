@@ -96,10 +96,10 @@
 <style>
 :root {
   /* Die 4 Grundfarben, werden aus der Config ueberschrieben */
-  --rgb-base:   14 15 18;
-  --rgb-ink:    232 234 237;
-  --rgb-accent: 214 164 72;
-  --rgb-signal: 220 82 72;
+  --rgb-base:   16 17 20;
+  --rgb-ink:    255 245 236;
+  --rgb-accent: 231 62 192;
+  --rgb-signal: 244 67 54;
 
   --c-bg:          rgb(var(--rgb-base) / 0.97);
   --c-scrim:       rgb(var(--rgb-base) / 0.45);
@@ -3539,7 +3539,7 @@ Bridge.send('ui_ready', { ui: 'admin', version: CONTRACT_VERSION });
 if (Bridge.platform === 'mock') {
   // Im Browser: vier Spieler, Akte von ID 12 mit Beispiel-Einträgen. Aktionen gehen erst nach "Admin-Dienst starten".
   Mock.push('admin_open', {
-    colors: { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72' },
+    colors: { base: '16 17 20', ink: '255 245 236', accent: '231 62 192', signal: '244 67 54' },
     currency: 'USD', serverName: 'Testserver', self: Mock.self, players: Mock.players, warningCount: 3,
     ticketsOpen: 2,
     // Befehlsliste aus der Core, Ansicht eines Junior Administrators

@@ -61,8 +61,10 @@ register('ems_records_open', function(source, data, rights)
         local def = DEFS[key]
         diseases[#diseases + 1] = { disease = key, label = def.label, stages = def.cure == 'treatment' and def.stages - 1 or def.stages }
     end
+    -- Name, Logo und Farben der Organisation, damit die Datenbank aussieht wie Leitstelle und Organisationsmenue
     return { ok = true, data = { canNote = rights.canNote, canManage = rights.canManage, admin = rights.admin or nil,
-        noteMax = CFG.Records.NoteMaxLength, insuranceMaxDays = CFG.Records.InsuranceMaxDays, diseases = diseases } }
+        noteMax = CFG.Records.NoteMaxLength, insuranceMaxDays = CFG.Records.InsuranceMaxDays, diseases = diseases,
+        org = Ems.Factions('GetOrg', CFG.Faction) } }
 end)
 
 register('ems_records_search', function(source, data)

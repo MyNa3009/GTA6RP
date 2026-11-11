@@ -1,4 +1,4 @@
--- Einstellungen der core_lib. Farben aus dem Server-Logo: Config.Lib.Colors fuer alle Fenster, das Menue hat eigene.
+-- Einstellungen der core_lib. Farben kommen aus Config.UI.Colors der Core, hier stehen nur Abweichungen.
 
 Config.Lib = {
     ------------------------------------------------------------------------
@@ -20,9 +20,9 @@ Config.Lib = {
             MaxAngle = 12,          -- so viele Grad neben der Bildmitte zaehlt noch als "angeschaut"
             IntervalMs = 150,       -- so oft wird das Blickziel gesucht (nur bei geschlossenem Menue)
             KeepTolerance = 1.0,    -- bei offenem Menue darf sich die Person so viele Meter weiter entfernen
-            Color = '232 64 190',   -- Farbe des Kreises als 'R G B' (Magenta aus dem Logo)
+            Color = '231 62 192',   -- Farbe des Kreises als 'R G B' (Magenta aus dem Logo)
             Alpha = 200,            -- Deckkraft 0 bis 255
-            VehicleColor = '232 64 190',  -- Farbe der Umrandung um das Fahrzeug
+            VehicleColor = '231 62 192',  -- Farbe der Umrandung um das Fahrzeug
             VehicleAlpha = 255,
             -- Bei offenem Menue bleibt das Fahrzeug Ziel bis zu diesem Abstand zur Fahrzeugmitte.
             -- Gilt auch fuer Tueren und Einsteigen von aussen.
@@ -61,26 +61,19 @@ Config.Lib = {
 
     ------------------------------------------------------------------------
     -- Farben aller Fenster der core_lib ausser dem Menue: Fortschritt, Minigames, Dialoge, TextUI.
-    -- Werte als 'R G B'. Fehlt ein Wert, gilt der aus Config.UI.Colors der Core.
+    -- Leer lassen: dann gelten die Farben des Servers aus Config.UI.Colors der Core.
+    -- Nur eintragen, was bewusst anders sein soll, als 'R G B': base, ink, accent, signal.
     ------------------------------------------------------------------------
-    Colors = {
-        base   = '24 15 36',     -- Hintergrund, Aubergine aus dem Logo
-        ink    = '253 241 233',  -- Text, Creme aus dem Logo
-        accent = '232 64 190',   -- Hauptaktion, Zielzone, Fortschritt (Magenta)
-        signal = '240 84 96',    -- Fehler, verfehlt, gefaehrliche Aktion (Korallrot, passt zum Magenta)
-    },
+    Colors = {},
 
     ------------------------------------------------------------------------
-    -- Aussehen des Menues (G-Menue und Kontextmenues). Werte als 'R G B', Farben aus dem Logo.
-    -- base oder ink weglassen: dann gelten Hintergrund und Schrift aus Config.UI.Colors der Core.
+    -- Aussehen des Menues (G-Menue und Kontextmenues).
+    -- Leer lassen: dann gelten die Farben des Servers aus Config.UI.Colors der Core.
+    -- Nur eintragen, was bewusst anders sein soll, als 'R G B': base, ink, accent (gewaehlte Kategorie),
+    -- mark (Ueberschrift der Liste, Icons, Hinweise).
     ------------------------------------------------------------------------
     Menu = {
-        Colors = {
-            base   = '24 15 36',     -- Hintergrund, das dunkle Aubergine aus dem Logo
-            ink    = '253 241 233',  -- Text, das Creme aus dem Logo
-            accent = '232 64 190',   -- gewaehlte Kategorie im Kreis (Magenta)
-            mark   = '244 152 105',  -- Ueberschrift der Liste, Icons, Hinweise (Pfirsich)
-        },
+        Colors = {},
     },
 
     ------------------------------------------------------------------------

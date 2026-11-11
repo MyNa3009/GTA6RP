@@ -266,6 +266,9 @@ check('Blick in die Akte und Verkäufe geloggt', {'records_view', 'sell', 'treat
 
 print('Akte korrigieren (Leitung und Admins)')
 o = E(1, 'ems_records_open')['data']
+check('Datenbank bekommt Name, Logo und Farben der Organisation',
+      o.get('org') and o['org']['short'] == 'EMS' and o['org']['logo'].endswith('logos/ems.png')
+      and o['org']['theme']['accent'] == '37 94 190' and o['org']['theme']['mark'] == '237 28 36', o.get('org'))
 check('Leader darf korrigieren, Liste der Krankheiten', o['canManage'] is True and len(o['diseases']) == 5, o)
 note = [e for e in E(1, 'ems_records_get', {'characterId': ids[2]})['data']['history'] if e['kind'] == 'note'][0]
 r = E(1, 'ems_records_entry', {'id': note['id'], 'text': 'Allergie gegen Penicillin und Ibuprofen.'})

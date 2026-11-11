@@ -1,10 +1,17 @@
-# Core 1.12.0 (Testserver)
+# Core 1.12.1 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.12.0
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. **Ein Farbstandard für alle UIs:** `Config.UI.Colors` in `shared/config.lua` enthält jetzt die Farben des Servers: neutraler dunkler Hintergrund (`base`), Creme (`ink`), Magenta (`accent`), Pfirsich als zweite Farbe (`mark`, neu) und Rot für Fehler (`signal`). Vorher stand dort noch Gold, und die Logo-Farben waren in `core_lib`, `core_ems` und `core_factions` einzeln kopiert.
+3. Der Hintergrund ist bewusst keine dunkle Version der Akzentfarbe mehr (kein Lila). Organisationen bringen ihre eigenen Farben mit, siehe `core_factions`.
+4. Wer eigene Farben in `Config.UI.Colors` eingetragen hatte, trägt sie nach dem Ersetzen wieder ein. Alle Core-UIs nehmen sie wie bisher beim Öffnen.
 
 ## Update von 1.11.1
 

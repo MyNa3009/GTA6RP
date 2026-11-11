@@ -1,6 +1,13 @@
-# core_factions 1.3.0
+# core_factions 1.3.1
 
 Organisationen für die eigene Core: Ränge, Rechte und Gehalt pro Rang, Divisionen, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Abteilungen mit eigenen Rängen, Prüfungen, Erklärungen, Leitstelle mit Suche, Bonus, Mitarbeiter-Archiv, Protokolle pro ID und eine Kasse. Alles läuft über das Organisationsmenü (in den Farben und mit dem Logo der Organisation) und das G-Menü. Als erste Organisation ist der Rettungsdienst (EMS) eingerichtet, LSPD und andere kommen später in dieselbe Config.
+
+## Update von 1.3.0
+
+1. Den Ordner `core_factions` ersetzen und neu starten. Keine Migration. Zusammen mit Core 1.12.1 einspielen.
+2. **Farben kommen aus der Core:** `Config.Factions.Colors` ist jetzt leer, die Grundfarben sind die des Servers aus `Config.UI.Colors`. Die Farben einer Organisation stehen weiter in ihrem `theme` und gelten für alle ihre UIs.
+3. `base` im `theme` ist freiwillig. Fehlt es, gilt der neutrale dunkle Hintergrund des Servers. Eine eigene Basis nur, wenn die Farbe einen ruhigen dunklen Hintergrund hergibt (das Dunkelblau des EMS bleibt).
+4. Der Export `GetOrg(faction)` liefert im `theme` zusätzlich `mark` (zweite Farbe der Organisation). `signal` bleibt wie bisher dieselbe Farbe.
 
 ## Update von 1.2.0
 
@@ -100,7 +107,7 @@ exports.core_factions:GetBalance('ems')
 exports.core_factions:Deposit('ems', 250, { actorSource = source, reason = 'Verkauf' })
 exports.core_factions:Withdraw('ems', 250, { actorSource = source, reason = 'Einkauf' })
 -- Eintrag im Protokoll (area: leitstelle, einsatz, datenbank, kasse, dienst, anpassung). Namen sucht das Script selbst.
-exports.core_factions:GetOrg('ems')                           -- { id, label, short, ranks, logo, theme = { base, ink, accent, signal } }
+exports.core_factions:GetOrg('ems')                           -- { id, label, short, ranks, logo, theme = { base, ink, accent, mark, signal } }
 exports.core_factions:AddProtocol('ems', { area = 'einsatz', action = 'revive', text = 'Hochgeholt', actorSource = source, target = permanenteId })
 
 -- Client

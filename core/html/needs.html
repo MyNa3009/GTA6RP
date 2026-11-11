@@ -26,10 +26,10 @@
   Dichte 8, Bewegung 1 (nur das Fuellen), Varianz 1.
 */
 :root {
-  --rgb-base:   14 15 18;
-  --rgb-ink:    232 234 237;
-  --rgb-accent: 214 164 72;
-  --rgb-signal: 220 82 72;
+  --rgb-base:   16 17 20;
+  --rgb-ink:    255 245 236;
+  --rgb-accent: 231 62 192;
+  --rgb-signal: 244 67 54;
 
   --c-bg:     rgb(var(--rgb-base) / 0.6);
   --c-track:  rgb(var(--rgb-ink) / 0.14);
@@ -252,7 +252,7 @@ Bridge.on('needs_close', () => {
 Bridge.send('ui_ready', { ui: 'needs', version: CONTRACT_VERSION });
 
 if (Bridge.platform === 'mock') {
-  Bridge.emit('needs_open', { colors: { base: '14 15 18', ink: '232 234 237', accent: '214 164 72', signal: '220 82 72' }, lowAt: 20 });
+  Bridge.emit('needs_open', { colors: { base: '16 17 20', ink: '255 245 236', accent: '231 62 192', signal: '244 67 54' }, lowAt: 20 });
   Bridge.emit('needs_update', { hunger: 64, thirst: 14 });
 }
 </script>

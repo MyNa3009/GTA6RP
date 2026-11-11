@@ -5,13 +5,10 @@
 Config.Ems = {
     Faction = 'ems',
 
-    -- Farben der Medizinischen Datenbank als 'R G B' (aus dem Server-Logo). Fehlt ein Wert, gilt Config.UI.Colors der Core.
-    Colors = {
-        base   = '24 15 36',
-        ink    = '253 241 233',
-        accent = '232 64 190',
-        signal = '240 84 96',
-    },
+    -- Farben der Medizinischen Datenbank. Leer lassen: dann gelten die Farben der Organisation (theme in
+    -- core_factions/config.lua) und fuer alles, was dort fehlt, Config.UI.Colors der Core.
+    -- Nur eintragen, was bewusst anders sein soll, als 'R G B': base, ink, accent, signal.
+    Colors = {},
 
     -- Rechte, die core_ems bei core_factions anmeldet. minRank: ab diesem Rang, bis die Leitung es im Menue aendert.
     Permissions = {
