@@ -45,26 +45,42 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
 
 <style>
 /*
-  Oberflaechentyp: Explore (Inventar). Vollbild, dunkel, graue Kacheln, Aktionen per Rechtsklick.
-  Dichte 7, Bewegung 2 (per Taste geoeffnet, sehr oft), Varianz 3.
-  Farbe nur fuer Auswahl, Ziel beim Ziehen und Fehler. Alles andere sind Graustufen aus --rgb-ink.
+  Oberflaechentyp: Explore (Inventar). Vollbild, Aktionen per Rechtsklick.
+  Dichte 7, Bewegung 2 (per Taste geoeffnet, sehr oft), Varianz 3, Ausdruck 7.
+
+  Richtung
+  Zweck:     Sachen ansehen, verschieben, benutzen, anziehen.
+  Charakter: warm, griffig, nachts.
+  Welt:      Vice RP bei Sonnenuntergang, Taschen und Rucksack.
+  Highlight: das Gewicht als Balken im Marken-Verlauf unter Taschen und Rucksack.
+  Signatur:  kurze Verlaufslinie vor jedem Abschnittstitel, wie im Logo vor "Roleplay".
+  Form:      rund (Kacheln 10, Tasten 4).
+  Buehne:    Marken-Schein in zwei Ecken ueber dem abgedunkelten Spielbild.
+
+  Feste Plaetze der Farbe: Gewichtsbalken, Signatur, Auswahl, Ziel beim Ziehen, Geldbetrag. Der Rest sind
+  Stufen aus --rgb-ink. Belegte Kacheln sind heller als leere, damit man den Inhalt sofort sieht.
 */
 :root {
   /* Grundfarben, werden aus der Config der Core ueberschrieben */
   --rgb-base:   16 17 20;
   --rgb-ink:    255 245 236;
   --rgb-accent: 231 62 192;
+  --rgb-mark:   244 154 102;
   --rgb-signal: 244 67 54;
 
   --c-screen:      rgb(var(--rgb-base) / 0.9);
   --c-strip:       rgb(var(--rgb-ink) / 0.05);
-  --c-slot:        rgb(var(--rgb-ink) / 0.06);
-  --c-slot-hover:  rgb(var(--rgb-ink) / 0.1);
-  --c-slot-line:   rgb(var(--rgb-ink) / 0.07);
+  --c-line:        rgb(var(--rgb-ink) / 0.1);
+  --c-slot:        rgb(var(--rgb-ink) / 0.035);
+  --c-slot-filled: rgb(var(--rgb-ink) / 0.09);
+  --c-slot-hover:  rgb(var(--rgb-ink) / 0.13);
+  --c-slot-line:   rgb(var(--rgb-ink) / 0.06);
+  --c-slot-line-filled: rgb(var(--rgb-ink) / 0.15);
+  --c-slot-shine:  rgb(var(--rgb-ink) / 0.08);
   --c-text:        rgb(var(--rgb-ink) / 0.94);
   --c-text-2:      rgb(var(--rgb-ink) / 0.72);
   --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
@@ -73,18 +89,35 @@
   --c-on-badge:    rgb(var(--rgb-base));
   --c-accent:      rgb(var(--rgb-accent));
   --c-accent-soft: rgb(var(--rgb-accent) / 0.16);
+  --c-accent-line: rgb(var(--rgb-accent) / 0.6);
+  --c-mark:        rgb(var(--rgb-mark));
   --c-signal:      rgb(var(--rgb-signal));
   --c-menu:        rgb(var(--rgb-base) / 0.98);
   --c-menu-line:   rgb(var(--rgb-ink) / 0.12);
 
   --shadow-float: 0 12px 32px rgb(var(--rgb-base) / 0.7);
 
+  /* Marke: Verlauf wie im Schriftzug, Buehne in zwei Ecken, Schein nur an der Auswahl */
+  --grad-brand: linear-gradient(90deg, rgb(var(--rgb-accent)), rgb(var(--rgb-mark)));
+  --grad-stage:
+    radial-gradient(70% 60% at 0% 0%, rgb(var(--rgb-accent) / 0.2), transparent 70%),
+    radial-gradient(60% 55% at 100% 100%, rgb(var(--rgb-mark) / 0.13), transparent 70%);
+  --glow-select: inset 0 0 18px rgb(var(--rgb-accent) / 0.42);
+
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
-  --radius-sm: 4px; --radius-md: 8px;
+  --radius-sm: 4px; --radius-md: 8px; --radius-slot: 10px;
 
   --fs-xs: clamp(10px, 0.55vw, 12px);
   --fs-sm: clamp(11px, 0.62vw, 13px);
   --fs-md: clamp(13px, 0.72vw, 15px);
+  --fs-display: clamp(26px, 2.2vw, 44px);
+  --ls-label: 0.08em;
+  --ls-display: -0.01em;
+
+  --sign-w: 16px; --sign-h: 3px;   /* Signatur: Verlaufslinie vor Titeln */
+  --meter-h: 4px;
+  --page-x: clamp(24px, 3vw, 64px);
+  --page-top: clamp(16px, 2.6vh, 32px);
 
   --dur-fast: 100ms; --dur-hud: 180ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -126,11 +159,30 @@ svg { display: block; }
   inset: 0;
   z-index: var(--z-screen);
   display: grid;
-  grid-template-rows: 1fr auto;
-  background: var(--c-screen);
+  grid-template-rows: auto 1fr auto;
+  background: var(--grad-stage), var(--c-screen);
   outline: none;
 }
 .screen[hidden] { display: none; }
+
+/* Kopfzeile: der eine Display-Titel der Ansicht, darunter die Signatur */
+.head { padding: var(--page-top) var(--page-x) 0; }
+.head__title {
+  font-size: var(--fs-display);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: var(--ls-display);
+  text-transform: uppercase;
+}
+.head__title::after {
+  content: '';
+  display: block;
+  width: calc(var(--sign-w) * 3);
+  height: var(--sign-h);
+  margin-top: var(--space-2);
+  border-radius: var(--sign-h);
+  background: var(--grad-brand);
+}
 
 .layout {
   display: grid;
@@ -139,7 +191,7 @@ svg { display: block; }
   align-items: start;
   gap: var(--column-gap);
   min-height: 0;
-  padding: var(--space-5) var(--space-5) 0;
+  padding: var(--space-4) var(--space-5) 0;
 }
 
 .left { display: flex; gap: calc(var(--gap) * 2.5); align-items: flex-start; }
@@ -164,22 +216,43 @@ svg { display: block; }
 .other__note { font-size: var(--fs-xs); color: var(--c-text-muted); }
 .other__note:empty { display: none; }
 
-/* Kopfleiste ueber jedem Raster */
+/* Kopf ueber jedem Raster: Etikett mit Signatur links, Wert rechts, darunter eine Linie.
+   Bei Taschen, Rucksack und fremden Inventaren ist die Linie der Gewichtsbalken. */
 .strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 1fr auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  height: var(--strip);
+  margin-bottom: var(--gap);
+}
+.strip::after {
+  content: '';
+  grid-column: 1 / -1;
+  height: 1px;
+  background: var(--c-line);
+}
+.strip--meter::after { display: none; }
+.strip__title {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  height: var(--strip);
-  padding: 0 var(--space-3);
-  margin-bottom: var(--gap);
-  border-radius: var(--radius-sm);
-  background: var(--c-strip);
-}
-.strip__title {
+  gap: var(--space-2);
+  min-width: 0;
   font-size: var(--fs-xs);
   font-weight: 700;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
   color: var(--c-text-2);
+  white-space: nowrap;
+}
+.strip__title::before {
+  content: '';
+  flex: none;
+  width: var(--sign-w);
+  height: var(--sign-h);
+  border-radius: var(--sign-h);
+  background: var(--grad-brand);
 }
 .strip__meta {
   font-size: var(--fs-sm);
@@ -188,6 +261,21 @@ svg { display: block; }
   white-space: nowrap;
 }
 .strip__meta[data-full] { color: var(--c-signal); }
+.meter {
+  grid-column: 1 / -1;
+  height: var(--meter-h);
+  border-radius: var(--meter-h);
+  background: var(--c-line);
+  overflow: hidden;
+}
+.meter__fill {
+  height: 100%;
+  background: var(--grad-brand);
+  transform-origin: left center;
+  transform: scaleX(var(--fill, 0));
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.strip__meta[data-full] ~ .meter .meter__fill { background: var(--c-signal); }
 .strip__meta--quiet { font-weight: 600; text-transform: none; color: var(--c-text-muted); font-size: var(--fs-xs); }
 
 /* Schnellzugriff: eigene Spalte links */
@@ -198,8 +286,11 @@ svg { display: block; }
   place-items: center;
   font-size: var(--fs-xs);
   font-weight: 700;
-  line-height: 1.15;
+  line-height: 1.2;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
   text-align: center;
+  color: var(--c-text-2);
   white-space: pre-line;
 }
 .quick__list { display: flex; flex-direction: column; gap: var(--gap); padding-left: calc(var(--badge) * 0.6); }
@@ -213,9 +304,10 @@ svg { display: block; }
   place-items: center;
   width: calc(var(--badge) * 0.8);
   height: var(--badge);
+  border: 1px solid var(--c-menu-line);
   border-radius: var(--radius-sm);
-  background: var(--c-badge);
-  color: var(--c-on-badge);
+  background: rgb(var(--rgb-base));
+  color: var(--c-text);
   font-size: var(--fs-xs);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -237,17 +329,36 @@ svg { display: block; }
   height: var(--slot);
   padding: 0;
   border: 1px solid var(--c-slot-line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-slot);
   background: var(--c-slot);
   overflow: hidden;
   cursor: default;
   touch-action: none;
-  transition: background-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
-.slot[data-filled] { cursor: grab; }
+/* Schein der Auswahl: liegt innen, weil die Kachel ihren Inhalt beschneidet. Nur die Deckkraft wechselt. */
+.slot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--glow-select);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.slot[data-filled] {
+  cursor: grab;
+  border-color: var(--c-slot-line-filled);
+  background: var(--c-slot-filled);
+  box-shadow: inset 0 1px 0 var(--c-slot-shine);
+}
 .slot:hover { background: var(--c-slot-hover); }
+.slot[data-filled]:hover { border-color: var(--c-accent-line); transform: translateY(-2px); }
+.slot[data-filled]:active { transform: scale(0.97); }
 .slot:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
-.slot[aria-pressed="true"] { border-color: var(--c-accent); }
+.slot[aria-pressed="true"] { border-color: var(--c-accent); background: var(--c-accent-soft); }
+.slot[aria-pressed="true"]::after { opacity: 1; }
 .slot[data-target] { border-color: var(--c-accent); background: var(--c-accent-soft); }
 .slot[data-dragging] { opacity: 0.3; }
 .slot[data-locked] { cursor: not-allowed; }
@@ -268,8 +379,10 @@ svg { display: block; }
   font-size: var(--slot-font);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  color: var(--c-text-2);
   pointer-events: none;
 }
+.slot__count--money { color: var(--c-mark); }
 .slot__name {
   position: absolute;
   left: calc(var(--slot) * 0.08);
@@ -355,6 +468,7 @@ svg { display: block; }
   padding: 2px var(--space-2);
   border: 1px solid var(--c-menu-line);
   border-radius: var(--radius-sm);
+  background: var(--c-strip);
   font-weight: 700;
   color: var(--c-text);
 }
@@ -493,6 +607,7 @@ svg { display: block; }
 }
 .hud .slot { background: rgb(var(--rgb-base) / 0.82); border-color: rgb(var(--rgb-ink) / 0.10); }
 .hud .slot[aria-current="true"] { border-color: var(--c-accent); }
+.hud .slot[aria-current="true"]::after { opacity: 1; }
 .hud .slot__name { display: none; }
 .hud__key {
   position: absolute;
@@ -691,12 +806,17 @@ svg { display: block; }
 
 @media (prefers-reduced-motion: reduce) {
   .menu, .hud, .doc { animation: none; }
+  .slot, .slot::after, .meter__fill { transition: none; }
+  .slot[data-filled]:hover, .slot[data-filled]:active { transform: none; }
 }
 </style>
 </head>
 <body>
 
-<div class="screen" id="screen" hidden tabindex="-1" role="dialog" aria-modal="true" aria-label="Inventar">
+<div class="screen" id="screen" hidden tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="title">
+  <header class="head">
+    <h1 class="head__title" id="title"></h1>
+  </header>
   <main class="layout">
     <div class="left">
       <section class="quick" aria-labelledby="quick-title">
@@ -706,17 +826,19 @@ svg { display: block; }
 
       <div class="middle">
         <section aria-labelledby="pocket-title">
-          <div class="strip">
+          <div class="strip strip--meter">
             <h2 class="strip__title" id="pocket-title"></h2>
             <span class="strip__meta" id="pocket-weight"></span>
+            <div class="meter" aria-hidden="true"><div class="meter__fill"></div></div>
           </div>
           <div class="grid" id="pocket"></div>
         </section>
 
         <section aria-labelledby="bag-title">
-          <div class="strip">
+          <div class="strip strip--meter">
             <h2 class="strip__title" id="bag-title"></h2>
             <span class="strip__meta" id="bag-weight"></span>
+            <div class="meter" aria-hidden="true"><div class="meter__fill"></div></div>
           </div>
           <div class="grid" id="bag"></div>
         </section>
@@ -750,16 +872,18 @@ svg { display: block; }
 
       <div class="other" id="other" hidden>
         <section aria-labelledby="other-title">
-          <div class="strip">
+          <div class="strip strip--meter">
             <h2 class="strip__title" id="other-title"></h2>
             <span class="strip__meta" id="other-weight"></span>
+            <div class="meter" aria-hidden="true"><div class="meter__fill"></div></div>
           </div>
           <div class="grid" id="other-grid"></div>
         </section>
         <section id="other-bag-section" aria-labelledby="other-bag-title">
-          <div class="strip">
+          <div class="strip strip--meter">
             <h2 class="strip__title" id="other-bag-title"></h2>
             <span class="strip__meta" id="other-bag-weight"></span>
+            <div class="meter" aria-hidden="true"><div class="meter__fill"></div></div>
           </div>
           <div class="grid" id="other-bag"></div>
         </section>
@@ -887,6 +1011,7 @@ const Mock = {
 
 <script id="app">
 const TEXT = {
+  title: 'Inventar',
   quick: 'Schnell-\nzugriff',
   pocket: 'Taschen',
   bag: 'Rucksack',
@@ -1003,7 +1128,7 @@ const CARD_TEXT = {
 };
 
 const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
-const COLOR_KEYS = ['base', 'ink', 'accent', 'signal'];
+const COLOR_KEYS = ['base', 'ink', 'accent', 'mark', 'signal'];
 const GRAMS_PER_KG = 1000;
 const DRAG_THRESHOLD_PX = 5;
 const TIP_DELAY_MS = 280;
@@ -1038,6 +1163,7 @@ const missingImages = new Set();
 const $ = (id) => document.getElementById(id);
 const el = {
   screen: $('screen'), foot: $('foot'),
+  title: $('title'),
   quick: $('quick'), quickTitle: $('quick-title'),
   pocket: $('pocket'), pocketTitle: $('pocket-title'), pocketWeight: $('pocket-weight'),
   bag: $('bag'), bagTitle: $('bag-title'), bagWeight: $('bag-weight'),
@@ -1138,7 +1264,7 @@ function itemContent(node, entry) {
   if (item.document) countText = docBadge(entry.meta || {});
   else if (item.money) countText = TEXT.money(entry.count);
   else if (ammo !== undefined && ammo !== null) countText = TEXT.rounds(ammo);
-  node.append(make('span', 'slot__count', countText));
+  node.append(make('span', item.money ? 'slot__count slot__count--money' : 'slot__count', countText));
   const fallback = () => make('span', 'slot__fallback', (labelOf(entry) || '?').charAt(0).toUpperCase());
   if (missingImages.has(entry.name)) {
     node.append(fallback());
@@ -1215,9 +1341,18 @@ function renderGrid(node, inv, from, to, cols, options = {}) {
   node.replaceChildren(...slots);
 }
 
+// Balken unter dem Abschnittstitel: Anteil des Gewichts, 0 bis 1. Nur transform, kein Layout.
+function renderMeter(meta, now, max) {
+  const fill = meta.parentElement.querySelector('.meter__fill');
+  if (!fill) return;
+  const part = max > 0 ? Math.min(1, Math.max(0, now / max)) : 0;
+  fill.style.setProperty('--fill', String(part));
+}
+
 function renderWeight(meta, now, max) {
   setText(meta, TEXT.weight(formatKg(now), formatKg(max)));
   meta.toggleAttribute('data-full', max > 0 && now >= max);
+  renderMeter(meta, Number(now) || 0, Number(max) || 0);
 }
 
 function renderEquip() {
@@ -1286,10 +1421,12 @@ function render() {
     renderGrid(el.bag, 'bag', 1, state.layout.bagSlots, POCKET_COLS, { openUpTo: open });
     setText(el.bagWeight, TEXT.bagMeta(state.inv.bagLevel, formatKg(state.inv.bagWeight), formatKg(state.inv.bagMaxWeight)));
     el.bagWeight.toggleAttribute('data-full', state.inv.bagMaxWeight > 0 && state.inv.bagWeight >= state.inv.bagMaxWeight);
+    renderMeter(el.bagWeight, Number(state.inv.bagWeight) || 0, Number(state.inv.bagMaxWeight) || 0);
   } else {
     renderGrid(el.bag, 'bag', 1, state.layout.bagSlots, POCKET_COLS, { locked: true });
     setText(el.bagWeight, TEXT.bagLocked);
     el.bagWeight.removeAttribute('data-full');
+    renderMeter(el.bagWeight, 0, 0);
   }
 
   renderEquip();
@@ -1909,6 +2046,7 @@ Bridge.on('inv_document', (data) => {
 
 /* ---------- Feste Texte ---------- */
 
+setText(el.title, TEXT.title);
 setText(el.quickTitle, TEXT.quick);
 setText(el.pocketTitle, TEXT.pocket);
 setText(el.bagTitle, TEXT.bag);
@@ -1990,7 +2128,7 @@ if (Bridge.platform === 'mock') {
     },
   };
   const other = others[location.hash] || null;
-  const colors = { base: '16 17 20', ink: '255 245 236', accent: '231 62 192', signal: '244 67 54' };
+  const colors = { base: '16 17 20', ink: '255 245 236', accent: '231 62 192', mark: '244 154 102', signal: '244 67 54' };
   // Im Browser gibt es kein Kopfbild aus dem Spiel, darum eine schlichte Silhouette
   const photo = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 40"><rect width="30" height="40" fill="#8b8f96"/><circle cx="15" cy="15" r="7" fill="#d9dadc"/><path d="M3 40c1-9 6-13 12-13s11 4 12 13z" fill="#d9dadc"/></svg>')}`;
   const person = { firstname: 'Mira', lastname: 'Brandt', dateOfBirth: '1998-07-14', gender: 'female', number: 17, issuer: 'State of San Andreas' };

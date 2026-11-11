@@ -1,6 +1,16 @@
-# core_inventory 1.4.0
+# core_inventory 1.5.0
 
 Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in der Hand, Rucksack mit eigenem Inhalt, Schnellzugriff, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`. Eigene Resource, damit man sie neu starten kann, ohne dass alle aus dem Spiel fliegen.
+
+## Update von 1.4.0
+
+1. Den Ordner `core_inventory` ersetzen und neu starten. Keine Migration. Zusammen mit Core 1.12.1 einspielen, damit die Farben des Servers ankommen.
+2. **Neues Aussehen des Inventars**, Aufbau und Bedienung bleiben gleich:
+   - Großer Titel oben links und ein Schein in den Farben des Servers hinter dem Fenster.
+   - Das Gewicht von Taschen, Rucksack, Kofferraum und fremden Inventaren steht als Balken im Verlauf der Serverfarben unter dem Abschnitt. Ist es voll, wird der Balken rot.
+   - Belegte Plätze sind heller als leere. Der gewählte Platz ist in der Akzentfarbe getönt und leuchtet, beim Drüberfahren hebt sich ein Item leicht an.
+   - Abschnittstitel haben eine kurze Verlaufslinie davor, Geldbeträge stehen in der zweiten Farbe (`mark`).
+3. Das Inventar nimmt jetzt auch `mark` aus `Config.UI.Colors` der Core. Alle Farben bleiben über die Config änderbar.
 
 ## Update von 1.3.0
 
