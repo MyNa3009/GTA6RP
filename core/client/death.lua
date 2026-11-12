@@ -1,5 +1,11 @@
 -- Bewusstlosigkeit: liegen bleiben, Countdown, Taste halten fuers Krankenhaus.
 -- Die Zeit prueft der Server, der Client zeigt nur an.
+--
+-- Zusatzaktion (seit Core 1.15.0): Eine andere Resource kann eine zweite Taste anmelden, z. B. core_dispatch den Notruf.
+-- Die Core kennt nur Taste und Text. Was beim Druecken passiert, entscheidet die Resource:
+--   exports.core:SetDeathAction({ label = 'Notruf absenden', pendingNote = 'Notruf wird gesendet…', hideWhenHospitalOnly = true })
+--   lokales Ereignis 'core:death:action', wenn die Taste gedrueckt wurde (die Taste ist danach gesperrt)
+--   exports.core:UpdateDeathAction({ label = ..., note = ..., enabled = true/false }) mit dem Ergebnis
 
 Death = {}
 
@@ -8,7 +14,29 @@ local dying = {
     readyAt = 0,       -- Spielzeit in ms, ab der das Krankenhaus erlaubt ist
     holdStart = nil,   -- Spielzeit in ms, seit der die Taste gehalten wird
     requesting = false,
+    extra = nil,       -- Zusatzaktion fuer diese Bewusstlosigkeit: { label, note, enabled }
+    extraDown = false, -- Taste war im letzten Frame gedrueckt (nur der Druck zaehlt, nicht das Halten)
 }
+
+-- Angemeldete Zusatzaktion: { label, pendingNote, hideWhenHospitalOnly } oder nil
+local extraAction = nil
+local EXTRA_LABEL_MAX = 40
+local EXTRA_NOTE_MAX = 120
+
+local function extraText(value, max)
+    if type(value) ~= 'string' or value == '' then
+        return nil
+    end
+    return value:sub(1, max)
+end
+
+-- Fuer die UI: nil, wenn es gerade keine Zusatzaktion gibt
+local function extraPayload()
+    if not dying.extra then
+        return nil
+    end
+    return { keyLabel = Platform.GetActionLabel('emergency'), label = dying.extra.label, note = dying.extra.note, enabled = dying.extra.enabled }
+end
 
 local MS_PER_SECOND = 1000
 local function screenEffect(on)
@@ -28,6 +56,8 @@ function Death.Reset()
     dying.active = false
     dying.holdStart = nil
     dying.requesting = false
+    dying.extra = nil
+    dying.extraDown = false
     Client.state.dead = false
     Client.uiClose('death', 'death_close')
 end
@@ -56,6 +86,18 @@ local function holdLoop()
     while dying.active do
         Platform.Wait(0)
         local now = Platform.GetTime()
+
+        -- Zusatzaktion: ein Druck loest aus, danach ist die Taste gesperrt, bis die Resource das Ergebnis meldet
+        if dying.extra then
+            local pressed = Platform.IsActionPressed('emergency')
+            if pressed and not dying.extraDown and dying.extra.enabled then
+                dying.extra.enabled = false
+                dying.extra.note = extraAction and extraAction.pendingNote or nil
+                Platform.UiSend('death_update', { extra = extraPayload() })
+                Platform.Emit('core:death:action')
+            end
+            dying.extraDown = pressed
+        end
 
         if not dying.requesting and now >= dying.readyAt then
             if Platform.IsActionPressed('respawn') then
@@ -90,6 +132,11 @@ Platform.OnDeath(function(info)
     local seconds = data.respawnInSeconds or Config.Death.HospitalAfterSeconds
     setReadyIn(seconds)
 
+    dying.extra, dying.extraDown = nil, false
+    if extraAction and not (extraAction.hideWhenHospitalOnly and data.hospitalOnly == true) then
+        dying.extra = { label = extraAction.label, enabled = true }
+    end
+
     screenEffect(true)
     Client.uiOpen('death', 'death_open', {
         colors = Config.UI.Colors,
@@ -100,9 +147,37 @@ Platform.OnDeath(function(info)
         cause = data.collapseReason or WeaponLabel(info.weapon),
         killerId = tonumber(data.killerId),
         hospitalOnly = data.hospitalOnly == true,
+        extra = extraPayload(),
     }, false)
 
     holdLoop()
+end)
+
+-- Zusatzaktion anmelden oder mit nil wieder abmelden. Gilt ab der naechsten Bewusstlosigkeit.
+Platform.Export('SetDeathAction', function(action)
+    local label = type(action) == 'table' and extraText(action.label, EXTRA_LABEL_MAX)
+    if not label then
+        extraAction = nil
+        return false
+    end
+    extraAction = { label = label, pendingNote = extraText(action.pendingNote, EXTRA_NOTE_MAX), hideWhenHospitalOnly = action.hideWhenHospitalOnly == true }
+    return true
+end)
+
+-- Ergebnis der Zusatzaktion anzeigen: { label?, note?, enabled? }. Nur solange man bewusstlos ist.
+Platform.Export('UpdateDeathAction', function(patch)
+    if not dying.active or not dying.extra or type(patch) ~= 'table' then
+        return false
+    end
+    dying.extra.label = extraText(patch.label, EXTRA_LABEL_MAX) or dying.extra.label
+    if patch.note ~= nil then
+        dying.extra.note = extraText(patch.note, EXTRA_NOTE_MAX)
+    end
+    if patch.enabled ~= nil then
+        dying.extra.enabled = patch.enabled == true
+    end
+    Platform.UiSend('death_update', { extra = extraPayload() })
+    return true
 end)
 
 -- Vom Server: Rettungsdienst, Admin oder /revive

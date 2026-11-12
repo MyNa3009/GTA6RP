@@ -202,6 +202,7 @@ local ACTIONS = {
     respawn       = { control = 38, label = 'E' },      -- INPUT_PICKUP
     cancel        = { control = 73, label = 'X' },      -- INPUT_VEH_DUCK, Abbrechen (z. B. Fortschrittsbalken der core_lib)
     interact      = { control = 38, label = 'E' },      -- INPUT_PICKUP, an einem Punkt etwas tun (seit Core 1.10.0)
+    emergency     = { control = 74, label = 'H' },      -- INPUT_VEH_HEADLIGHT, Zusatzaktion im Bewusstlos-Bildschirm (seit Core 1.15.0). Nicht G: das ist das G-Menue.
 }
 local CONTROL_GROUP = 0
 

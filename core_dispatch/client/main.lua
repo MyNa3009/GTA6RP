@@ -1,10 +1,10 @@
--- core_dispatch im Client: /dispatch (Notruf oder Formular), /mdt, /status, Tasten, G-Menue, Alarm am Bildschirmrand,
+-- core_dispatch im Client: /dispatch (Notruf oder Formular), /mdt, /status, Tasten, G-Menue, Notruf im Bewusstlos-Bildschirm, Alarm am Bildschirmrand,
 -- Blips und Route zu Einsaetzen. Werte hier sind nur Anzeige (Entfernung, Ortsname). Der Server entscheidet alles.
 
--- Braucht Core 1.12.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
-local REQUIRED_CORE = '1.12.0'
+-- Braucht Core 1.15.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
+local REQUIRED_CORE = '1.15.0'
 local missingBridge = {}
-for _, name in ipairs({ 'AddBlip', 'Async', 'Emit', 'GetLocationName', 'GetOwnPosition', 'IsPauseMenuOpen', 'OnEvent',
+for _, name in ipairs({ 'AddBlip', 'Async', 'CallExport', 'Emit', 'GetLocationName', 'GetOwnPosition', 'IsPauseMenuOpen', 'OnEvent',
     'PlayUiSound', 'Print', 'RegisterClientCommand', 'RegisterKeyCommand', 'RemoveBlip', 'SetBlipRoute', 'SetWaypoint',
     'UiFocus', 'UiOn', 'UiSend', 'Wait', 'GetResourceName' }) do
     if type(Platform[name]) ~= 'function' then
@@ -358,6 +358,36 @@ end)
 Platform.RegisterKeyCommand(CFG.Commands.Mdt, 'MDT öffnen (Leitstelle)', CFG.Keys.Mdt, function(args)
     openMdt(args and args[1])
 end)
+
+-- Bewusstlos-Bildschirm der Core: zweite Taste "Notruf absenden". Die Core meldet den Druck mit 'core:death:action'
+-- und sperrt die Taste, bis hier das Ergebnis steht. Ob bewusstlos und welche Prioritaet, prueft der Server selbst.
+local DOWN_CALL_TEXT = type(CFG.DownCallText) == 'string' and CFG.DownCallText or ''
+if DOWN_CALL_TEXT ~= '' then
+    local registered = Platform.CallExport('core', 'SetDeathAction', {
+        label = 'Notruf absenden',
+        pendingNote = 'Notruf wird gesendet…',
+        hideWhenHospitalOnly = true,
+    })
+    if registered ~= true then
+        Platform.Print('warn', ('core_dispatch: Die Notruf-Taste im Bewusstlos-Bildschirm braucht Core %s. Ohne sie geht der Notruf weiter mit /dispatch.'):format(REQUIRED_CORE))
+    end
+    Platform.OnEvent('core:death:action', function()
+        Platform.Async(function()
+            local result = Network.Call('dispatch_send', { text = DOWN_CALL_TEXT, location = ownLocation() })
+            if result and result.ok and result.data then
+                local data = result.data
+                local note = data.units > 0
+                    and ('Notruf %s ist beim %s. %d %s im Dienst.'):format(data.number, data.service, data.units, data.units == 1 and 'Einheit' or 'Einheiten')
+                    or ('Notruf %s bleibt offen. Gerade ist niemand vom %s im Dienst.'):format(data.number, data.service)
+                Platform.CallExport('core', 'UpdateDeathAction', { label = 'Notruf gesendet', note = note, enabled = false })
+                return
+            end
+            -- Schon ein offener Notruf: nicht noch einmal anbieten. Sonst darf man es wieder versuchen.
+            local open = result and result.error == 'too_many_open'
+            Platform.CallExport('core', 'UpdateDeathAction', { note = errorText(result), enabled = not open })
+        end)
+    end)
+end
 
 -- G-Menue: Organisation/MDT. Nur Einheiten im Dienst sehen den Eintrag, alle anderen gar nicht.
 -- Ob man das MDT wirklich oeffnen darf, prueft wie immer der Server (dispatch_mdt_open).

@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_dispatch'
 description 'Notrufe und MDT fuer die eigene Core: Notruf per /dispatch, Einsaetze annehmen, FMS-Status, Leitstelle, Archiv'
-version '1.1.0'
+version '1.2.0'
 
 dependencies {
     'core',

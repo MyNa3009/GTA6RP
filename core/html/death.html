@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   UI: Bewusstlos-Anzeige
-  CONTRACT_VERSION: 3
+  CONTRACT_VERSION: 4
   Reine Anzeige ohne Maus- und Tastaturfokus. Die Taste liest Lua direkt aus dem Spiel.
 
   EINGEHEND (Server -> UI)
@@ -13,13 +13,15 @@
     keyLabel: string,       // z. B. "E"
     cause?: string,         // Todesursache aus data/weapons_gta5.lua, z. B. "Pistole" oder "Sturz"
     killerId?: number,      // permanente ID des Spielers, der getoetet hat. Fehlt ohne Spieler (Sturz, eigene Schuld)
-    hospitalOnly?: boolean  // Zusammenbruch (z. B. Krankheit): Hochholen vor Ort geht nicht, nur das Krankenhaus
+    hospitalOnly?: boolean, // Zusammenbruch (z. B. Krankheit): Hochholen vor Ort geht nicht, nur das Krankenhaus
+    extra?: { keyLabel: string, label: string, note?: string, enabled: boolean }  // Zusatzaktion einer anderen Resource,
+                            // z. B. "G Notruf absenden" von core_dispatch. Fehlt, wenn keine angemeldet ist.
   }
-  death_update { secondsLeft?: number, holding?: boolean, error?: string }
+  death_update { secondsLeft?: number, holding?: boolean, error?: string, extra?: { keyLabel, label, note?, enabled } }
   death_close  {}
 
   AUSGEHEND (UI -> Server)
-  ui_ready     { ui: "death", version: 3 }
+  ui_ready     { ui: "death", version: 4 }
 
   FEHLERCODES (in death_update.error)
   not_dead, too_early, no_character, server_error, timeout
@@ -293,6 +295,35 @@ html, body {
   font-weight: 700;
 }
 
+/* Zusatzaktion: freier Text mit Taste, kein zweiter Button. Der Hinweis darunter nennt das Ergebnis. */
+.extra {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+}
+.extra[hidden] { display: none; }
+.extra__line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text);
+  text-shadow: var(--shadow-text);
+}
+.extra[data-enabled="false"] .extra__line { color: var(--c-text-muted); }
+.extra[data-enabled="false"] .key { opacity: 0.45; }
+.extra__note {
+  max-width: var(--text-width);
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--c-text-muted);
+  text-wrap: balance;
+}
+.extra__note:empty { display: none; }
+
 .error {
   min-height: 1.3em;
   margin: 0;
@@ -415,6 +446,10 @@ html, body {
         <span class="action__fill"></span>
         <span id="action-label"></span>
       </div>
+      <div class="extra" id="extra" hidden>
+        <p class="extra__line"><kbd class="key" id="extra-key"></kbd><span id="extra-label"></span></p>
+        <p class="extra__note" id="extra-note"></p>
+      </div>
       <p class="error" id="error"></p>
     </section>
 
@@ -442,7 +477,7 @@ html, body {
 </div>
 
 <script id="bridge">
-const CONTRACT_VERSION = 3;
+const CONTRACT_VERSION = 4;
 
 const Bridge = (() => {
   const handlers = {};
@@ -534,6 +569,7 @@ const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 const DEFAULT_HOLD_MS = 1500;
 const DEFAULT_KEY = 'E';
+const DEFAULT_EXTRA_KEY = 'H';
 
 const state = {
   open: false,
@@ -543,6 +579,7 @@ const state = {
   holding: false,
   keyLabel: DEFAULT_KEY,
   error: '',
+  extra: null,      // Zusatzaktion: { keyLabel, label, note, enabled } oder null
   rendered: { ready: null, holding: null },
 };
 
@@ -554,6 +591,10 @@ const el = {
   action: document.getElementById('action'),
   actionLabel: document.getElementById('action-label'),
   error: document.getElementById('error'),
+  extra: document.getElementById('extra'),
+  extraKey: document.getElementById('extra-key'),
+  extraLabel: document.getElementById('extra-label'),
+  extraNote: document.getElementById('extra-note'),
   cause: document.getElementById('cause'),
   killerRow: document.getElementById('killer-row'),
   killer: document.getElementById('killer'),
@@ -616,6 +657,26 @@ function renderAction(ready) {
   }
 }
 
+// Zusatzaktion einer anderen Resource. Nur gueltige Angaben uebernehmen, sonst gibt es keine.
+function readExtra(extra) {
+  if (!extra || typeof extra !== 'object' || typeof extra.label !== 'string' || !extra.label) return null;
+  return {
+    keyLabel: typeof extra.keyLabel === 'string' && extra.keyLabel ? extra.keyLabel : DEFAULT_EXTRA_KEY,
+    label: extra.label,
+    note: typeof extra.note === 'string' ? extra.note : '',
+    enabled: extra.enabled !== false,
+  };
+}
+
+function renderExtra() {
+  el.extra.hidden = !state.extra;
+  if (!state.extra) return;
+  el.extra.dataset.enabled = String(state.extra.enabled);
+  setText(el.extraKey, state.extra.keyLabel);
+  setText(el.extraLabel, state.extra.label);
+  setText(el.extraNote, state.extra.note);
+}
+
 function render() {
   el.screen.hidden = !state.open;
   if (!state.open) return;
@@ -624,6 +685,7 @@ function render() {
   renderAction(left === 0);
   setText(el.since, formatDuration(Math.max(0, Math.floor((Date.now() - state.startedAt) / MS_PER_SECOND))));
   setText(el.error, state.error);
+  renderExtra();
 
   const progress = state.totalSeconds > 0 ? Math.min(1, Math.max(0, 1 - left / state.totalSeconds)) : (left === 0 ? 1 : 0);
   const transform = `scaleX(${progress.toFixed(4)})`;
@@ -654,6 +716,7 @@ Bridge.on('death_open', (data) => {
   state.error = '';
   state.rendered = { ready: null, holding: null };
   state.keyLabel = typeof data.keyLabel === 'string' && data.keyLabel ? data.keyLabel : DEFAULT_KEY;
+  state.extra = readExtra(data.extra);
   document.documentElement.style.setProperty('--hold-ms', `${Number(data.holdMs) || DEFAULT_HOLD_MS}ms`);
   setText(el.cause, typeof data.cause === 'string' && data.cause ? data.cause : TEXT.causeUnknown);
   el.cause.title = el.cause.textContent;
@@ -678,6 +741,7 @@ Bridge.on('death_update', (data) => {
   if (typeof data.error === 'string') {
     state.error = TEXT.errors[data.error] || TEXT.errors.default;
   }
+  if ('extra' in data) state.extra = readExtra(data.extra);
   render();
 });
 
@@ -699,7 +763,8 @@ setText(document.getElementById('since-label'), TEXT.sinceLabel);
 Bridge.send('ui_ready', { ui: 'death', version: CONTRACT_VERSION });
 
 if (Bridge.platform === 'mock') {
-  // Im Browser: #bereit zeigt gleich die Taste, #halten den Haltevorgang, sonst 45 Sekunden Wartezeit
+  // Im Browser: #bereit zeigt gleich die Taste, #halten den Haltevorgang, #notruf den gesendeten Notruf,
+  // #ohne den Bildschirm ohne Zusatzaktion, sonst 45 Sekunden Wartezeit
   const ready = location.hash === '#bereit' || location.hash === '#halten';
   Mock.push('death_open', {
     colors: { base: '16 17 20', ink: '255 245 236', accent: '231 62 192', signal: '244 67 54' },
@@ -709,8 +774,12 @@ if (Bridge.platform === 'mock') {
     keyLabel: 'E',
     cause: 'Pistole',
     killerId: 17,
+    extra: location.hash === '#ohne' ? undefined : { keyLabel: 'H', label: 'Notruf absenden', enabled: true },
   });
   if (location.hash === '#halten') Mock.push('death_update', { holding: true });
+  if (location.hash === '#notruf') {
+    Mock.push('death_update', { extra: { keyLabel: 'H', label: 'Notruf gesendet', note: 'Notruf EMS 26/0412 ist beim Rettungsdienst. 2 Einheiten im Dienst.', enabled: false } });
+  }
 }
 </script>
 </body>

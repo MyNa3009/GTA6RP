@@ -1,6 +1,13 @@
-# core_ems 1.4.1
+# core_ems 1.4.2
 
 Rettungsdienst (EMS) für die eigene Core: Hochholen mit Minigame, Verbandskasten, Verkauf von Verbänden, Verbandskästen und Tabletten, Untersuchen und Behandeln, Krankheiten mit Stadien, Krankenversicherung und die Medizinische Datenbank. Ränge, Rechte, Dienst und Kasse kommen aus `core_factions` (Organisation `ems`).
+
+## Update von 1.4.1
+
+1. Den Ordner `core_ems` ersetzen und neu starten. Keine Migration.
+2. **Gelöschte Einträge sind weg:** Löscht jemand einen Eintrag in der Medizinischen Datenbank, verschwindet er sofort für alle, auch für die Leitung. Niemand im Rettungsdienst sieht mehr "gelöscht von".
+3. Nur Admins im Admin-Dienst (`/aduty`) mit dem Recht aus `Records.AdminPermission` sehen gelöschte Einträge noch durchgestrichen mit "gelöscht von" und können sie wiederherstellen. Ohne Admin-Dienst sehen auch sie nichts davon.
+4. Das Protokoll im Organisationsmenü führt Löschungen weiter mit Namen. Das ist die Kontrolle für die Leitung und nicht Teil der Datenbank.
 
 ## Update von 1.4.0
 
@@ -103,7 +110,7 @@ Admins öffnen die Medizinische Datenbank mit `/medizin` (oder `/medizin <ID>`),
 | Core-Recht | Was geht |
 |---|---|
 | `factions.view` | Akten ansehen |
-| `factions.manage` | Ansehen, Einträge schreiben, ändern, löschen (markiert) und wiederherstellen, Versicherung setzen oder beenden, Krankheiten setzen oder heilen |
+| `factions.manage` | Ansehen, Einträge schreiben, ändern und löschen, Versicherung setzen oder beenden, Krankheiten setzen oder heilen. Im Admin-Dienst zusätzlich: gelöschte Einträge sehen und wiederherstellen |
 
 Das Recht für die Korrektur steht in `config.lua` unter `Records.AdminPermission`. Jeder Blick in eine Akte wird geloggt (Kategorie `ems`, Aktion `records_view`), ebenso jeder Verkauf, jede Behandlung, jedes Hochholen und jede Korrektur (`records_edit`, `records_delete`, `records_restore`, `records_insurance`, `records_disease`). Alles steht zusätzlich im Protokoll des Rettungsdiensts.
 

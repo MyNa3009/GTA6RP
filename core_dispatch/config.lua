@@ -47,7 +47,9 @@ Config.Dispatch = {
         { level = 3, label = 'Lebensgefahr' },
     },
     -- Anrufer bewusstlos: mindestens diese Prioritaet
-    DownPriority = 2,
+    DownPriority = 2,              -- Prioritaet, wenn der Anrufer bewusstlos ist
+    -- Bewusstlos-Bildschirm: Mit der Taste (G) geht dieser Notruf an DefaultService. Leer ('') schaltet die Taste ab.
+    DownCallText = 'Person bewusstlos, braucht sofort Hilfe.',
 
     -- Funkstatus wie beim FMS der BOS. 0 und 5 gehen an die Leitstelle, 0 ist ein Notruf der Einheit selbst.
     Statuses = {

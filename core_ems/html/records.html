@@ -22,7 +22,7 @@
     ems_records_search { text }                -> { results: [{ characterId, name, dateOfBirth, insuredUntil?, diseases }] }
     ems_records_get    { characterId }         -> Record
     ems_records_note   { characterId, text }   -> Record
-    ems_records_entry  { id, text } | { id, delete: true } | { id, restore: true }   -> Record   (nur canManage)
+    ems_records_entry  { id, text } | { id, delete: true } | { id, restore: true }   -> Record   (nur canManage, restore nur Admins im Admin-Dienst)
     ems_records_insurance { characterId, days }  -> Record   (days 0 = beenden, nur canManage)
     ems_records_disease   { characterId, disease, stage }   -> Record   (stage 0 = heilen, nur canManage)
 
@@ -30,7 +30,8 @@
     characterId, name, dateOfBirth, gender: "male" | "female",
     insurance?: { validUntil, valid, soldBy },
     diseases: [{ disease, label, stage, stages, cure: "pill" | "treatment", series, needed }],
-    history: [{ id, kind, text, by?, at, editedBy?, editedAt?, deletedBy? }]   // neuester zuerst, deletedBy nur fuer canManage
+    history: [{ id, kind, text, by?, at, editedBy?, editedAt?, deletedBy? }]   // neuester zuerst
+  Geloeschte Eintraege schickt der Server gar nicht mehr mit. Nur Admins im Admin-Dienst bekommen sie, dann mit deletedBy.
   }
 
   FEHLERCODES: not_medic, not_on_duty, no_permission, not_found, invalid_input, not_insured, not_sick, already_sick, server_error, timeout
@@ -334,6 +335,9 @@ const Mock = (() => {
   const DISEASES = [{ disease: 'cold', label: 'Erkältung', stages: 3 }, { disease: 'headache', label: 'Kopfschmerzen', stages: 3 },
     { disease: 'stomach', label: 'Magen-Darm', stages: 3 }, { disease: 'hypertension', label: 'Bluthochdruck', stages: 3 }, { disease: 'dementia', label: 'Demenz', stages: 3 }];
   const NOW = '2026-11-09 14:20';
+  // ?aduty: Ansicht eines Admins im Admin-Dienst, sieht geloeschte Eintraege und kann sie wiederherstellen
+  const ADUTY = new URLSearchParams(location.search).has('aduty');
+  if (!ADUTY) people.forEach((p) => { p.history = p.history.filter((h) => !h.deletedBy); });
   const byEntry = (id) => people.find((p) => p.history.some((h) => h.id === id));
   let nextId = 100;
   const calls = {
@@ -344,7 +348,7 @@ const Mock = (() => {
     ems_records_entry: (d) => {
       const p = byEntry(d.id); const h = p && p.history.find((x) => x.id === d.id);
       if (!h) return { ok: false, error: 'not_found' };
-      if (d.delete) h.deletedBy = 'Lena Hoffmann'; else if (d.restore) delete h.deletedBy; else { if (!d.text) return { ok: false, error: 'invalid_input' }; h.text = d.text; h.editedBy = 'Lena Hoffmann'; h.editedAt = NOW; }
+      if (d.delete) { if (ADUTY) h.deletedBy = 'Lena Hoffmann'; else p.history = p.history.filter((x) => x !== h); } else if (d.restore) delete h.deletedBy; else { if (!d.text) return { ok: false, error: 'invalid_input' }; h.text = d.text; h.editedBy = 'Lena Hoffmann'; h.editedAt = NOW; }
       return { ok: true, data: p };
     },
     ems_records_insurance: (d) => {

@@ -2,8 +2,8 @@
 -- Senden an die Clients, Protokoll und Log. Notrufe stehen in calls.lua, das MDT in mdt.lua.
 -- Der Server entscheidet alles: Position, Zeiten, Rechte. Ortsnamen vom Client sind nur Anzeige.
 
--- Braucht Core 1.12.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
-local REQUIRED_CORE = '1.12.0'
+-- Braucht Core 1.15.0. Fehlt eine Bridge-Funktion, ist die Core zu alt: klar melden statt mitten im Spiel abzustuerzen.
+local REQUIRED_CORE = '1.15.0'
 local missingBridge = {}
 for _, name in ipairs({ 'Async', 'CallExport', 'Export', 'GetPlayerPosition', 'GetPlayerDimension', 'IsResourceStarted',
     'Notify', 'OnEvent', 'Print', 'SetInterval', 'Wait' }) do

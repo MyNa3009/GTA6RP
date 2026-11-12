@@ -1,6 +1,14 @@
-# core_dispatch 1.1.0
+# core_dispatch 1.2.0
 
 Notrufe und MDT für die eigene Core. Jeder setzt mit `/dispatch Text` einen Notruf ab. Die Einheiten im Dienst bekommen einen Alarm am Bildschirmrand und arbeiten den Einsatz im MDT ab: übernehmen, Route setzen, dem Anrufer antworten, Notizen, abschließen mit Ergebnis und Bericht. Dazu Funkstatus wie beim echten FMS (0 bis 8), Disponieren für die Leitstelle, Archiv und Statistik. Als erster Dienst ist der Rettungsdienst (`ems` aus `core_factions`) eingerichtet. LSPD und andere kommen als weiterer Eintrag in `config.lua` dazu.
+
+## Update von 1.1.0
+
+1. Erst Core 1.15.0, dann den Ordner `core_dispatch` ersetzen und neu starten. Keine Migration.
+2. **Notruf im Bewusstlos-Bildschirm:** Wer bewusstlos ist, sieht unter dem Knopf zum Krankenhaus "`H` Notruf absenden". Ein Druck schickt den Notruf an den Rettungsdienst, mit Position, Vermerk "bewusstlos" und mindestens "Dringend". Darunter steht danach die Nummer und wie viele Einheiten im Dienst sind.
+3. Es gelten dieselben Regeln wie bei `/dispatch`: Wartezeit zwischen zwei Notrufen und höchstens zwei offene Notrufe. Schlägt es fehl, steht der Grund unter der Taste und man kann es wieder versuchen.
+4. Nach einem Zusammenbruch mit "nur Krankenhaus" fehlt die Taste, weil vor Ort niemand hochholen kann.
+5. Den Text stellst du in `config.lua` unter `DownCallText` ein. Leer (`''`) schaltet die Taste ab.
 
 ## Update von 1.0.0
 
@@ -10,7 +18,7 @@ Notrufe und MDT für die eigene Core. Jeder setzt mit `/dispatch Text` einen Not
 
 ## Installation
 
-1. Braucht Core 1.12.0 und `core_factions` 1.3.0.
+1. Braucht Core 1.15.0 und `core_factions` 1.3.0.
 2. Ordner `core_dispatch` nach `resources/[core]/` kopieren. Die Tabellen legt das Script beim Start selbst an, das SQL steht zusätzlich in `database/dispatch.sql`.
 3. In der `server.cfg` nach `core_factions`: `ensure core_dispatch`
 4. Die Rechte erscheinen im Organisationsmenü unter Anpassung in der Gruppe "Leitstelle (MDT)".
@@ -25,7 +33,7 @@ Notrufe und MDT für die eigene Core. Jeder setzt mit `/dispatch Text` einen Not
 
 - Die Antwort sagt die Einsatznummer (z. B. `EMS 26/0042`) und wie viele Einheiten im Dienst sind. Ist niemand im Dienst, bleibt der Notruf offen.
 - Sobald jemand übernimmt, bekommt der Anrufer eine Meldung, ebenso jede Nachricht der Leitstelle und den Abschluss.
-- Wer bewusstlos ist, kann trotzdem einen Notruf absetzen. Der bekommt dann mindestens "Dringend" und den Vermerk "bewusstlos".
+- Wer bewusstlos ist, setzt den Notruf direkt im Bewusstlos-Bildschirm mit `H` ab (oder weiter mit `/dispatch`). Der bekommt dann mindestens "Dringend" und den Vermerk "bewusstlos".
 - "Ohne meinen Namen melden": Die Einheiten sehen den Namen nicht, Admins schon.
 - Spam-Schutz: 60 Sekunden zwischen zwei Notrufen, höchstens 2 offene pro Person. Schließt eine Einheit einen Notruf als "Missbrauch", ist die Person 30 Minuten gesperrt.
 

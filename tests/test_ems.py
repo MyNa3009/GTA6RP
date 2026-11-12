@@ -275,13 +275,14 @@ r = E(1, 'ems_records_entry', {'id': note['id'], 'text': 'Allergie gegen Penicil
 edited = [e for e in r['data']['history'] if e['id'] == note['id']][0] if r['ok'] else {}
 check('Eintrag ändern: Text neu, "geändert von" steht dran', edited.get('text') == 'Allergie gegen Penicillin und Ibuprofen.' and edited.get('editedBy') == 'Lena Hoffmann', r)
 r = E(1, 'ems_records_entry', {'id': note['id'], 'delete': True})
-gone = [e for e in r['data']['history'] if e['id'] == note['id']]
-check('Eintrag löschen: nur markiert, Leitung sieht ihn mit "gelöscht von"', r['ok'] and gone and gone[0]['deletedBy'] == 'Lena Hoffmann', r)
-check('in der Datenbank noch da', env.sql('SELECT deleted_at FROM ems_records WHERE id = %s', (note['id'],))[0]['deleted_at'] is not None)
+check('Eintrag löschen: auch für die Leitung sofort weg, kein "gelöscht von"', r['ok'] and all(e['id'] != note['id'] for e in r['data']['history'])
+      and all(not e.get('deletedBy') for e in r['data']['history']), r)
+check('Leitung sieht ihn auch beim nächsten Öffnen nicht', all(e['id'] != note['id'] for e in E(1, 'ems_records_get', {'characterId': ids[2]})['data']['history']))
+check('in der Datenbank noch da (nur markiert)', env.sql('SELECT deleted_at FROM ems_records WHERE id = %s', (note['id'],))[0]['deleted_at'] is not None)
 check('gelöschter Eintrag nicht noch einmal löschen', E(1, 'ems_records_entry', {'id': note['id'], 'delete': True})['error'] == 'not_found')
-check('wiederherstellen', E(1, 'ems_records_entry', {'id': note['id'], 'restore': True})['ok']
-      and env.sql('SELECT deleted_at FROM ems_records WHERE id = %s', (note['id'],))[0]['deleted_at'] is None)
-E(1, 'ems_records_entry', {'id': note['id'], 'delete': True})
+check('Leitung kann ihn nicht wiederherstellen oder ändern: not_found', E(1, 'ems_records_entry', {'id': note['id'], 'restore': True})['error'] == 'not_found'
+      and E(1, 'ems_records_entry', {'id': note['id'], 'text': 'Neuer Text für Gelöschtes.'})['error'] == 'not_found'
+      and env.sql('SELECT deleted_at FROM ems_records WHERE id = %s', (note['id'],))[0]['deleted_at'] is not None)
 r = E(1, 'ems_records_insurance', {'characterId': ids[2], 'days': 0})
 check('Versicherung beenden', r['ok'] and r['data'].get('insurance') and r['data']['insurance']['valid'] is False, r)
 check('nochmal beenden: not_insured', E(1, 'ems_records_insurance', {'characterId': ids[2], 'days': 0})['error'] == 'not_insured')
@@ -304,6 +305,10 @@ check('Mira im Dienst: ansehen ja, korrigieren nein', E(3, 'ems_records_open')['
       and E(3, 'ems_records_entry', {'id': note['id'], 'restore': True})['error'] == 'no_permission')
 check('Mira sieht den gelöschten Eintrag nicht', all(e['id'] != note['id'] for e in E(3, 'ems_records_get', {'characterId': ids[2]})['data']['history']))
 # Admin (Tom, kein Mediziner)
+env.command(0, f'setrank {ids[4]} chief')
+h = E(4, 'ems_records_get', {'characterId': ids[2]})
+check('Admin ohne Admin-Dienst: sieht Gelöschtes nicht, stellt nichts wieder her', h['ok'] and all(e['id'] != note['id'] for e in h['data']['history'])
+      and E(4, 'ems_records_entry', {'id': note['id'], 'restore': True})['error'] == 'not_found', h)
 env.command(0, f'setrank {ids[4]} assistant')
 env.command(4, 'aduty')
 a = E(4, 'ems_records_open')
@@ -311,8 +316,12 @@ check('Admin-Assistent (factions.view): nur ansehen', a['ok'] and a['data']['can
 env.command(0, f'setrank {ids[4]} chief')
 a = E(4, 'ems_records_open')
 check('Admin mit factions.manage: korrigieren und schreiben', a['ok'] and a['data']['canManage'] is True and a['data']['canNote'] is True, a)
+h = E(4, 'ems_records_get', {'characterId': ids[2]})
+seen = [e for e in h['data']['history'] if e['id'] == note['id']] if h['ok'] else []
+check('Admin im Admin-Dienst sieht den gelöschten Eintrag mit "gelöscht von"', seen and seen[0]['deletedBy'] == 'Lena Hoffmann', h)
 r = E(4, 'ems_records_entry', {'id': note['id'], 'restore': True})
-check('Admin stellt den Eintrag wieder her', r['ok'], r)
+check('Admin im Admin-Dienst stellt den Eintrag wieder her', r['ok'] and env.sql('SELECT deleted_at FROM ems_records WHERE id = %s', (note['id'],))[0]['deleted_at'] is None, r)
+check('danach sieht ihn die Leitung wieder', any(e['id'] == note['id'] for e in E(1, 'ems_records_get', {'characterId': ids[2]})['data']['history']))
 r = E(4, 'ems_records_note', {'characterId': ids[2], 'text': 'Akte geprüft, Daten korrigiert.'})
 check('Admin schreibt einen Eintrag, als Admin gekennzeichnet', r['ok'] and r['data']['history'][0]['by'].startswith('Admin'), r['data']['history'][0] if r.get('data') else r)
 

@@ -2,6 +2,8 @@
 -- Zugriff: Mediziner im Dienst mit Recht ems.records (Schreiben mit ems.records.note) oder Admins mit factions.view.
 -- Korrigieren (Eintraege aendern oder als geloescht markieren, Versicherung setzen, Krankheiten setzen oder heilen):
 -- Mediziner im Dienst mit ems.records.manage oder Admins mit Records.AdminPermission (factions.manage).
+-- Geloeschte Eintraege sind fuer alle weg, auch fuer die Leitung. Nur Admins im Admin-Dienst (/aduty) mit
+-- Records.AdminPermission sehen sie noch, mit "geloescht von", und koennen sie wiederherstellen.
 -- Jeder Blick in eine Akte und jede Aenderung wird geloggt und steht im Protokoll des Rettungsdiensts.
 
 if EmsDisabled then
@@ -13,16 +15,20 @@ local DEFS = CFG.Diseases
 local VIEW_PERMISSION = 'factions.view'
 local MANAGE_PERMISSION = CFG.Records.AdminPermission
 
--- Gibt { medic, admin, canNote, canManage, name } zurueck oder nil und einen Fehlercode
+-- Gibt { medic, admin, canNote, canManage, seeDeleted, name } zurueck oder nil und einen Fehlercode
 local function access(source)
+    local adminManage = Ems.Core('HasPermission', source, MANAGE_PERMISSION) == true
+    -- Geloeschtes sehen und wiederherstellen: nur als Admin im Admin-Dienst, nie ueber einen Rang im Rettungsdienst
+    local seeDeleted = adminManage and Ems.Core('IsOnDuty', source) == true
     local medic = Ems.CanMedic(source, 'ems.records')
     if medic then
         -- Ein Admin, der selbst Mediziner ist, behaelt im Dienst seine Admin-Korrektur
-        local manage = Ems.CanMedic(source, 'ems.records.manage') == true or Ems.Core('HasPermission', source, MANAGE_PERMISSION) == true
-        return { medic = true, canNote = manage or Ems.CanMedic(source, 'ems.records.note') == true, canManage = manage, name = Ems.NameOf(source) }
+        local manage = Ems.CanMedic(source, 'ems.records.manage') == true or adminManage
+        return { medic = true, canNote = manage or Ems.CanMedic(source, 'ems.records.note') == true, canManage = manage,
+            seeDeleted = seeDeleted, name = Ems.NameOf(source) }
     end
-    if Ems.Core('HasPermission', source, MANAGE_PERMISSION) == true then
-        return { admin = true, canNote = true, canManage = true, name = ('Admin %s'):format(Ems.NameOf(source) or '') }
+    if adminManage then
+        return { admin = true, canNote = true, canManage = true, seeDeleted = seeDeleted, name = ('Admin %s'):format(Ems.NameOf(source) or '') }
     end
     if Ems.Core('HasPermission', source, VIEW_PERMISSION) == true then
         return { admin = true, canNote = false, canManage = false, name = ('Admin %s'):format(Ems.NameOf(source) or '') }
@@ -96,7 +102,7 @@ register('ems_records_search', function(source, data)
     return { ok = true, data = { results = list } }
 end)
 
--- withDeleted: als geloescht markierte Eintraege mitschicken (nur wer korrigieren darf)
+-- withDeleted: als geloescht markierte Eintraege mitschicken (nur rights.seeDeleted, also Admins im Admin-Dienst)
 local function recordOf(characterId, withDeleted)
     local person = Ems.Core('GetCharacterRecord', characterId)
     if type(person) ~= 'table' then
@@ -136,7 +142,7 @@ end
 
 register('ems_records_get', function(source, data, rights)
     local characterId = tonumber(data.characterId)
-    local record = characterId and recordOf(math.floor(characterId), rights.canManage)
+    local record = characterId and recordOf(math.floor(characterId), rights.seeDeleted)
     if not record then
         return { ok = false, error = 'not_found' }
     end
@@ -162,7 +168,7 @@ register('ems_records_note', function(source, data, rights)
     Ems.Record(record.characterId, 'note', text, rights.name)
     Ems.Log({ actor_account_id = Ems.Core('GetAccountId', source), character_id = record.characterId, action = 'records_note', data = { text = text } })
     protocol(source, rights, 'records_note', ('Eintrag geschrieben: %s'):format(text), record.characterId)
-    return { ok = true, data = recordOf(record.characterId, rights.canManage) }
+    return { ok = true, data = recordOf(record.characterId, rights.seeDeleted) }
 end)
 
 ------------------------------------------------------------------------
@@ -185,6 +191,7 @@ end
 local PROTOCOL_QUOTE = 80
 
 -- Eintrag aendern { id, text } oder als geloescht markieren { id, delete = true } oder wiederherstellen { id, restore = true }
+-- Wer Geloeschtes nicht sehen darf, bekommt fuer einen geloeschten Eintrag immer not_found, als gaebe es ihn nicht.
 manage('ems_records_entry', function(source, data, rights)
     local id = tonumber(data.id)
     local row = id and DB.Single('SELECT id, character_id, kind, text, deleted_at IS NOT NULL AS deleted FROM ems_records WHERE id = ?', { math.floor(id) })
@@ -192,6 +199,9 @@ manage('ems_records_entry', function(source, data, rights)
         return { ok = false, error = 'not_found' }
     end
     local deleted = row.deleted == 1 or row.deleted == true
+    if deleted and not rights.seeDeleted then
+        return { ok = false, error = 'not_found' }
+    end
     local action, text
     if data.delete == true then
         if deleted then
@@ -211,7 +221,7 @@ manage('ems_records_entry', function(source, data, rights)
             return { ok = false, error = 'invalid_input' }
         end
         if newText == row.text then
-            return { ok = true, data = recordOf(row.character_id, true) }
+            return { ok = true, data = recordOf(row.character_id, rights.seeDeleted) }
         end
         DB.Update('UPDATE ems_records SET text = ?, edited_at = CURRENT_TIMESTAMP, edited_by = ? WHERE id = ?', { newText, rights.name, row.id })
         action, text = 'records_edit', ('Eintrag geändert: %s (vorher: %s)'):format(shorten(newText, PROTOCOL_QUOTE), shorten(row.text, PROTOCOL_QUOTE))
@@ -219,7 +229,7 @@ manage('ems_records_entry', function(source, data, rights)
     Ems.Log({ actor_account_id = Ems.Core('GetAccountId', source), character_id = row.character_id, action = action,
         data = { id = row.id, before = row.text, after = data.text, admin = rights.admin or nil } })
     protocol(source, rights, action, text, row.character_id)
-    return { ok = true, data = recordOf(row.character_id, true) }
+    return { ok = true, data = recordOf(row.character_id, rights.seeDeleted) }
 end)
 
 -- Versicherung setzen { characterId, days } (ab heute) oder beenden { characterId, days = 0 }
@@ -248,7 +258,7 @@ manage('ems_records_insurance', function(source, data, rights)
     Ems.Log({ actor_account_id = Ems.Core('GetAccountId', source), character_id = record.characterId, action = 'records_insurance',
         data = { days = days, admin = rights.admin or nil } })
     protocol(source, rights, 'records_insurance', text, record.characterId)
-    return { ok = true, data = recordOf(record.characterId, true) }
+    return { ok = true, data = recordOf(record.characterId, rights.seeDeleted) }
 end)
 
 -- Krankheit setzen { characterId, disease, stage } oder heilen { characterId, disease, stage = 0 }
@@ -280,5 +290,5 @@ manage('ems_records_disease', function(source, data, rights)
     Ems.Log({ actor_account_id = Ems.Core('GetAccountId', source), character_id = record.characterId, action = 'records_disease',
         data = { disease = data.disease, stage = stage, admin = rights.admin or nil } })
     protocol(source, rights, 'records_disease', text, record.characterId)
-    return { ok = true, data = recordOf(record.characterId, true) }
+    return { ok = true, data = recordOf(record.characterId, rights.seeDeleted) }
 end)

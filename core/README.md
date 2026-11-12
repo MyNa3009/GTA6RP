@@ -1,10 +1,20 @@
-# Core 1.14.0 (Testserver)
+# Core 1.15.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.14.0
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. **Zweite Taste im Bewusstlos-Bildschirm:** Andere Scripts können unter dem Knopf zum Krankenhaus eine eigene Taste anmelden. `core_dispatch` 1.2.0 nutzt sie für den Notruf (Taste `H`). Ohne so ein Script sieht der Bildschirm aus wie vorher.
+3. Für andere Scripts (Client):
+   - `exports.core:SetDeathAction({ label, pendingNote, hideWhenHospitalOnly })` meldet die Taste an, `SetDeathAction(nil)` wieder ab.
+   - Beim Druck kommt das lokale Ereignis `core:death:action`. Die Taste ist danach gesperrt.
+   - `exports.core:UpdateDeathAction({ label, note, enabled })` zeigt das Ergebnis und gibt die Taste mit `enabled = true` wieder frei.
+4. Die Core kennt nur Taste und Text. Was beim Druck passiert und ob es erlaubt ist, entscheidet das Script und dessen Server.
 
 ## Update von 1.13.0
 
