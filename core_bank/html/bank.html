@@ -1,0 +1,1403 @@
+<!DOCTYPE html>
+<!--
+  UI: Bank (Filiale und Admin-Ansicht)
+  CONTRACT_VERSION: 1
+
+  Konto mit Kontonummer, Ein- und Auszahlen, Ueberweisen mit Pruefung des Empfaengers, Kontoauszug, Schulden
+  (Strafen, Rechnungen, Gebuehren). Die UI zeigt nur an: Jede Zahl kommt vom Server, jede Anfrage prueft der Server.
+  In der Admin-Ansicht (/konto <ID>) wird kein Geld bewegt, mit Recht aber eine Forderung eingetragen oder erlassen.
+
+  EINGEHEND (Lua -> UI)
+  bank_open     { colors: { base?, ink?, accent?, mark?, signal? }, channel: "bank" | "admin", bankName: string,
+                  overview: Overview, admin?: boolean, canManage?: boolean,
+                  purposeMax: number, transferMax: number, titleMax: number, debtMax: number, dueHours: number, maxDueHours: number }
+  bank_refresh  { what?: "account" | "debts" }      // auf dem Konto hat sich etwas getan, die UI laedt neu
+  bank_close    {}
+
+  AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
+  ui_ready      { ui: "bank", version: 1 }           -> data.colors
+  bank_close    {}
+  bank_call     { name, data }
+    bank_overview    {}                              -> { overview: Overview }
+    bank_statement   { page, filter: "all" | "in" | "out" }   -> { entries: [Entry], page, more }
+    bank_deposit     { amount }                      -> { overview }
+    bank_withdraw    { amount }                      -> { overview }
+    bank_lookup      { number }                      -> { name, number }
+    bank_transfer    { number, amount, purpose }     -> { to: { name, number }, overview }
+    bank_debts       { status: "open" | "closed", page }      -> { debts: [Debt], page, more }
+    bank_debt_pay    { id, amount? }                 -> { debt: Debt, paid, overview }
+    bank_debt_add    { amount, title, kind, dueHours }        -> { debt, overview }   (nur Admin mit canManage)
+    bank_debt_cancel { id, reason? }                 -> { debt, overview }            (nur Admin mit canManage)
+
+  Overview { characterId, name, number, balance, cash?, recent: [Entry], debts: { count, total, overdue },
+             recipients?: [{ name, number }] }
+  Entry    { id, kind, amount, balance, text, other?, otherNumber?, channel, at: "JJJJ-MM-TT hh:mm" }
+           kind: deposit | withdraw | transfer_in | transfer_out | debt | collect | credit | debit | refund
+  Debt     { id, kind, kindLabel, creditor, creditorLabel, title, amount, fee, paid, rest, status: "open" | "paid" | "cancelled",
+             overdue, due, at, issuedBy?, closed?, closedBy?, closeReason? }
+
+  FEHLERCODES: no_session, too_far, is_dead, not_here, busy, invalid_amount, invalid_input, invalid_number, unknown_account,
+               same_account, not_enough_money, not_enough_cash, no_space, twink_blocked, not_found, debt_closed,
+               no_permission, server_error, timeout
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bank</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Operate (Konto fuehren) mit Inspect (Kontoauszug, Forderung). Dichte 7, Bewegung 2, Varianz 3.
+  Richtung
+    Zweck: In der Filiale sieht man, was auf dem Konto ist, bewegt Geld und begleicht Schulden.
+    Charakter: sachlich, genau, ruhig.
+    Welt: Bankschalter, Kontoauszug auf Papier, Ueberweisungstraeger.
+    Highlight: der Kontostand als Karte oben in der Uebersicht.
+    Signatur: Betraege stehen immer rechts in einer Spalte, Eingaenge in der Akzentfarbe mit Pluszeichen.
+  Flaeche: grosses Panel, links Konto und Bereiche, rechts der gewaehlte Bereich. Hausstil der Fenster
+  (Vorbild core_ems/html/records.html).
+*/
+:root {
+  --rgb-base:   16 17 20;
+  --rgb-ink:    255 245 236;
+  --rgb-accent: 231 62 192;
+  --rgb-mark:   244 154 102;
+  --rgb-signal: 244 67 54;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.96);
+  --c-side:        rgb(var(--rgb-ink) / 0.03);
+  --c-surface:     rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.09);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.12);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.08);
+  --shadow:        0 16px 48px rgb(var(--rgb-base) / 0.6);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+  --fs-xxl: clamp(26px, 1.7vw, 36px);
+
+  --panel-w: min(94vw, 1560px);
+  --panel-h: min(90dvh, 1000px);
+  --side-w: clamp(264px, 20vw, 320px);
+  --head-h: 64px;
+  --field-h: 36px;
+  --row-h: 40px;
+  --icon: 18px;
+  --time-w: 128px;
+
+  --dur-fast: 120ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --z-panel: 10;
+  --z-toast: 30;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; background: transparent; overflow: hidden;
+  font-family: 'Montserrat', sans-serif; font-size: var(--fs-md); color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+[hidden] { display: none !important; }
+button, input, select { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.icon { width: var(--icon); height: var(--icon); flex: none; }
+:focus-visible { outline: 2px solid rgb(var(--rgb-accent) / 0.6); outline-offset: 2px; }
+
+.panel {
+  position: fixed; left: 50%; top: 50%; z-index: var(--z-panel);
+  width: var(--panel-w); height: var(--panel-h); transform: translate(-50%, -50%);
+  display: grid; grid-template-columns: var(--side-w) 1fr;
+  background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+
+/* ---------- Linke Spalte: Bank, Konto, Bereiche ---------- */
+.side { display: grid; grid-template-rows: var(--head-h) auto 1fr auto; min-height: 0; background: var(--c-side); border-right: 1px solid var(--c-border); }
+.side__head { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-5); border-bottom: 1px solid var(--c-border); }
+.side__head .icon { color: var(--c-accent); }
+.side__names { min-width: 0; }
+.side__title { margin: 0; font-size: var(--fs-md); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side__sub { margin: 0; font-size: var(--fs-xs); color: var(--c-text-muted); }
+
+.account { padding: var(--space-5) var(--space-5) var(--space-4); display: grid; gap: var(--space-1); }
+.label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.05em; text-transform: uppercase; }
+.account__name { font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; }
+.account__number { font-size: var(--fs-sm); color: var(--c-text-2); }
+
+.nav { list-style: none; margin: 0; padding: 0 var(--space-2); display: grid; gap: 2px; align-content: start; }
+.nav__item {
+  display: flex; align-items: center; gap: var(--space-3); width: 100%; height: var(--row-h); padding: 0 var(--space-3);
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--c-text-2);
+  font-size: var(--fs-sm); font-weight: 500; text-align: left; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.nav__item:hover { background: var(--c-surface); color: var(--c-text); }
+.nav__item[aria-current="page"] { background: var(--c-surface-hi); box-shadow: var(--edge-light); color: var(--c-text); font-weight: 600; }
+.nav__item[aria-current="page"] .icon { color: var(--c-accent); }
+.nav__count { margin-left: auto; min-width: 20px; padding: 0 var(--space-1); border-radius: var(--radius-xs); background: var(--c-accent-soft); color: var(--c-text); font-size: var(--fs-xs); font-weight: 600; text-align: center; line-height: 20px; }
+.nav__count--late { background: var(--c-signal-soft); color: var(--c-signal); }
+
+.side__foot { padding: var(--space-4) var(--space-5) var(--space-5); border-top: 1px solid var(--c-border); display: grid; gap: var(--space-1); }
+.side__cash { font-size: var(--fs-md); font-weight: 600; }
+
+/* ---------- Rechte Seite ---------- */
+.main { display: grid; grid-template-rows: var(--head-h) 1fr; min-width: 0; min-height: 0; }
+.bar { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-5) 0 var(--space-6); border-bottom: 1px solid var(--c-border); }
+.bar__meta { color: var(--c-text-muted); font-size: var(--fs-sm); }
+.close { margin-left: auto; display: inline-grid; place-items: center; width: var(--field-h); height: var(--field-h); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--c-text-2); cursor: pointer; }
+.close:hover { background: var(--c-surface); color: var(--c-text); }
+.body { min-height: 0; overflow: auto; padding: var(--space-5) var(--space-6) var(--space-6); }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: var(--space-6); align-items: start; }
+
+.title { margin: 0; font-size: var(--fs-xxl); font-weight: 700; overflow-wrap: anywhere; }
+.title--sm { font-size: var(--fs-xl); }
+.facts { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin-top: var(--space-2); color: var(--c-text-2); font-size: var(--fs-sm); }
+
+/* Der wichtigste Stand als Karte */
+.card {
+  display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-1) var(--space-4); align-items: center;
+  margin-top: var(--space-5); padding: var(--space-4) var(--space-5); width: 100%;
+  border-radius: var(--radius-md); border: 1px solid var(--c-border); background: var(--c-surface); text-align: left;
+}
+.card__mark { grid-row: span 2; width: 12px; height: 12px; border-radius: 50%; background: var(--c-accent); box-shadow: 0 0 0 4px var(--c-accent-soft); }
+.card__title { font-size: var(--fs-lg); font-weight: 700; }
+.card__sub { grid-column: 2; font-size: var(--fs-sm); color: var(--c-text-muted); }
+.card__side { grid-row: span 2; grid-column: 3; }
+.card--alert { border-color: rgb(var(--rgb-signal) / 0.35); background: var(--c-signal-soft); }
+.card--alert .card__mark { background: var(--c-signal); box-shadow: 0 0 0 4px rgb(var(--rgb-signal) / 0.2); }
+.card--done .card__mark { background: rgb(var(--rgb-ink) / 0.4); box-shadow: 0 0 0 4px rgb(var(--rgb-ink) / 0.08); }
+button.card { cursor: pointer; transition: background-color var(--dur-fast) var(--ease-out); }
+button.card:hover { background: var(--c-surface-hi); }
+button.card.card--alert:hover { background: rgb(var(--rgb-signal) / 0.18); }
+
+.section-title { margin: var(--space-6) 0 var(--space-3); font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.05em; text-transform: uppercase; }
+.cols > div > .section-title:first-child { margin-top: 0; }
+
+/* Formulare */
+.form { display: grid; gap: var(--space-4); max-width: 520px; }
+.field { display: grid; gap: var(--space-2); }
+.field__row { display: flex; justify-content: space-between; gap: var(--space-2); }
+.field__hint { font-size: var(--fs-xs); color: var(--c-text-muted); }
+.input, .select {
+  width: 100%; height: var(--field-h); padding: 0 var(--space-3);
+  border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+  background: rgb(var(--rgb-base) / 0.6); font-size: var(--fs-sm); outline: none;
+}
+.select { background: rgb(var(--rgb-base) / 0.9); padding: 0 var(--space-2); }
+.input:focus, .select:focus { border-color: rgb(var(--rgb-accent) / 0.45); }
+.input--amount { font-size: var(--fs-md); font-weight: 600; }
+.input[aria-invalid="true"] { border-color: rgb(var(--rgb-signal) / 0.6); }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.chip {
+  height: 28px; padding: 0 var(--space-3); border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+  background: transparent; color: var(--c-text-2); font-size: var(--fs-xs); font-weight: 600; cursor: pointer;
+}
+.chip:hover { background: var(--c-surface); color: var(--c-text); }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); height: var(--field-h); padding: 0 var(--space-4);
+  border: 0; border-radius: var(--radius-sm); background: rgb(var(--rgb-ink) / 0.92); color: var(--c-on-accent);
+  font-size: var(--fs-sm); font-weight: 600; cursor: pointer; transition: transform var(--dur-fast) var(--ease-out);
+}
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn--sm { height: 28px; padding: 0 var(--space-3); font-size: var(--fs-xs); }
+.btn--ghost { background: transparent; color: var(--c-text-2); border: 1px solid var(--c-border); }
+.btn--ghost:hover:not(:disabled) { background: var(--c-surface); color: var(--c-text); }
+.btn--danger { background: transparent; color: var(--c-signal); border: 1px solid rgb(var(--rgb-signal) / 0.45); }
+.btn--danger:hover:not(:disabled) { background: var(--c-signal-soft); }
+.error { margin: 0; color: var(--c-signal); font-size: var(--fs-sm); font-weight: 500; }
+.fix { margin-top: var(--space-5); padding: var(--space-4); border: 1px dashed rgb(var(--rgb-accent) / 0.45); border-radius: var(--radius-md); display: grid; gap: var(--space-3); }
+.fix__label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-accent); letter-spacing: 0.05em; text-transform: uppercase; }
+.fix__grid { display: grid; grid-template-columns: 120px 1fr; gap: var(--space-2); }
+.fix__inline { display: flex; align-items: center; gap: var(--space-3); }
+.fix__inline .input { width: 96px; }
+
+/* Buchungen als Protokoll: Zeit, Text, Betrag */
+.ledger { list-style: none; margin: 0; padding: 0; display: grid; }
+.ledger li { display: grid; grid-template-columns: var(--time-w) minmax(0, 1fr) auto; gap: var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--c-border); font-size: var(--fs-sm); }
+.ledger li:first-child { border-top: 0; padding-top: 0; }
+.ledger time { color: var(--c-text-muted); }
+.kind { display: block; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.04em; margin-bottom: 2px; text-transform: uppercase; }
+.kind--alert { color: var(--c-signal); }
+.kind--good { color: var(--c-accent); }
+.ledger small { display: block; margin-top: 2px; color: var(--c-text-muted); font-size: var(--fs-xs); }
+.amount { font-weight: 600; text-align: right; white-space: nowrap; }
+.amount--in { color: var(--c-accent); }
+.none { color: var(--c-text-muted); font-size: var(--fs-sm); line-height: 1.5; }
+
+/* Kontoauszug als Tabelle */
+.tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-4); border-bottom: 1px solid var(--c-border); }
+.tab {
+  height: var(--field-h); padding: 0 var(--space-3); border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  background: transparent; color: var(--c-text-muted); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+}
+.tab:hover { color: var(--c-text); }
+.tab[aria-selected="true"] { color: var(--c-text); border-bottom-color: var(--c-accent); }
+.table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.table th { padding: 0 var(--space-3) var(--space-2) 0; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.05em; text-transform: uppercase; text-align: left; }
+.table td { padding: var(--space-3) var(--space-3) var(--space-3) 0; border-top: 1px solid var(--c-border); vertical-align: top; }
+.table th:last-child, .table td:last-child { padding-right: 0; }
+.table .right { text-align: right; white-space: nowrap; }
+.table .muted { color: var(--c-text-muted); }
+.table td.when { width: var(--time-w); color: var(--c-text-muted); white-space: nowrap; }
+.more { margin-top: var(--space-4); }
+
+/* Listen zum Auswaehlen: Empfaenger, Forderungen */
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.pick {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px var(--space-3); width: 100%;
+  padding: var(--space-3); border: 0; border-radius: var(--radius-sm);
+  background: transparent; text-align: left; cursor: pointer;
+}
+.pick:hover { background: var(--c-surface); }
+.pick[aria-selected="true"] { background: var(--c-surface-hi); box-shadow: var(--edge-light); }
+.pick__name { font-size: var(--fs-sm); font-weight: 600; overflow-wrap: anywhere; }
+.pick__value { font-size: var(--fs-sm); font-weight: 600; text-align: right; white-space: nowrap; }
+.pick__meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); font-size: var(--fs-xs); color: var(--c-text-muted); }
+.late { color: var(--c-signal); font-weight: 600; }
+
+/* Felder einer Forderung */
+.details { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-3) var(--space-5); margin: 0; font-size: var(--fs-sm); }
+.details dt { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.05em; text-transform: uppercase; align-self: center; }
+.details dd { margin: 0; overflow-wrap: anywhere; }
+
+.empty { display: grid; place-items: center; align-content: center; gap: var(--space-2); min-height: 240px; text-align: center; }
+.empty__title { font-size: var(--fs-md); font-weight: 600; }
+.empty__text { color: var(--c-text-muted); font-size: var(--fs-sm); line-height: 1.6; max-width: 44ch; }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc((100dvh - var(--panel-h)) / 2 + var(--space-5)); z-index: var(--z-toast);
+  transform: translateX(-50%); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm);
+  background: rgb(var(--rgb-ink)); color: var(--c-on-accent); font-size: var(--fs-sm); font-weight: 600; box-shadow: var(--shadow);
+}
+.toast--error { background: var(--c-signal); color: rgb(var(--rgb-base)); }
+
+@media (max-width: 1280px) { .cols { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-bank" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 18h14M12 3 3 8h18z"/><path d="M6 11v7M10 11v7M14 11v7M18 11v7"/></g>
+    <g id="i-home" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/></g>
+    <g id="i-send" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14M13 6l6 6-6 6"/></g>
+    <g id="i-list" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></g>
+    <g id="i-debt" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></g>
+    <g id="i-close" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></g>
+  </defs>
+</svg>
+
+<div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="title" hidden>
+  <aside class="side">
+    <header class="side__head">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bank"/></svg>
+      <div class="side__names">
+        <h1 class="side__title" id="title"></h1>
+        <p class="side__sub" id="subtitle"></p>
+      </div>
+    </header>
+    <div class="account">
+      <span class="label" id="account-label"></span>
+      <span class="account__name" id="account-name"></span>
+      <span class="account__number num" id="account-number"></span>
+    </div>
+    <ul class="nav" id="nav"></ul>
+    <div class="side__foot" id="foot">
+      <span class="label" id="cash-label"></span>
+      <span class="side__cash num" id="cash"></span>
+    </div>
+  </aside>
+  <section class="main">
+    <div class="bar">
+      <span class="bar__meta" id="meta"></span>
+      <button class="close" type="button" data-action="close" id="close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="body" id="body"></div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+  function on(event, fn) { (handlers[event] ||= []).push(fn); }
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+  return { on, send, emit, platform };
+})();
+
+// Testdaten fuer den Browser. ?admin: Admin-Ansicht nur lesen, ?admin&manage: mit Korrektur, ?leer: neues Konto
+const Mock = (() => {
+  const params = new URLSearchParams(location.search);
+  const EMPTY = params.has('leer');
+  const NOW = '2026-11-14 16:40';
+  const PAGE = 20;
+  let balance = EMPTY ? 2500 : 48210;
+  let cash = EMPTY ? 500 : 1240;
+  let nextId = 900;
+  const people = { '12035567': 'Lena Hoffmann', '77410932': 'Mira Schulz', '30558214': 'Werkstatt Benny, Inhaber Tom Becker' };
+  const entries = EMPTY ? [] : [
+    { id: 418, kind: 'transfer_in', amount: 1850, balance: 48210, text: 'Gehalt November', other: 'Emergency Medical Service', channel: 'system', at: '2026-11-14 12:00' },
+    { id: 417, kind: 'withdraw', amount: -500, balance: 46360, text: 'Auszahlung am Bankautomaten', channel: 'atm', at: '2026-11-13 22:14' },
+    { id: 416, kind: 'transfer_out', amount: -750, balance: 46860, text: 'Miete November', other: 'Lena Hoffmann', otherNumber: '12035567', channel: 'bank', at: '2026-11-13 18:02' },
+    { id: 415, kind: 'collect', amount: -240, balance: 47610, text: 'Strafe: Zu schnell gefahren', other: 'Staat San Andreas', channel: 'system', at: '2026-11-12 09:30' },
+    { id: 414, kind: 'deposit', amount: 3200, balance: 47850, text: 'Einzahlung in der Filiale', channel: 'bank', at: '2026-11-11 17:45' },
+    { id: 413, kind: 'debt', amount: -320, balance: 44650, text: 'Rechnung: Transport ins Krankenhaus', other: 'Emergency Medical Service', channel: 'bank', at: '2026-11-11 17:41' },
+    { id: 412, kind: 'transfer_out', amount: -1200, balance: 44970, text: 'Reparatur Sultan, Stoßstange vorn', other: 'Werkstatt Benny, Inhaber Tom Becker', otherNumber: '30558214', channel: 'bank', at: '2026-11-09 14:20' },
+    { id: 411, kind: 'credit', amount: 400, balance: 46170, text: 'Bonus der Leitung', other: 'Emergency Medical Service', channel: 'system', at: '2026-11-08 20:05' },
+    { id: 410, kind: 'transfer_in', amount: 65, balance: 45770, text: 'Pizza von gestern', other: 'Mira Schulz', otherNumber: '77410932', channel: 'bank', at: '2026-11-07 13:11' },
+  ];
+  const debts = EMPTY ? [] : [
+    { id: 31, kind: 'fine', kindLabel: 'Strafe', creditor: 'state', creditorLabel: 'Staat San Andreas', title: 'Rotlicht überfahren, Kreuzung Vespucci Boulevard', amount: 600, fee: 60, paid: 0, rest: 660, status: 'open', overdue: true, due: '2026-11-13 10:15', at: '2026-11-10 10:15', issuedBy: 'Admin Tom Becker' },
+    { id: 34, kind: 'invoice', kindLabel: 'Rechnung', creditor: 'ems', creditorLabel: 'Emergency Medical Service', title: 'Behandlung Bluthochdruck, 2 von 4', amount: 250, fee: 0, paid: 100, rest: 150, status: 'open', overdue: false, due: '2026-11-16 17:10', at: '2026-11-13 17:10', issuedBy: 'Mira Schulz' },
+    { id: 35, kind: 'fee', kindLabel: 'Gebühr', creditor: 'state', creditorLabel: 'Staat San Andreas', title: 'Neuer Personalausweis', amount: 80, fee: 0, paid: 0, rest: 80, status: 'open', overdue: false, due: '2026-11-17 09:00', at: '2026-11-14 09:00' },
+    { id: 27, kind: 'fine', kindLabel: 'Strafe', creditor: 'state', creditorLabel: 'Staat San Andreas', title: 'Zu schnell gefahren, 34 km/h zu viel', amount: 400, fee: 40, paid: 440, rest: 0, status: 'paid', overdue: false, due: '2026-11-11 08:00', at: '2026-11-08 08:00', closed: '2026-11-12 09:30', closedBy: 'Einzug der Bank' },
+    { id: 22, kind: 'fine', kindLabel: 'Strafe', creditor: 'state', creditorLabel: 'Staat San Andreas', title: 'Ruhestörung', amount: 100, fee: 0, paid: 0, rest: 0, status: 'cancelled', overdue: false, due: '2026-11-05 21:00', at: '2026-11-02 21:00', closed: '2026-11-03 12:40', closedBy: 'Admin Tom Becker', closeReason: 'Falscher Fahrer' },
+  ];
+  const book = (kind, amount, text, extra = {}) => {
+    balance += amount;
+    entries.unshift({ id: nextId++, kind, amount, balance, text, channel: 'bank', at: NOW, ...extra });
+  };
+  const overview = () => {
+    const open = debts.filter((d) => d.status === 'open');
+    const seen = new Set();
+    const recipients = entries.filter((e) => e.kind === 'transfer_out' && e.otherNumber && !seen.has(e.otherNumber) && seen.add(e.otherNumber))
+      .map((e) => ({ name: e.other, number: e.otherNumber }));
+    return { characterId: 256, name: 'Fabian Nandes', number: '48210375', balance, cash: params.has('admin') ? undefined : cash,
+      recent: entries.slice(0, 8), recipients, debts: { count: open.length, total: open.reduce((s, d) => s + d.rest, 0), overdue: open.filter((d) => d.overdue).length } };
+  };
+  const whole = (v, max) => Number.isInteger(v) && v >= 1 && v <= max;
+  const calls = {
+    bank_overview: () => ({ ok: true, data: { overview: overview() } }),
+    bank_statement: (d) => {
+      const list = entries.filter((e) => d.filter === 'in' ? e.amount > 0 : d.filter === 'out' ? e.amount < 0 : true);
+      const start = ((d.page || 1) - 1) * PAGE;
+      return { ok: true, data: { entries: list.slice(start, start + PAGE), page: d.page || 1, more: list.length > start + PAGE } };
+    },
+    bank_deposit: (d) => {
+      if (!whole(d.amount, 1e8)) return { ok: false, error: 'invalid_amount' };
+      if (d.amount > cash) return { ok: false, error: 'not_enough_cash' };
+      cash -= d.amount; book('deposit', d.amount, 'Einzahlung in der Filiale');
+      return { ok: true, data: { overview: overview() } };
+    },
+    bank_withdraw: (d) => {
+      if (!whole(d.amount, 1e8)) return { ok: false, error: 'invalid_amount' };
+      if (d.amount > balance) return { ok: false, error: 'not_enough_money' };
+      cash += d.amount; book('withdraw', -d.amount, 'Auszahlung in der Filiale');
+      return { ok: true, data: { overview: overview() } };
+    },
+    bank_lookup: (d) => {
+      const number = String(d.number || '').replace(/\D/g, '');
+      if (number.length !== 8) return { ok: false, error: 'invalid_number' };
+      if (number === '48210375') return { ok: false, error: 'same_account' };
+      return people[number] ? { ok: true, data: { name: people[number], number } } : { ok: false, error: 'unknown_account' };
+    },
+    bank_transfer: (d) => {
+      const found = calls.bank_lookup(d);
+      if (!found.ok) return found;
+      if (!whole(d.amount, 1e6)) return { ok: false, error: 'invalid_amount' };
+      if (d.amount > balance) return { ok: false, error: 'not_enough_money' };
+      book('transfer_out', -d.amount, d.purpose || 'Überweisung', { other: found.data.name, otherNumber: found.data.number });
+      return { ok: true, data: { to: found.data, overview: overview() } };
+    },
+    bank_debts: (d) => ({ ok: true, data: { debts: debts.filter((x) => d.status === 'closed' ? x.status !== 'open' : x.status === 'open'), page: 1, more: false } }),
+    bank_debt_pay: (d) => {
+      const debt = debts.find((x) => x.id === d.id);
+      if (!debt) return { ok: false, error: 'not_found' };
+      if (debt.status !== 'open') return { ok: false, error: 'debt_closed' };
+      const amount = d.amount === undefined ? debt.rest : d.amount;
+      if (!whole(amount, debt.rest)) return { ok: false, error: 'invalid_amount' };
+      if (amount > balance) return { ok: false, error: 'not_enough_money' };
+      debt.paid += amount; debt.rest -= amount;
+      if (debt.rest === 0) Object.assign(debt, { status: 'paid', overdue: false, closed: NOW, closedBy: 'Schuldner' });
+      book('debt', -amount, `${debt.kindLabel}: ${debt.title}`, { other: debt.creditorLabel });
+      return { ok: true, data: { debt, paid: amount, overview: overview() } };
+    },
+    bank_debt_add: (d) => {
+      if (!params.has('manage')) return { ok: false, error: 'no_permission' };
+      if (!whole(d.amount, 1e6)) return { ok: false, error: 'invalid_amount' };
+      if (!d.title) return { ok: false, error: 'invalid_input' };
+      const labels = { fine: 'Strafe', invoice: 'Rechnung', fee: 'Gebühr', other: 'Forderung' };
+      const debt = { id: nextId++, kind: d.kind, kindLabel: labels[d.kind] || labels.other, creditor: 'state', creditorLabel: 'Staat San Andreas', title: d.title,
+        amount: d.amount, fee: 0, paid: 0, rest: d.amount, status: 'open', overdue: false, due: '2026-11-17 16:40', at: NOW, issuedBy: 'Admin Tom Becker' };
+      debts.push(debt);
+      return { ok: true, data: { debt, overview: overview() } };
+    },
+    bank_debt_cancel: (d) => {
+      if (!params.has('manage')) return { ok: false, error: 'no_permission' };
+      const debt = debts.find((x) => x.id === d.id);
+      if (!debt || debt.status !== 'open') return { ok: false, error: 'debt_closed' };
+      Object.assign(debt, { status: 'cancelled', rest: 0, overdue: false, closed: NOW, closedBy: 'Admin Tom Becker', closeReason: d.reason || undefined });
+      return { ok: true, data: { debt, overview: overview() } };
+    },
+  };
+  return {
+    delay: 120,
+    overview,
+    async handle(event, data) {
+      await new Promise((r) => setTimeout(r, this.delay));
+      console.info(`[mock] ${event}`, data);
+      if (event === 'bank_call') return calls[data.name] ? calls[data.name](data.data || {}) : { ok: false, error: 'invalid_input' };
+      return { ok: true };
+    },
+    push(event, data) { Bridge.emit(event, data); },
+  };
+})();
+</script>
+
+<script id="app">
+const TEXT = {
+  subtitle: 'Girokonto',
+  subtitleAdmin: 'Admin-Ansicht',
+  account: 'Konto',
+  cash: 'Bargeld dabei',
+  close: 'Schließen',
+  adminRead: 'Admin-Ansicht, nur lesen. Geld bewegen geht hier nicht.',
+  adminManage: 'Admin-Ansicht, Forderungen eintragen und erlassen erlaubt',
+  navLabel: 'Bereiche',
+  nav: { overview: 'Übersicht', transfer: 'Überweisen', statement: 'Kontoauszug', debts: 'Schulden' },
+  facts: { number: (n) => `Konto ${n}`, id: (id) => `ID ${id}` },
+  balance: 'Kontostand',
+  barBalance: (b) => `Kontostand ${b}`,
+  debtCard: (n) => (n === 1 ? '1 offene Forderung' : `${n} offene Forderungen`),
+  debtCardSub: (total, overdue) => (overdue > 0 ? `${total} offen, davon ${overdue} überfällig. Jetzt ansehen` : `${total} offen. Jetzt ansehen`),
+  cashTitle: 'Bargeld',
+  amount: 'Betrag in $',
+  all: 'Alles Bargeld',
+  deposit: 'Einzahlen',
+  withdraw: 'Auszahlen',
+  deposited: (a) => `${a} eingezahlt`,
+  withdrawn: (a) => `${a} ausgezahlt`,
+  recent: 'Letzte Buchungen',
+  noEntries: 'Noch keine Buchungen. Zahl Bargeld ein oder lass dir Geld überweisen.',
+  transfer: {
+    title: 'Überweisung',
+    number: 'Kontonummer des Empfängers',
+    numberHint: '8 Ziffern',
+    purpose: 'Verwendungszweck',
+    purposePlaceholder: 'z. B. Miete November',
+    check: 'Empfänger prüfen',
+    confirmSub: (number, amount, purpose) => `Konto ${number}, ${amount}${purpose ? `, ${purpose}` : ''}`,
+    send: 'Jetzt überweisen',
+    edit: 'Ändern',
+    sent: (amount, name) => `${amount} an ${name} überwiesen`,
+    recipients: 'Zuletzt überwiesen an',
+    noRecipients: 'Hier stehen die Konten, an die du schon überwiesen hast. Ein Klick trägt die Kontonummer ein.',
+    hint: 'Die Kontonummer bekommst du von der Person selbst. Überweisungen sind sofort da, auch wenn die Person gerade nicht in der Stadt ist.',
+  },
+  statement: {
+    filters: { all: 'Alle', in: 'Eingänge', out: 'Ausgänge' },
+    cols: { at: 'Datum', what: 'Buchung', other: 'Gegenkonto', amount: 'Betrag', balance: 'Kontostand' },
+    more: 'Ältere Buchungen laden',
+    loading: 'Lädt…',
+    empty: 'Keine Buchungen',
+    emptyText: 'In dieser Ansicht steht noch nichts.',
+  },
+  kinds: {
+    deposit: 'Einzahlung', withdraw: 'Auszahlung', transfer_in: 'Eingang', transfer_out: 'Überweisung', debt: 'Schulden',
+    collect: 'Einzug', credit: 'Gutschrift', debit: 'Abbuchung', refund: 'Rückbuchung',
+  },
+  debts: {
+    tabs: { open: 'Offen', closed: 'Erledigt' },
+    emptyOpen: 'Keine offenen Forderungen',
+    emptyOpenText: 'Strafen, Rechnungen und Gebühren erscheinen hier, sobald jemand eine ausstellt.',
+    emptyClosed: 'Noch nichts erledigt',
+    emptyClosedText: 'Bezahlte und erlassene Forderungen bleiben hier stehen.',
+    pickTitle: 'Forderung wählen',
+    pickText: 'Links stehen deine Forderungen. Die mit der kürzesten Frist steht oben.',
+    due: (d) => `fällig bis ${d}`,
+    late: (d) => `überfällig seit ${d}`,
+    open: (rest) => `Offen: ${rest}`,
+    openSub: (d) => `Zahlbar bis ${d}. Danach kommt eine Mahngebühr dazu, und die Bank zieht vom Konto ein.`,
+    lateSub: (d) => `Die Frist ist am ${d} abgelaufen. Die Bank zieht vom Konto ein, sobald Geld da ist.`,
+    paid: 'Bezahlt',
+    cancelled: 'Erlassen',
+    closedSub: (at, by) => `Am ${at}${by ? ` durch ${by}` : ''}`,
+    fields: { kind: 'Art', creditor: 'Gläubiger', issuedBy: 'Ausgestellt von', at: 'Ausgestellt am', amount: 'Betrag', fee: 'Mahngebühr', paid: 'Bezahlt', reason: 'Grund' },
+    payTitle: 'Bezahlen',
+    payHint: (balance) => `Vom Konto, Kontostand ${balance}. Auch ein Teilbetrag geht.`,
+    pay: 'Bezahlen',
+    paidToast: (a) => `${a} bezahlt`,
+    doneToast: 'Forderung erledigt',
+    cancel: 'Erlassen',
+    cancelReason: 'Grund für den Erlass',
+    cancelConfirm: 'Wirklich erlassen',
+    cancelStop: 'Abbrechen',
+    cancelled2: 'Forderung erlassen',
+    addTitle: 'Forderung eintragen',
+    addWhat: 'Wofür',
+    addHours: 'Frist in Stunden',
+    add: 'Eintragen',
+    added: 'Forderung eingetragen',
+    kinds: { fine: 'Strafe', invoice: 'Rechnung', fee: 'Gebühr', other: 'Forderung' },
+    addHint: (max) => `Frist höchstens ${max} Stunden. Gläubiger ist der Staat. Jede Änderung wird geloggt.`,
+  },
+  errors: {
+    no_session: 'Die Sitzung ist abgelaufen. Öffne die Bank noch einmal.',
+    too_far: 'Du bist zu weit vom Schalter weg.',
+    is_dead: 'Bewusstlos kannst du nicht an dein Konto.',
+    not_here: 'Das geht in dieser Ansicht nicht.',
+    busy: 'Einen Moment, die letzte Buchung läuft noch.',
+    invalid_amount: 'Der Betrag passt nicht. Ganze Dollar, mindestens 1.',
+    invalid_input: 'Die Eingabe passt nicht.',
+    invalid_number: 'Die Kontonummer hat 8 Ziffern.',
+    unknown_account: 'Zu dieser Kontonummer gibt es kein Konto. Prüf die Ziffern.',
+    same_account: 'Das ist dein eigenes Konto.',
+    not_enough_money: 'Auf dem Konto ist nicht genug Geld.',
+    not_enough_cash: 'So viel Bargeld hast du nicht dabei.',
+    no_space: 'Im Inventar ist kein Platz für das Bargeld. Das Geld ist wieder auf dem Konto.',
+    twink_blocked: 'Geld zwischen deinen eigenen Charakteren ist nicht erlaubt.',
+    not_found: 'Das gibt es nicht mehr.',
+    debt_closed: 'Die Forderung ist schon erledigt.',
+    no_permission: 'Dafür hast du keine Rechte.',
+    server_error: 'Fehler auf dem Server. Bitte nochmal versuchen.',
+    timeout: 'Der Server antwortet nicht.',
+    default: 'Das hat nicht geklappt.',
+  },
+};
+
+const VIEWS = [
+  { id: 'overview', icon: 'i-home' },
+  { id: 'transfer', icon: 'i-send', own: true },      // own: nicht in der Admin-Ansicht
+  { id: 'statement', icon: 'i-list' },
+  { id: 'debts', icon: 'i-debt' },
+];
+const QUICK_AMOUNTS = [100, 500, 1000, 5000];
+const ALERT_KINDS = new Set(['collect']);
+const GOOD_KINDS = new Set(['transfer_in', 'credit', 'refund']);
+const DEBT_KINDS = ['fine', 'invoice', 'fee', 'other'];
+const NUMBER_LENGTH = 8;
+const TOAST_MS = 2600;
+const RGB_MAX = 255;
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_VARS = { base: '--rgb-base', ink: '--rgb-ink', accent: '--rgb-accent', mark: '--rgb-mark', signal: '--rgb-signal' };
+const MONEY = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
+
+const state = {
+  open: false, busy: false, admin: false, canManage: false, bankName: '',
+  limits: { purposeMax: 60, transferMax: 1000000, titleMax: 120, debtMax: 1000000, dueHours: 72, maxDueHours: 720 },
+  view: 'overview', overview: null,
+  transfer: { number: '', amount: '', purpose: '', checked: null, error: '' },
+  statement: { filter: 'all', entries: [], page: 0, more: false, loading: false },
+  debts: { status: 'open', list: [], selected: null, loading: false, cancelling: false },
+};
+
+const el = {
+  panel: document.getElementById('panel'),
+  title: document.getElementById('title'),
+  subtitle: document.getElementById('subtitle'),
+  accountLabel: document.getElementById('account-label'),
+  accountName: document.getElementById('account-name'),
+  accountNumber: document.getElementById('account-number'),
+  nav: document.getElementById('nav'),
+  foot: document.getElementById('foot'),
+  cashLabel: document.getElementById('cash-label'),
+  cash: document.getElementById('cash'),
+  meta: document.getElementById('meta'),
+  close: document.getElementById('close'),
+  body: document.getElementById('body'),
+  toast: document.getElementById('toast'),
+};
+
+/* ---------- Helfer ---------- */
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+function icon(id) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.append(use);
+  return svg;
+}
+function button(label, action, variant = '', data = {}) {
+  const b = make('button', `btn ${variant}`.trim(), label);
+  b.type = 'button';
+  b.dataset.action = action;
+  Object.entries(data).forEach(([k, v]) => { b.dataset[k] = v; });
+  return b;
+}
+function input(id, options = {}) {
+  const node = make('input', `input ${options.className || ''}`.trim());
+  node.id = id;
+  node.type = 'text';
+  node.autocomplete = 'off';
+  if (options.numeric) node.inputMode = 'numeric';
+  if (options.maxLength) node.maxLength = options.maxLength;
+  if (options.placeholder) node.placeholder = options.placeholder;
+  if (options.value !== undefined) node.value = options.value;
+  if (options.label) node.setAttribute('aria-label', options.label);
+  return node;
+}
+function field(labelText, control, hint) {
+  const wrap = make('div', 'field');
+  const row = make('div', 'field__row');
+  const label = make('label', 'label', labelText);
+  label.htmlFor = control.id;
+  row.append(label);
+  if (hint) row.append(hint);
+  wrap.append(row, control);
+  return wrap;
+}
+const money = (value) => `${MONEY.format(Number(value) || 0)} $`;
+const signed = (value) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${MONEY.format(Math.abs(Number(value) || 0))} $`;
+const account = (number) => (typeof number === 'string' && number.length === NUMBER_LENGTH ? `${number.slice(0, 4)} ${number.slice(4)}` : (number || ''));
+// "2026-11-14 16:40" -> "14.11.2026, 16:40"
+function when(text) {
+  const m = typeof text === 'string' && text.match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?/);
+  return m ? `${m[3]}.${m[2]}.${m[1]}${m[4] ? `, ${m[4]}` : ''}` : (text || '');
+}
+// Ganzer Betrag aus einem Feld ("1.500" oder "1500"), sonst NaN
+function parseAmount(value) {
+  const text = String(value ?? '').trim().replace(/[.\s$]/g, '');
+  return /^\d+$/.test(text) ? Number(text) : NaN;
+}
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  const root = document.documentElement.style;
+  for (const [key, cssVar] of Object.entries(COLOR_VARS)) {
+    const value = typeof colors[key] === 'string' ? colors[key].trim() : '';
+    const valid = COLOR_PATTERN.test(value) && value.split(' ').every((n) => Number(n) <= RGB_MAX);
+    if (valid) root.setProperty(cssVar, value);
+    else root.removeProperty(cssVar);
+  }
+}
+let toastTimer = null;
+function toast(text, error = false) {
+  el.toast.textContent = text;
+  el.toast.classList.toggle('toast--error', error);
+  el.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.toast.hidden = true; }, TOAST_MS);
+}
+const errorText = (code) => TEXT.errors[code] || TEXT.errors.default;
+
+// Anfrage an den Server. Waehrend sie laeuft, sind alle Buttons gesperrt. Gibt data oder null zurueck.
+async function call(name, data = {}, options = {}) {
+  if (state.busy) return null;
+  setBusy(true);
+  const res = await Bridge.send('bank_call', { name, data });
+  setBusy(false);
+  if (!res || !res.ok) {
+    if (!options.silent) toast(errorText(res && res.error), true);
+    return options.raw ? { error: (res && res.error) || 'default' } : null;
+  }
+  return res.data || {};
+}
+function setBusy(busy) {
+  state.busy = busy;
+  el.panel.querySelectorAll('button[data-lock]').forEach((b) => { b.disabled = busy; });
+}
+function lock(node) {
+  node.dataset.lock = '1';
+  return node;
+}
+function takeOverview(data) {
+  if (data && data.overview) {
+    state.overview = data.overview;
+    renderSide();
+  }
+}
+
+/* ---------- Linke Spalte ---------- */
+function renderSide() {
+  const o = state.overview;
+  if (!o) return;
+  el.title.textContent = state.bankName;
+  el.subtitle.textContent = state.admin ? TEXT.subtitleAdmin : TEXT.subtitle;
+  el.accountLabel.textContent = TEXT.account;
+  el.accountName.textContent = o.name;
+  el.accountNumber.textContent = account(o.number);
+  el.foot.hidden = state.admin || typeof o.cash !== 'number';
+  el.cashLabel.textContent = TEXT.cash;
+  el.cash.textContent = money(o.cash);
+  el.meta.textContent = state.admin ? (state.canManage ? TEXT.adminManage : TEXT.adminRead) : TEXT.barBalance(money(o.balance));
+
+  el.nav.replaceChildren();
+  VIEWS.filter((v) => !(v.own && state.admin)).forEach((v) => {
+    const li = make('li');
+    const b = make('button', 'nav__item');
+    b.type = 'button';
+    b.dataset.action = 'view';
+    b.dataset.view = v.id;
+    if (v.id === state.view) b.setAttribute('aria-current', 'page');
+    b.append(icon(v.icon), make('span', '', TEXT.nav[v.id]));
+    if (v.id === 'debts' && o.debts.count > 0) {
+      b.append(make('span', `nav__count num${o.debts.overdue > 0 ? ' nav__count--late' : ''}`, o.debts.count));
+    }
+    li.append(b);
+    el.nav.append(li);
+  });
+}
+
+/* ---------- Bausteine ---------- */
+function card(title, sub, variant = '', action = null) {
+  const node = make(action ? 'button' : 'div', `card ${variant}`.trim());
+  if (action) { node.type = 'button'; node.dataset.action = action.name; Object.entries(action.data || {}).forEach(([k, v]) => { node.dataset[k] = v; }); }
+  node.append(make('span', 'card__mark'), make('span', 'card__title num', title), make('span', 'card__sub', sub));
+  return node;
+}
+function ledger(entries) {
+  const list = make('ol', 'ledger');
+  entries.forEach((e) => {
+    const li = make('li');
+    const what = make('div');
+    const kindClass = ALERT_KINDS.has(e.kind) ? ' kind--alert' : GOOD_KINDS.has(e.kind) ? ' kind--good' : '';
+    what.append(make('span', `kind${kindClass}`, TEXT.kinds[e.kind] || e.kind), make('span', '', e.text));
+    if (e.other) what.append(make('small', '', e.otherNumber ? `${e.other}, ${TEXT.facts.number(account(e.otherNumber))}` : e.other));
+    li.append(make('time', 'num', when(e.at)), what, make('span', `amount num${e.amount > 0 ? ' amount--in' : ''}`, signed(e.amount)));
+    list.append(li);
+  });
+  return list;
+}
+function empty(title, text) {
+  const node = make('div', 'empty');
+  node.append(make('div', 'empty__title', title), make('div', 'empty__text', text));
+  return node;
+}
+function tabs(items, selected, action) {
+  const bar = make('div', 'tabs');
+  bar.setAttribute('role', 'tablist');
+  Object.entries(items).forEach(([key, label]) => {
+    const b = make('button', 'tab', label);
+    b.type = 'button';
+    b.dataset.action = action;
+    b.dataset.key = key;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(key === selected));
+    bar.append(b);
+  });
+  return bar;
+}
+
+/* ---------- Uebersicht ---------- */
+function renderOverview() {
+  const o = state.overview;
+  const cols = make('div', 'cols');
+  const left = make('div');
+  const right = make('div');
+
+  left.append(make('h2', 'title', o.name));
+  const facts = make('div', 'facts');
+  facts.append(make('span', 'num', TEXT.facts.number(account(o.number))), make('span', 'num', TEXT.facts.id(o.characterId)));
+  left.append(facts);
+  left.append(card(money(o.balance), TEXT.balance));
+  if (o.debts.count > 0) {
+    left.append(card(TEXT.debtCard(o.debts.count), TEXT.debtCardSub(money(o.debts.total), o.debts.overdue),
+      o.debts.overdue > 0 ? 'card--alert' : '', { name: 'view', data: { view: 'debts' } }));
+  }
+
+  if (!state.admin) {
+    left.append(make('h3', 'section-title', TEXT.cashTitle));
+    const form = make('div', 'form');
+    const amount = input('cash-amount', { className: 'input--amount num', numeric: true, placeholder: '0' });
+    form.append(field(TEXT.amount, amount));
+    const chips = make('div', 'chips');
+    QUICK_AMOUNTS.forEach((value) => {
+      const chip = make('button', 'chip num', MONEY.format(value));
+      chip.type = 'button';
+      chip.dataset.action = 'cash-quick';
+      chip.dataset.value = value;
+      chips.append(chip);
+    });
+    const allChip = make('button', 'chip', TEXT.all);
+    allChip.type = 'button';
+    allChip.dataset.action = 'cash-quick';
+    allChip.dataset.value = 'all';
+    chips.append(allChip);
+    form.append(chips);
+    const row = make('div', 'row');
+    row.append(lock(button(TEXT.deposit, 'deposit')), lock(button(TEXT.withdraw, 'withdraw', 'btn--ghost')));
+    form.append(row);
+    left.append(form);
+  }
+
+  right.append(make('h3', 'section-title', TEXT.recent));
+  right.append(o.recent.length ? ledger(o.recent) : make('div', 'none', TEXT.noEntries));
+  cols.append(left, right);
+  el.body.replaceChildren(cols);
+}
+
+async function moveCash(kind) {
+  const field = document.getElementById('cash-amount');
+  const amount = parseAmount(field.value);
+  if (!Number.isInteger(amount) || amount < 1) {
+    field.setAttribute('aria-invalid', 'true');
+    toast(TEXT.errors.invalid_amount, true);
+    field.focus();
+    return;
+  }
+  const data = await call(kind === 'deposit' ? 'bank_deposit' : 'bank_withdraw', { amount });
+  if (!data) return;
+  takeOverview(data);
+  toast(kind === 'deposit' ? TEXT.deposited(money(amount)) : TEXT.withdrawn(money(amount)));
+  renderOverview();
+}
+
+/* ---------- Ueberweisen ---------- */
+function renderTransfer() {
+  const t = state.transfer;
+  const o = state.overview;
+  const cols = make('div', 'cols');
+  const left = make('div');
+  const right = make('div');
+
+  left.append(make('h2', 'title title--sm', TEXT.transfer.title));
+  const facts = make('div', 'facts');
+  facts.append(make('span', 'num', `${TEXT.balance}: ${money(o.balance)}`));
+  left.append(facts);
+
+  if (t.checked) {
+    left.append(card(t.checked.name, TEXT.transfer.confirmSub(account(t.checked.number), money(t.checked.amount), t.checked.purpose)));
+    const row = make('div', 'row');
+    row.style.marginTop = 'var(--space-4)';
+    row.append(lock(button(TEXT.transfer.send, 'transfer-send')), lock(button(TEXT.transfer.edit, 'transfer-edit', 'btn--ghost')));
+    left.append(row);
+  } else {
+    const form = make('form', 'form');
+    form.id = 'transfer-form';
+    form.style.marginTop = 'var(--space-5)';
+    form.noValidate = true;
+    const number = input('transfer-number', { className: 'num', numeric: true, maxLength: NUMBER_LENGTH + 1, placeholder: '0000 0000', value: account(t.number) });
+    const amount = input('transfer-amount', { className: 'input--amount num', numeric: true, placeholder: '0', value: t.amount });
+    const purpose = input('transfer-purpose', { maxLength: state.limits.purposeMax, placeholder: TEXT.transfer.purposePlaceholder, value: t.purpose });
+    const count = make('span', 'field__hint num', `${t.purpose.length} / ${state.limits.purposeMax}`);
+    count.id = 'transfer-count';
+    form.append(field(TEXT.transfer.number, number, make('span', 'field__hint', TEXT.transfer.numberHint)), field(TEXT.amount, amount), field(TEXT.transfer.purpose, purpose, count));
+    if (t.error) {
+      const error = make('p', 'error', t.error);
+      error.setAttribute('role', 'alert');
+      form.append(error);
+    }
+    const row = make('div', 'row');
+    const submit = lock(make('button', 'btn', TEXT.transfer.check));
+    submit.type = 'submit';
+    row.append(submit);
+    form.append(row, make('p', 'none', TEXT.transfer.hint));
+    left.append(form);
+  }
+
+  right.append(make('h3', 'section-title', TEXT.transfer.recipients));
+  const recipients = Array.isArray(o.recipients) ? o.recipients : [];
+  if (!recipients.length) right.append(make('div', 'none', TEXT.transfer.noRecipients));
+  else {
+    const list = make('ul', 'list');
+    recipients.forEach((r) => {
+      const li = make('li');
+      const b = make('button', 'pick');
+      b.type = 'button';
+      b.dataset.action = 'recipient';
+      b.dataset.number = r.number;
+      b.setAttribute('aria-selected', String(r.number === t.number));
+      b.append(make('span', 'pick__name', r.name), make('span', 'pick__value num', account(r.number)));
+      li.append(b);
+      list.append(li);
+    });
+    right.append(list);
+  }
+  cols.append(left, right);
+  el.body.replaceChildren(cols);
+}
+
+function readTransfer() {
+  const t = state.transfer;
+  const number = document.getElementById('transfer-number');
+  if (!number) return;
+  t.number = number.value.replace(/\D/g, '').slice(0, NUMBER_LENGTH);
+  t.amount = document.getElementById('transfer-amount').value.trim();
+  t.purpose = document.getElementById('transfer-purpose').value.trim();
+}
+
+async function checkTransfer() {
+  const t = state.transfer;
+  readTransfer();
+  const amount = parseAmount(t.amount);
+  t.error = '';
+  if (t.number.length !== NUMBER_LENGTH) t.error = TEXT.errors.invalid_number;
+  else if (!Number.isInteger(amount) || amount < 1 || amount > state.limits.transferMax) t.error = TEXT.errors.invalid_amount;
+  else if (amount > state.overview.balance) t.error = TEXT.errors.not_enough_money;
+  if (t.error) { renderTransfer(); return; }
+  const data = await call('bank_lookup', { number: t.number }, { silent: true, raw: true });
+  if (!data) return;
+  if (data.error) { t.error = errorText(data.error); renderTransfer(); return; }
+  t.checked = { name: data.name, number: data.number, amount, purpose: t.purpose };
+  renderTransfer();
+  el.body.querySelector('[data-action="transfer-send"]')?.focus();
+}
+
+async function sendTransfer() {
+  const t = state.transfer;
+  if (!t.checked) return;
+  const data = await call('bank_transfer', { number: t.checked.number, amount: t.checked.amount, purpose: t.checked.purpose });
+  if (!data) { t.checked = null; renderTransfer(); return; }
+  takeOverview(data);
+  toast(TEXT.transfer.sent(money(t.checked.amount), data.to ? data.to.name : t.checked.name));
+  state.transfer = { number: '', amount: '', purpose: '', checked: null, error: '' };
+  renderTransfer();
+}
+
+/* ---------- Kontoauszug ---------- */
+function renderStatement() {
+  const s = state.statement;
+  const wrap = make('div');
+  wrap.append(tabs(TEXT.statement.filters, s.filter, 'statement-filter'));
+  if (s.loading && !s.entries.length) wrap.append(make('div', 'none', TEXT.statement.loading));
+  else if (!s.entries.length) wrap.append(empty(TEXT.statement.empty, TEXT.statement.emptyText));
+  else {
+    const table = make('table', 'table');
+    const head = make('tr');
+    const cols = TEXT.statement.cols;
+    [[cols.at, ''], [cols.what, ''], [cols.other, ''], [cols.amount, 'right'], [cols.balance, 'right']].forEach(([label, cls]) => {
+      const th = make('th', cls, label);
+      th.scope = 'col';
+      head.append(th);
+    });
+    const thead = make('thead');
+    thead.append(head);
+    const tbody = make('tbody');
+    s.entries.forEach((e) => {
+      const tr = make('tr');
+      const what = make('td');
+      const kindClass = ALERT_KINDS.has(e.kind) ? ' kind--alert' : GOOD_KINDS.has(e.kind) ? ' kind--good' : '';
+      what.append(make('span', `kind${kindClass}`, TEXT.kinds[e.kind] || e.kind), make('span', '', e.text));
+      const other = make('td', 'muted');
+      if (e.other) other.append(make('span', '', e.other));
+      if (e.otherNumber) { other.append(make('br'), make('span', 'num', TEXT.facts.number(account(e.otherNumber)))); }
+      tr.append(make('td', 'when num', when(e.at)), what, other,
+        make('td', `right num amount${e.amount > 0 ? ' amount--in' : ''}`, signed(e.amount)), make('td', 'right num muted', money(e.balance)));
+      tbody.append(tr);
+    });
+    table.append(thead, tbody);
+    wrap.append(table);
+    if (s.more) {
+      const more = make('div', 'more');
+      more.append(lock(button(s.loading ? TEXT.statement.loading : TEXT.statement.more, 'statement-more', 'btn--ghost')));
+      wrap.append(more);
+    }
+  }
+  el.body.replaceChildren(wrap);
+}
+
+async function loadStatement(reset) {
+  const s = state.statement;
+  if (reset) Object.assign(s, { entries: [], page: 0, more: false });
+  s.loading = true;
+  if (state.view === 'statement') renderStatement();
+  const data = await call('bank_statement', { page: s.page + 1, filter: s.filter });
+  s.loading = false;
+  if (data) {
+    s.entries = s.entries.concat(Array.isArray(data.entries) ? data.entries : []);
+    s.page = Number(data.page) || s.page + 1;
+    s.more = data.more === true;
+  }
+  if (state.view === 'statement') renderStatement();
+}
+
+/* ---------- Schulden ---------- */
+function debtDetail(d) {
+  const o = state.overview;
+  const box = make('div');
+  box.append(make('h2', 'title title--sm', d.title));
+  const facts = make('div', 'facts');
+  facts.append(make('span', '', d.kindLabel), make('span', '', d.creditorLabel));
+  box.append(facts);
+
+  if (d.status === 'open') {
+    box.append(card(TEXT.debts.open(money(d.rest)), d.overdue ? TEXT.debts.lateSub(when(d.due)) : TEXT.debts.openSub(when(d.due)), d.overdue ? 'card--alert' : ''));
+  } else {
+    box.append(card(d.status === 'paid' ? TEXT.debts.paid : TEXT.debts.cancelled, TEXT.debts.closedSub(when(d.closed), d.closedBy), 'card--done'));
+  }
+
+  const f = TEXT.debts.fields;
+  const details = make('dl', 'details');
+  details.style.marginTop = 'var(--space-5)';
+  const add = (label, value, cls = '') => { if (value !== undefined && value !== null && value !== '') details.append(make('dt', '', label), make('dd', cls, value)); };
+  add(f.kind, d.kindLabel);
+  add(f.creditor, d.creditorLabel);
+  add(f.issuedBy, d.issuedBy);
+  add(f.at, when(d.at), 'num');
+  add(f.amount, money(d.amount), 'num');
+  if (d.fee > 0) add(f.fee, money(d.fee), 'num');
+  if (d.paid > 0) add(f.paid, money(d.paid), 'num');
+  add(f.reason, d.closeReason);
+  box.append(details);
+
+  if (d.status === 'open' && !state.admin) {
+    box.append(make('h3', 'section-title', TEXT.debts.payTitle));
+    const form = make('form', 'form');
+    form.id = 'pay-form';
+    form.noValidate = true;
+    const amount = input('pay-amount', { className: 'input--amount num', numeric: true, value: String(d.rest) });
+    form.append(field(TEXT.amount, amount, make('span', 'field__hint num', TEXT.debts.payHint(money(o.balance)))));
+    const row = make('div', 'row');
+    const submit = lock(make('button', 'btn', TEXT.debts.pay));
+    submit.type = 'submit';
+    row.append(submit);
+    form.append(row);
+    box.append(form);
+  }
+  if (d.status === 'open' && state.admin && state.canManage) {
+    const row = make('div', 'row');
+    row.style.marginTop = 'var(--space-5)';
+    if (state.debts.cancelling) {
+      const reason = input('cancel-reason', { maxLength: state.limits.titleMax, placeholder: TEXT.debts.cancelReason, label: TEXT.debts.cancelReason });
+      reason.style.maxWidth = '320px';
+      row.append(reason, lock(button(TEXT.debts.cancelConfirm, 'debt-cancel-confirm', 'btn--danger')), lock(button(TEXT.debts.cancelStop, 'debt-cancel-stop', 'btn--ghost')));
+    } else {
+      row.append(lock(button(TEXT.debts.cancel, 'debt-cancel', 'btn--danger')));
+    }
+    box.append(row);
+  }
+  return box;
+}
+
+function addDebtForm() {
+  const box = make('form', 'fix');
+  box.id = 'debt-add-form';
+  box.noValidate = true;
+  box.append(make('span', 'fix__label', TEXT.debts.addTitle));
+  const grid = make('div', 'fix__grid');
+  const amount = input('add-amount', { className: 'num', numeric: true, placeholder: TEXT.amount, label: TEXT.amount });
+  const title = input('add-title', { maxLength: state.limits.titleMax, placeholder: TEXT.debts.addWhat, label: TEXT.debts.addWhat });
+  const kind = make('select', 'select');
+  kind.id = 'add-kind';
+  kind.setAttribute('aria-label', TEXT.debts.fields.kind);
+  DEBT_KINDS.forEach((key) => {
+    const option = make('option', '', TEXT.debts.kinds[key]);
+    option.value = key;
+    kind.append(option);
+  });
+  const hours = input('add-hours', { className: 'num', numeric: true, value: String(state.limits.dueHours) });
+  const hoursWrap = make('div', 'fix__inline');
+  const hoursLabel = make('label', 'field__hint', TEXT.debts.addHours);
+  hoursLabel.htmlFor = hours.id;
+  hoursWrap.append(hoursLabel, hours);
+  grid.append(amount, title, kind, hoursWrap);
+  const row = make('div', 'row');
+  const submit = lock(make('button', 'btn btn--sm', TEXT.debts.add));
+  submit.type = 'submit';
+  row.append(submit, make('span', 'field__hint', TEXT.debts.addHint(state.limits.maxDueHours)));
+  box.append(grid, row);
+  return box;
+}
+
+function renderDebts() {
+  const s = state.debts;
+  const cols = make('div', 'cols');
+  const left = make('div');
+  const right = make('div');
+
+  left.append(tabs(TEXT.debts.tabs, s.status, 'debts-status'));
+  if (s.loading && !s.list.length) left.append(make('div', 'none', TEXT.statement.loading));
+  else if (!s.list.length) {
+    left.append(s.status === 'open' ? empty(TEXT.debts.emptyOpen, TEXT.debts.emptyOpenText) : empty(TEXT.debts.emptyClosed, TEXT.debts.emptyClosedText));
+  } else {
+    const list = make('ul', 'list');
+    list.setAttribute('role', 'listbox');
+    s.list.forEach((d) => {
+      const li = make('li');
+      const b = make('button', 'pick');
+      b.type = 'button';
+      b.dataset.action = 'debt';
+      b.dataset.id = d.id;
+      b.setAttribute('role', 'option');
+      b.setAttribute('aria-selected', String(d.id === s.selected));
+      const meta = make('div', 'pick__meta');
+      meta.append(make('span', '', `${d.kindLabel}, ${d.creditorLabel}`));
+      if (d.status === 'open') meta.append(make('span', d.overdue ? 'late num' : 'num', d.overdue ? TEXT.debts.late(when(d.due)) : TEXT.debts.due(when(d.due))));
+      else meta.append(make('span', 'num', `${d.status === 'paid' ? TEXT.debts.paid : TEXT.debts.cancelled}, ${when(d.closed)}`));
+      b.append(make('span', 'pick__name', d.title), make('span', 'pick__value num', money(d.status === 'open' ? d.rest : d.amount + d.fee)), meta);
+      li.append(b);
+      list.append(li);
+    });
+    left.append(list);
+  }
+  if (state.admin && state.canManage) left.append(addDebtForm());
+
+  const selected = s.list.find((d) => d.id === s.selected);
+  right.append(selected ? debtDetail(selected) : empty(TEXT.debts.pickTitle, TEXT.debts.pickText));
+  cols.append(left, right);
+  el.body.replaceChildren(cols);
+}
+
+async function loadDebts(keepSelection) {
+  const s = state.debts;
+  s.loading = true;
+  if (state.view === 'debts') renderDebts();
+  const data = await call('bank_debts', { status: s.status, page: 1 });
+  s.loading = false;
+  if (data) {
+    s.list = Array.isArray(data.debts) ? data.debts : [];
+    if (!keepSelection || !s.list.some((d) => d.id === s.selected)) s.selected = s.list.length ? s.list[0].id : null;
+  }
+  s.cancelling = false;
+  if (state.view === 'debts') renderDebts();
+}
+
+async function payDebt() {
+  const s = state.debts;
+  const debt = s.list.find((d) => d.id === s.selected);
+  const field = document.getElementById('pay-amount');
+  if (!debt || !field) return;
+  const amount = parseAmount(field.value);
+  if (!Number.isInteger(amount) || amount < 1 || amount > debt.rest) {
+    field.setAttribute('aria-invalid', 'true');
+    toast(TEXT.errors.invalid_amount, true);
+    return;
+  }
+  const data = await call('bank_debt_pay', { id: debt.id, amount });
+  if (!data) return;
+  takeOverview(data);
+  toast(data.debt && data.debt.status === 'paid' ? TEXT.debts.doneToast : TEXT.debts.paidToast(money(data.paid || amount)));
+  await loadDebts(true);
+}
+
+async function addDebt() {
+  const amount = parseAmount(document.getElementById('add-amount').value);
+  const title = document.getElementById('add-title').value.trim();
+  const dueHours = parseAmount(document.getElementById('add-hours').value);
+  if (!Number.isInteger(amount) || amount < 1 || amount > state.limits.debtMax) { toast(TEXT.errors.invalid_amount, true); return; }
+  if (!title || !Number.isInteger(dueHours) || dueHours < 1 || dueHours > state.limits.maxDueHours) { toast(TEXT.errors.invalid_input, true); return; }
+  const data = await call('bank_debt_add', { amount, title, kind: document.getElementById('add-kind').value, dueHours });
+  if (!data) return;
+  takeOverview(data);
+  toast(TEXT.debts.added);
+  state.debts.status = 'open';
+  state.debts.selected = data.debt ? data.debt.id : state.debts.selected;
+  await loadDebts(true);
+}
+
+async function cancelDebt() {
+  const reason = document.getElementById('cancel-reason');
+  const data = await call('bank_debt_cancel', { id: state.debts.selected, reason: reason ? reason.value.trim() : '' });
+  if (!data) return;
+  takeOverview(data);
+  toast(TEXT.debts.cancelled2);
+  await loadDebts(false);
+}
+
+/* ---------- Ansicht wechseln ---------- */
+function render() {
+  if (!state.overview) return;
+  renderSide();
+  if (state.view === 'overview') renderOverview();
+  if (state.view === 'transfer') renderTransfer();
+  if (state.view === 'statement') renderStatement();
+  if (state.view === 'debts') renderDebts();
+}
+
+async function show(view) {
+  if (state.busy || !VIEWS.some((v) => v.id === view && !(v.own && state.admin))) return;
+  if (state.view === 'transfer') readTransfer();
+  state.view = view;
+  render();
+  if (view === 'statement') await loadStatement(true);
+  if (view === 'debts') await loadDebts(false);
+}
+
+// Neu laden nach einer Aenderung von aussen (Geldeingang, neue Forderung)
+async function refresh() {
+  if (!state.open || state.busy) return;
+  const data = await call('bank_overview', {}, { silent: true });
+  if (!data) return;
+  takeOverview(data);
+  if (state.view === 'overview') {
+    // Getippten Betrag nicht verlieren
+    const typed = document.getElementById('cash-amount')?.value || '';
+    renderOverview();
+    const field = document.getElementById('cash-amount');
+    if (field) field.value = typed;
+  }
+  if (state.view === 'statement') await loadStatement(true);
+  if (state.view === 'debts') await loadDebts(true);
+}
+
+function close() {
+  if (!state.open) return;
+  state.open = false;
+  el.panel.hidden = true;
+  el.toast.hidden = true;
+  Bridge.send('bank_close', {});
+  // Den iframe in der Shell ausblenden, sonst faengt er weiter Klicks ab
+  if (window.parent !== window) window.parent.postMessage({ type: 'shell_hide', ui: 'bank' }, '*');
+}
+
+/* ---------- Ereignisse ---------- */
+document.addEventListener('click', async (event) => {
+  const t = event.target.closest('[data-action]');
+  if (!t || !state.open) return;
+  const a = t.dataset.action;
+  if (a === 'close') { close(); return; }
+  if (state.busy) return;
+  if (a === 'view') await show(t.dataset.view);
+  if (a === 'cash-quick') {
+    const field = document.getElementById('cash-amount');
+    // "Alles": das ganze Bargeld. Zum Auszahlen tippt man den Betrag selbst.
+    field.value = t.dataset.value === 'all' ? String(state.overview.cash || 0) : t.dataset.value;
+    field.removeAttribute('aria-invalid');
+    field.focus();
+  }
+  if (a === 'deposit' || a === 'withdraw') await moveCash(a);
+  if (a === 'recipient') {
+    readTransfer();
+    Object.assign(state.transfer, { number: t.dataset.number, checked: null, error: '' });
+    renderTransfer();
+    document.getElementById('transfer-amount')?.focus();
+  }
+  if (a === 'transfer-send') await sendTransfer();
+  if (a === 'transfer-edit') { state.transfer.checked = null; renderTransfer(); document.getElementById('transfer-amount')?.focus(); }
+  if (a === 'statement-filter' && t.dataset.key !== state.statement.filter) { state.statement.filter = t.dataset.key; await loadStatement(true); }
+  if (a === 'statement-more') await loadStatement(false);
+  if (a === 'debts-status' && t.dataset.key !== state.debts.status) { state.debts.status = t.dataset.key; state.debts.list = []; await loadDebts(false); }
+  if (a === 'debt') { state.debts.selected = Number(t.dataset.id); state.debts.cancelling = false; renderDebts(); }
+  if (a === 'debt-cancel') { state.debts.cancelling = true; renderDebts(); document.getElementById('cancel-reason')?.focus(); }
+  if (a === 'debt-cancel-stop') { state.debts.cancelling = false; renderDebts(); }
+  if (a === 'debt-cancel-confirm') await cancelDebt();
+});
+
+document.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.open || state.busy) return;
+  if (event.target.id === 'transfer-form') await checkTransfer();
+  if (event.target.id === 'pay-form') await payDebt();
+  if (event.target.id === 'debt-add-form') await addDebt();
+});
+
+document.addEventListener('input', (event) => {
+  const t = event.target;
+  if (t.id === 'transfer-purpose') document.getElementById('transfer-count').textContent = `${t.value.length} / ${state.limits.purposeMax}`;
+  if (t.id === 'transfer-number') {
+    const digits = t.value.replace(/\D/g, '').slice(0, NUMBER_LENGTH);
+    t.value = digits.length > 4 ? `${digits.slice(0, 4)} ${digits.slice(4)}` : digits;
+  }
+  if (t.getAttribute('aria-invalid')) t.removeAttribute('aria-invalid');
+});
+
+document.addEventListener('keydown', (event) => {
+  if (!state.open) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (state.debts.cancelling) { state.debts.cancelling = false; renderDebts(); return; }
+    if (state.view === 'transfer' && state.transfer.checked) { state.transfer.checked = null; renderTransfer(); return; }
+    close();
+    return;
+  }
+  if (event.key === 'Enter' && event.target.id === 'cash-amount') { event.preventDefault(); moveCash('deposit'); return; }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const group = event.target.closest('.nav, .list');
+    if (!group) return;
+    event.preventDefault();
+    const items = [...group.querySelectorAll('button')];
+    const index = items.indexOf(document.activeElement);
+    (items[Math.max(0, Math.min(items.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))] || items[0]).focus();
+  }
+});
+
+Bridge.on('bank_open', (data) => {
+  applyColors(data.colors);
+  const limits = state.limits;
+  Object.assign(state, {
+    open: true, busy: false, admin: data.admin === true, canManage: data.canManage === true,
+    bankName: typeof data.bankName === 'string' ? data.bankName : '', view: 'overview', overview: data.overview || null,
+    limits: {
+      purposeMax: Number(data.purposeMax) || limits.purposeMax, transferMax: Number(data.transferMax) || limits.transferMax,
+      titleMax: Number(data.titleMax) || limits.titleMax, debtMax: Number(data.debtMax) || limits.debtMax,
+      dueHours: Number(data.dueHours) || limits.dueHours, maxDueHours: Number(data.maxDueHours) || limits.maxDueHours,
+    },
+    transfer: { number: '', amount: '', purpose: '', checked: null, error: '' },
+    statement: { filter: 'all', entries: [], page: 0, more: false, loading: false },
+    debts: { status: 'open', list: [], selected: null, loading: false, cancelling: false },
+  });
+  el.panel.hidden = !state.overview;
+  render();
+  // Fokus ins Betragsfeld, damit man gleich tippen kann. In der Admin-Ansicht auf den ersten Bereich.
+  (document.getElementById('cash-amount') || el.nav.querySelector('button'))?.focus();
+});
+
+Bridge.on('bank_refresh', () => { refresh(); });
+
+Bridge.on('bank_close', () => {
+  state.open = false;
+  el.panel.hidden = true;
+  el.toast.hidden = true;
+});
+
+el.close.setAttribute('aria-label', TEXT.close);
+el.nav.setAttribute('aria-label', TEXT.navLabel);
+
+(async () => {
+  const res = await Bridge.send('ui_ready', { ui: 'bank', version: CONTRACT_VERSION });
+  if (res && res.ok && res.data) applyColors(res.data.colors);
+  if (Bridge.platform === 'mock') {
+    const params = new URLSearchParams(location.search);
+    const admin = params.has('admin');
+    Mock.push('bank_open', { channel: admin ? 'admin' : 'bank', bankName: 'Fleeca Bank', overview: Mock.overview(), admin, canManage: admin && params.has('manage'),
+      purposeMax: 60, transferMax: 1000000, titleMax: 120, debtMax: 1000000, dueHours: 72, maxDueHours: 720 });
+    const view = params.get('view');
+    if (view) await show(view);
+  }
+})();
+</script>
+</body>
+</html>

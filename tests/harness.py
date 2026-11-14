@@ -17,6 +17,7 @@ LIB = os.path.join(ROOT, 'core_lib')
 FACTIONS = os.path.join(ROOT, 'core_factions')
 EMS = os.path.join(ROOT, 'core_ems')
 DISPATCH = os.path.join(ROOT, 'core_dispatch')
+BANK = os.path.join(ROOT, 'core_bank')
 
 # Die Tests LOESCHEN alle Tabellen der Datenbank. Darum nur gegen eine eigene Test-Datenbank,
 # deren Name "test" enthaelt. Nie gegen die Datenbank des Servers.
@@ -53,7 +54,20 @@ EXTRA_FILES = {
         (EMS, 'server/actions.lua'), (EMS, 'server/records.lua')],
     'core_dispatch': [(CORE, 'shared/config.lua'), (DISPATCH, 'config.lua')] + BRIDGE + [
         (DISPATCH, 'server/schema.lua'), (DISPATCH, 'server/main.lua'), (DISPATCH, 'server/calls.lua'), (DISPATCH, 'server/mdt.lua')],
+    'core_bank': [(CORE, 'shared/config.lua'), (BANK, 'config.lua'), (BANK, 'data/banks_gta5.lua')] + BRIDGE + [
+        (BANK, 'server/schema.lua'), (BANK, 'server/main.lua'), (BANK, 'server/accounts.lua'), (BANK, 'server/debts.lua'),
+        (BANK, 'server/sessions.lua'), (BANK, 'server/admin.lua')],
 }
+
+
+def resource_version(name):
+    """Version aus dem fxmanifest der Resource, wie GetResourceMetadata im Spiel."""
+    try:
+        text = open(os.path.join(ROOT, str(name), 'fxmanifest.lua'), encoding='utf-8').read()
+    except OSError:
+        return None
+    found = re.search(r"^version\s+'([^']+)'", text, re.M)
+    return found.group(1) if found else None
 
 
 def connect():
@@ -68,7 +82,8 @@ def reset_db():
         for table in ['audit_log', 'account_links', 'account_identifiers', 'characters', 'accounts', 'bans', 'admin_jails', 'account_devices', 'account_ips', 'device_alerts', 'warns', 'tickets', 'ticket_messages', 'audit_log_archive', 'inventories', 'weapon_registry', 'licenses', 'admin_keys',
                       'faction_members', 'faction_settings', 'faction_ranks', 'faction_vehicles', 'faction_departments', 'faction_exams',
                       'faction_history', 'faction_archive', 'faction_divisions', 'faction_info', 'faction_logs', 'ems_diseases', 'ems_records', 'ems_insurance',
-                      'dispatch_calls', 'dispatch_events', 'dispatch_units', 'dispatch_blocks']:
+                      'dispatch_calls', 'dispatch_events', 'dispatch_units', 'dispatch_blocks',
+                      'bank_accounts', 'bank_transactions', 'bank_debts']:
             cur.execute(f'DROP TABLE IF EXISTS {table}')
         cur.execute('SET FOREIGN_KEY_CHECKS=1')
         for statement in open(f'{CORE}/database/schema.sql').read().split(';'):
@@ -255,6 +270,7 @@ class Env:
                          exports_of=lambda target: env._exports_of(resource, target),
                          broadcast=lambda name, args: env._broadcast(resource, name, args),
                          started=lambda name: name in env.runtimes,
+                         version=lambda name: resource_version(name),
                          setbucket=lambda src, b: env.buckets.__setitem__(src, b),
                          getbucket=lambda src: env.buckets.get(src, 0))
         g.RESOURCE_NAME = resource
@@ -334,7 +350,7 @@ class Env:
             __index = function(_, res) return py.exports_of(res) end,
         })
         function GetResourceState(name) if py.started(name) then return 'started' end return 'missing' end
-        function GetResourceMetadata(name, key, i) return '1.6.0' end
+        function GetResourceMetadata(name, key, i) return py.version(name) end
         function TriggerEvent(name, ...)
             local args = table.pack(...)
             for _, h in ipairs(HANDLERS[name] or {}) do h(table.unpack(args, 1, args.n)) end

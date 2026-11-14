@@ -4,12 +4,17 @@
 --   2. Jede Buchung wird mit Kontostand vorher und nachher geloggt.
 --   3. Abbuchen klappt nur, wenn genug da ist (bedingtes UPDATE), und pro Charakter
 --      laeuft immer nur eine Buchung gleichzeitig. So kann nichts doppelt oder ins Minus gehen.
+--   4. Nach jeder Buchung kommt das Server-Ereignis core:moneyBooked (seit Core 1.16.0), z. B. fuer den
+--      Kontoauszug von core_bank:
+--      { characterId, account = 'cash' | 'bank', amount (mit Vorzeichen), balance, reason,
+--        kind = 'add' | 'remove' | 'transfer_in' | 'transfer_out', other = { characterId, name }?, resource?, data? }
 
 Money = {}
 
 local ACCOUNTS = { cash = 'cash', bank = 'bank' } -- erlaubte Konten = Spaltennamen
 local LOCK_WAIT_MS = 10
 local UPDATE_EVENT = 'core:money:update'
+local BOOKED_EVENT = 'core:moneyBooked'
 local DEBUG = Platform.GetConvar('core_debug', 'false') == 'true'
 
 local locks = {}
@@ -224,6 +229,8 @@ local function book(characterId, account, delta, reason, options)
     })
 
     sync(characterId, column, balance, delta)
+    Platform.Emit(BOOKED_EVENT, { characterId = characterId, account = column, amount = delta, balance = balance, reason = reason,
+        kind = delta > 0 and 'add' or 'remove', resource = Platform.GetCallingResource(), data = options.data })
     return balance
 end
 
@@ -314,7 +321,7 @@ function Money.TransferByCharacter(fromCharacterId, toCharacterId, account, amou
         balance_before = result.from + amount,
         balance_after = result.from,
         reason = reason,
-        data = { account = column, transferId = transferId, toCharacterId = toCharacterId, toName = toName },
+        data = { account = column, transferId = transferId, toCharacterId = toCharacterId, toName = toName, extra = options.data },
     })
     Core.Log({
         actor_account_id = options.actorAccountId,
@@ -327,7 +334,7 @@ function Money.TransferByCharacter(fromCharacterId, toCharacterId, account, amou
         balance_before = result.to - amount,
         balance_after = result.to,
         reason = reason,
-        data = { account = column, transferId = transferId, fromCharacterId = fromCharacterId, fromName = fromName },
+        data = { account = column, transferId = transferId, fromCharacterId = fromCharacterId, fromName = fromName, extra = options.data },
     })
 
     sync(fromCharacterId, column, result.from, -amount)
@@ -335,7 +342,13 @@ function Money.TransferByCharacter(fromCharacterId, toCharacterId, account, amou
     if not twinkBlock then
         Twinks.Check(fromCharacterId, toCharacterId, 'money_transfer', { amount = amount, account = column, transferId = transferId, reason = reason })
     end
-    return result.from
+    local resource = Platform.GetCallingResource()
+    Platform.Emit(BOOKED_EVENT, { characterId = fromCharacterId, account = column, amount = -amount, balance = result.from, reason = reason,
+        kind = 'transfer_out', other = { characterId = toCharacterId, name = toName }, resource = resource, data = options.data })
+    Platform.Emit(BOOKED_EVENT, { characterId = toCharacterId, account = column, amount = amount, balance = result.to, reason = reason,
+        kind = 'transfer_in', other = { characterId = fromCharacterId, name = fromName }, resource = resource, data = options.data })
+    -- Dritter Wert: neuer Stand beim Empfaenger (seit Core 1.16.0)
+    return result.from, nil, result.to
 end
 
 ------------------------------------------------------------------------
@@ -437,6 +450,27 @@ Platform.Export('AddBankByCharacter', function(characterId, amount, reason, opti
 end)
 Platform.Export('RemoveMoney', Core.RemoveMoney)
 Platform.Export('TransferMoney', Core.TransferMoney)
+
+-- Bankkonto ueber die permanente ID, auch wenn der Charakter offline ist (seit Core 1.16.0, fuer core_bank)
+Platform.Export('GetBankByCharacter', function(characterId)
+    characterId = tonumber(characterId)
+    return characterId and tonumber(readBalance(characterId, 'bank')) or nil
+end)
+Platform.Export('RemoveBankByCharacter', function(characterId, amount, reason, options)
+    characterId = tonumber(characterId)
+    if not characterId then
+        return nil, 'no_character'
+    end
+    return Money.RemoveByCharacter(characterId, 'bank', amount, reason, options)
+end)
+-- Gibt den neuen Stand des Absenders, nil und den neuen Stand des Empfaengers zurueck, sonst nil und einen Fehlercode
+Platform.Export('TransferBankByCharacter', function(fromCharacterId, toCharacterId, amount, reason, options)
+    fromCharacterId, toCharacterId = tonumber(fromCharacterId), tonumber(toCharacterId)
+    if not fromCharacterId or not toCharacterId then
+        return nil, 'no_character'
+    end
+    return Money.TransferByCharacter(fromCharacterId, toCharacterId, 'bank', amount, reason, options)
+end)
 
 ------------------------------------------------------------------------
 -- Befehle

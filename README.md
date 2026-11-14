@@ -4,20 +4,21 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 
 | Ordner | Version | Inhalt |
 |---|---|---|
-| [`core/`](core/README.md) | 1.15.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
+| [`core/`](core/README.md) | 1.16.0 | Login, Charaktere mit permanenter ID, Geld, Tod, Hunger und Durst, Teamränge mit Rechten und persönlichen Admin-Keys, Admin-Menü, Tickets, Bans, A-Jail, zentrales Logging |
 | [`core_inventory/`](core_inventory/README.md) | 1.5.1 | Inventar mit Plätzen und Gewicht, Kleidung, Rucksack, Waffen mit Register, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee` |
 | [`core_lib/`](core_lib/README.md) | 1.4.3 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
 | [`core_factions/`](core_factions/README.md) | 1.3.1 | Organisationen: 30 Ränge, Rechte und Gehalt pro Rang, Divisionen, Abteilungen, Prüfungen, Erklärungen, Leitstelle mit Suche, Bonus, Archiv, Protokolle pro ID, Kasse, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Organisationsmenü in den Farben der Organisation |
 | [`core_ems/`](core_ems/README.md) | 1.4.2 | Rettungsdienst: Hochholen, Versorgen, Verbandskasten für alle, Verkauf, Behandlung, Krankheiten mit Stadien und Ansteckung, Krankenversicherung, Medizinische Datenbank mit Korrektur durch Leitung und Admins |
 | [`core_dispatch/`](core_dispatch/README.md) | 1.2.0 | Notrufe per `/dispatch` und im Bewusstlos-Bildschirm, Alarm am Bildschirmrand, MDT mit Funkstatus (FMS 0 bis 8), Disponieren, Nachricht an den Anrufer, Archiv und Statistik |
+| [`core_bank/`](core_bank/README.md) | 1.0.0 | Bank: Konto mit Kontonummer, Ein- und Auszahlen, Überweisen, Kontoauszug, Schulden (Strafen, Rechnungen, Gebühren) mit Frist, Mahngebühr und Einzug, Bankautomaten, Admin-Ansicht, Schnittstelle für das Handy |
 | [`tests/`](tests/README.md) | | Tests für die Serverlogik aller Resources |
 
-Das Inventar 1.5.1 braucht mindestens die Core 1.8.2, die `core_lib` 1.4.0 die Core 1.9.0, `core_ems` die Core 1.10.3 und `core_factions` 1.3.0, `core_factions` die Core 1.11.0 und `core_dispatch` die Core 1.15.0 und die `core_lib`. Empfohlen ist immer die neueste Core, darum alle Ordner zusammen aktualisieren. Die Farben aller UIs stehen seit Core 1.12.1 einmal in `Config.UI.Colors` der Core, Organisationen bringen ihre eigenen im `theme` in `core_factions` mit.
+Das Inventar 1.5.1 braucht mindestens die Core 1.8.2, die `core_lib` 1.4.0 die Core 1.9.0, `core_ems` die Core 1.10.3 und `core_factions` 1.3.0, `core_factions` die Core 1.11.0 `core_dispatch` die Core 1.15.0 und die `core_lib` und `core_bank` die Core 1.16.0 und die `core_lib`. Empfohlen ist immer die neueste Core, darum alle Ordner zusammen aktualisieren. Die Farben aller UIs stehen seit Core 1.12.1 einmal in `Config.UI.Colors` der Core, Organisationen bringen ihre eigenen im `theme` in `core_factions` mit.
 
 ## Installation
 
 1. `core/database/schema.sql` in der Datenbank ausführen. Die Tabellen des Inventars legt das Inventar beim Start selbst an.
-2. Die Ordner `core`, `core_inventory`, `core_lib`, `core_factions`, `core_ems` und `core_dispatch` nach `resources/[core]/` kopieren.
+2. Die Ordner `core`, `core_inventory`, `core_lib`, `core_factions`, `core_ems`, `core_dispatch` und `core_bank` nach `resources/[core]/` kopieren.
 3. In der eigenen `server.cfg` nach der Datenbank-Verbindung ergänzen:
 
 ```cfg
@@ -31,6 +32,7 @@ ensure core_lib
 ensure core_factions
 ensure core_ems
 ensure core_dispatch
+ensure core_bank
 ```
 
 4. Server neu starten.

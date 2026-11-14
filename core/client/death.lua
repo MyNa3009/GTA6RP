@@ -127,6 +127,8 @@ Platform.OnDeath(function(info)
     local result = Network.Call('death_report', {
         killer = info.killerServerId,
         weapon = info.weapon,
+        indirect = info.indirect == true,
+        byVehicle = info.byVehicle == true,
     })
     local data = result and result.ok and result.data or {}
     local seconds = data.respawnInSeconds or Config.Death.HospitalAfterSeconds
@@ -151,7 +153,7 @@ Platform.OnDeath(function(info)
     }, false)
 
     holdLoop()
-end)
+end, { killerWindowMs = (tonumber(Config.Death.KillerWindowSeconds) or 10) * 1000 })
 
 -- Zusatzaktion anmelden oder mit nil wieder abmelden. Gilt ab der naechsten Bewusstlosigkeit.
 Platform.Export('SetDeathAction', function(action)

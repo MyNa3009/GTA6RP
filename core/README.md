@@ -1,10 +1,21 @@
-# Core 1.15.0 (Testserver)
+# Core 1.16.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.15.0
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. **"Getötet von" bei indirekten Tötungen:** Der Bewusstlos-Bildschirm und das Log nennen den Täter jetzt auch, wenn das Spiel selbst keinen kennt:
+   - angefahren und danach am Sturz gestorben (VDM),
+   - angezündet, weggeschleudert, von einem rollenden Auto ohne Fahrer erwischt (zählt für den letzten Fahrer).
+   - Dafür merkt sich der Client den letzten Spieler, der Schaden gemacht hat. Wie lange das zählt, steht in `Config.Death.KillerWindowSeconds` (Standard 10 Sekunden).
+   - Ein Unfall im eigenen Auto zählt nicht für den Fahrer. Im Log steht bei solchen Toden `killerIndirect` und bei Fahrzeugen `killerByVehicle`.
+3. **Für `core_bank`:** Nach jeder Buchung kommt auf dem Server das Ereignis `core:moneyBooked`. Neue Exports buchen das Bankkonto über die permanente ID, auch offline: `GetBankByCharacter`, `RemoveBankByCharacter`, `TransferBankByCharacter`.
+4. Neue Bridge-Funktion im Client: `Platform.FindNearbyObject(models, radius)` findet Objekte der Spielwelt in der Nähe (Bankautomaten).
 
 ## Update von 1.14.0
 
@@ -582,11 +593,14 @@ Exports (`exports.core:...`):
 | `HasPermission(source, recht)`, `IsOnDuty(source)` | true oder false |
 | `AuthorizeCommand(source, name, recht, args, requireDuty)` | true und Login, sonst false. Prüft, meldet und loggt wie die Admin-Befehle der Core |
 | `AddCommandHelp({ title, entries })` | Eigene Gruppe in der Befehlsliste des Admin-Menüs |
+| `GetBankByCharacter(characterId)` | Kontostand, auch offline, nil wenn es den Charakter nicht gibt |
+| `RemoveBankByCharacter(characterId, betrag, grund, optionen)` | Bucht vom Bankkonto ab, auch offline. Neuer Stand oder nil und `not_enough_money` |
+| `TransferBankByCharacter(von, an, betrag, grund, optionen)` | Überweist zwischen zwei Bankkonten, auch offline. Neuer Stand des Absenders, nil, neuer Stand des Empfängers. Sonst nil und ein Fehlercode |
 | `Log(eintrag)` | Eintrag ins zentrale Log |
 | `StartConsent(source, ziel, { title, text })` | Fragt `ziel`, ob es annimmt (Ja Y, Nein N). Nummer oder nil und `target_busy`, `target_offline`, `no_character`, `invalid_input` |
 | `GetConsentResult(nummer)` | nil, solange offen. Dann einmal `true` oder `false` und der Grund (`declined`, `timeout`, `target_offline`, `cancelled`). In der eigenen Resource mit `Platform.Wait` abfragen, bis es nicht mehr nil ist |
 
-Ereignisse auf dem Server: `core:characterLoaded (source, info)` und `core:characterUnloaded (source, characterId, grund)`.
+Ereignisse auf dem Server: `core:characterLoaded (source, info)` und `core:characterUnloaded (source, characterId, grund)`. Nach jeder Geldbuchung kommt `core:moneyBooked` mit `{ characterId, account, amount, balance, reason, kind, other, resource, data }`. `amount` trägt das Vorzeichen, `kind` ist `add`, `remove`, `transfer_in` oder `transfer_out`. Daraus baut `core_bank` den Kontoauszug.
 
 Im Client: `exports.core:GetMoney()` gibt `{ cash, bank }` oder nil zurück. Das lokale Ereignis `core:moneyChanged` kommt bei jeder Buchung mit `{ cash, bank, changed }`, beim Ausloggen mit nil. Beides ist nur für die Anzeige. Ein Cheater kann diese Werte auf seinem eigenen Client fälschen, darum prüft der Server bei jedem Kauf selbst, ob genug Geld da ist. Kein Script darf den Geldstand vom Client an den Server schicken und ihm dort glauben.
 

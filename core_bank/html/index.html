@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<!--
+  UI: Shell (ui_page von core_bank)
+  Bank und Bankautomat sind je eine eigene Datei und laufen hier in einem iframe.
+  Die Shell leitet Nachrichten aus Lua an die passende UI weiter.
+
+  REGEL
+  Eventnamen beginnen mit dem UI-Namen: bank_open -> bank, atm_open -> atm.
+  <ui>_open blendet die UI ein, <ui>_close blendet sie aus. Schliesst die UI sich selbst (Escape, Schliessen),
+  meldet sie das der Shell mit { type: 'shell_hide', ui }.
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>core_bank UI</title>
+<style>
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.ui-frame {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+.ui-frame[hidden] { display: none; }
+</style>
+</head>
+<body>
+
+<iframe class="ui-frame" data-ui="bank" src="bank.html" title="Bank" hidden></iframe>
+<iframe class="ui-frame" data-ui="atm" src="atm.html" title="Bankautomat" hidden></iframe>
+
+<script>
+const OPEN_SUFFIX = '_open';
+const CLOSE_SUFFIX = '_close';
+const REFOCUS_DELAYS_MS = [0, 50, 200];   // SetNuiFocus kommt aus Lua oft erst kurz nach der Nachricht
+
+const frames = {};
+document.querySelectorAll('.ui-frame').forEach((frame) => {
+  frames[frame.dataset.ui] = frame;
+});
+let current = null;   // UI, die gerade offen ist
+
+function focusCurrent() {
+  const frame = current && frames[current];
+  if (frame && !frame.hidden && frame.contentWindow) frame.contentWindow.focus();
+}
+
+window.addEventListener('message', (e) => {
+  const msg = e.data;
+  if (!msg) return;
+
+  // Eine UI meldet, dass sie sich selbst geschlossen hat
+  if (msg.type === 'shell_hide' && typeof msg.ui === 'string') {
+    const frame = frames[msg.ui];
+    if (frame) frame.hidden = true;
+    if (current === msg.ui) current = null;
+    return;
+  }
+  if (typeof msg.action !== 'string') return;
+
+  const ui = msg.action.split('_')[0];
+  const frame = frames[ui];
+  if (!frame || !frame.contentWindow) {
+    console.warn(`[shell] Keine UI fuer ${msg.action}`);
+    return;
+  }
+  if (msg.action.endsWith(OPEN_SUFFIX)) {
+    frame.hidden = false;
+    current = ui;
+    REFOCUS_DELAYS_MS.forEach((ms) => setTimeout(focusCurrent, ms));
+  }
+  frame.contentWindow.postMessage(msg, '*');
+  if (msg.action.endsWith(CLOSE_SUFFIX)) {
+    frame.hidden = true;
+    if (current === ui) current = null;
+  }
+});
+
+// Tasten, die in der Shell statt im iframe ankommen, an die offene UI weitergeben
+function forwardKey(e) {
+  const frame = current && frames[current];
+  let doc = null;
+  try { doc = frame && !frame.hidden && frame.contentDocument; } catch (err) { doc = null; }
+  if (!doc) return;
+  e.preventDefault();
+  doc.dispatchEvent(new KeyboardEvent(e.type, {
+    key: e.key, code: e.code, repeat: e.repeat, bubbles: true, cancelable: true,
+    shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey,
+  }));
+  focusCurrent();
+}
+window.addEventListener('keydown', forwardKey);
+window.addEventListener('keyup', forwardKey);
+window.addEventListener('focus', focusCurrent);
+</script>
+</body>
+</html>

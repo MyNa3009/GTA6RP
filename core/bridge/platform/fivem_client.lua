@@ -97,22 +97,56 @@ local FADE_MS = 400
 local COLLISION_TIMEOUT_MS = 5000
 local DRIVER_SEAT = -1
 
-local function playerServerIdFromPed(ped)
-    if ped == 0 or not DoesEntityExist(ped) then
+local DAMAGE_EVENT = 'CEventNetworkEntityDamage'
+local KILLER_WINDOW_DEFAULT_MS = 10000
+
+-- Spieler hinter einem Ped oder Fahrzeug. Bei einem Fahrzeug zaehlt der Fahrer, ist es leer, der letzte Fahrer
+-- (z. B. abgesprungen und das Auto rollt weiter). Gibt die Server-ID und "war ein Fahrzeug" zurueck.
+local function playerServerIdFromEntity(entity)
+    if not entity or entity <= 0 or not DoesEntityExist(entity) then
         return nil
     end
-    if IsEntityAVehicle(ped) then
-        ped = GetPedInVehicleSeat(ped, DRIVER_SEAT)
+    local byVehicle = false
+    if IsEntityAVehicle(entity) then
+        byVehicle = true
+        local driver = GetPedInVehicleSeat(entity, DRIVER_SEAT)
+        if driver == 0 then
+            driver = GetLastPedInVehicleSeat(entity, DRIVER_SEAT)
+        end
+        entity = driver
     end
-    if ped == 0 or not IsEntityAPed(ped) or not IsPedAPlayer(ped) then
+    if entity == 0 or not DoesEntityExist(entity) or not IsEntityAPed(entity) or not IsPedAPlayer(entity) then
         return nil
     end
-    local index = NetworkGetPlayerIndexFromPed(ped)
+    local index = NetworkGetPlayerIndexFromPed(entity)
     if index == -1 then
         return nil
     end
-    return GetPlayerServerId(index)
+    return GetPlayerServerId(index), byVehicle
 end
+
+-- Letzter Schaden durch einen anderen Spieler, direkt oder mit seinem Fahrzeug: { serverId, at, byVehicle }.
+-- Fuer Tode, bei denen das Spiel keinen Taeter nennt: angefahren und am Sturz gestorben, angezuendet, weggeschleudert.
+local lastDamage = nil
+
+AddEventHandler('gameEventTriggered', function(name, args)
+    if name ~= DAMAGE_EVENT or type(args) ~= 'table' then
+        return
+    end
+    local victim, attacker = args[1], args[2]
+    local ped = PlayerPedId()
+    if victim ~= ped or not attacker or attacker <= 0 or attacker == ped then
+        return
+    end
+    -- Unfall im eigenen Fahrzeug: der Fahrer ist kein Taeter
+    if IsEntityAVehicle(attacker) and GetVehiclePedIsIn(ped, false) == attacker then
+        return
+    end
+    local serverId, byVehicle = playerServerIdFromEntity(attacker)
+    if serverId and serverId ~= GetPlayerServerId(PlayerId()) then
+        lastDamage = { serverId = serverId, at = GetGameTimer(), byVehicle = byVehicle }
+    end
+end)
 
 -- Bildeffekt im Spiel an oder aus (Name aus data/effects_gta5.lua)
 function Platform.SetScreenEffect(name, on)
@@ -126,8 +160,12 @@ function Platform.SetScreenEffect(name, on)
     end
 end
 
--- Ruft handler({ killerServerId?, weapon }) einmal pro Tod auf
-function Platform.OnDeath(handler)
+-- Ruft handler({ killerServerId?, weapon, indirect?, byVehicle? }) einmal pro Tod auf.
+-- killerServerId: wer getoetet hat. Nennt das Spiel niemanden, zaehlt der letzte Spieler, der in den letzten
+-- options.killerWindowMs Schaden gemacht hat (indirect = true), z. B. angefahren und danach am Sturz gestorben.
+-- byVehicle = true: mit einem Fahrzeug (Fahrer oder letzter Fahrer).
+function Platform.OnDeath(handler, options)
+    local windowMs = type(options) == 'table' and tonumber(options.killerWindowMs) or KILLER_WINDOW_DEFAULT_MS
     CreateThread(function()
         local wasDead = false
         while true do
@@ -136,11 +174,17 @@ function Platform.OnDeath(handler)
             local dead = IsEntityDead(ped)
             if dead and not wasDead then
                 wasDead = true
-                local killer = playerServerIdFromPed(GetPedSourceOfDeath(ped))
-                if killer == GetPlayerServerId(PlayerId()) then
-                    killer = nil
+                local own = GetPlayerServerId(PlayerId())
+                local killer, byVehicle = playerServerIdFromEntity(GetPedSourceOfDeath(ped))
+                local indirect = nil
+                if killer == own then
+                    killer, byVehicle = nil, nil
                 end
-                local info = { killerServerId = killer, weapon = GetPedCauseOfDeath(ped) }
+                if not killer and lastDamage and GetGameTimer() - lastDamage.at <= windowMs then
+                    killer, byVehicle, indirect = lastDamage.serverId, lastDamage.byVehicle, true
+                end
+                lastDamage = nil
+                local info = { killerServerId = killer, weapon = GetPedCauseOfDeath(ped), indirect = indirect, byVehicle = byVehicle or nil }
                 CreateThread(function()
                     handler(info)
                 end)
@@ -1597,6 +1641,32 @@ end
 function Platform.GetOwnPosition()
     local coords = GetEntityCoords(PlayerPedId())
     return { x = coords.x, y = coords.y, z = coords.z }
+end
+
+-- Naechstes Objekt der Welt mit einem dieser Modelle im Umkreis (z. B. Bankautomaten), seit Core 1.16.0.
+-- models: Liste von Modellnamen. Gibt { x, y, z, model, distance } zurueck oder nil.
+local objectHashes = {}
+
+function Platform.FindNearbyObject(models, radius)
+    local ped = PlayerPedId()
+    local origin = GetEntityCoords(ped)
+    local best = nil
+    for _, model in ipairs(models) do
+        local hash = objectHashes[model]
+        if not hash then
+            hash = GetHashKey(model)
+            objectHashes[model] = hash
+        end
+        local object = GetClosestObjectOfType(origin.x, origin.y, origin.z, radius + 0.0, hash, false, false, false)
+        if object ~= 0 then
+            local coords = GetEntityCoords(object)
+            local distance = #(origin - coords)
+            if not best or distance < best.distance then
+                best = { x = coords.x, y = coords.y, z = coords.z, model = model, distance = distance }
+            end
+        end
+    end
+    return best
 end
 
 local PROP_LOAD_TIMEOUT_MS = 2000

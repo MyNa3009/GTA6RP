@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<!--
+  UI: Bankautomat
+  CONTRACT_VERSION: 1
+
+  Schnelles Geld unterwegs: Kontostand, Auszahlen und Einzahlen mit Grenzen. Ueberweisen, Kontoauszug und Schulden
+  gibt es nur in der Filiale. Die UI zeigt nur an: Jede Zahl kommt vom Server, jede Anfrage prueft der Server.
+
+  EINGEHEND (Lua -> UI)
+  atm_open      { colors: { base?, ink?, accent?, mark?, signal? }, bankName: string, overview: Overview,
+                  atm: { withdrawMax: number, depositMax: number, deposit: boolean, daily?: number, quick: number[] } }
+  atm_refresh   { what?: "account" | "debts" }      // auf dem Konto hat sich etwas getan, die UI laedt neu
+  atm_close     {}
+
+  AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
+  ui_ready      { ui: "atm", version: 1 }            -> data.colors
+  atm_close     {}
+  bank_call     { name, data }
+    bank_overview    {}                              -> { overview: Overview }
+    bank_withdraw    { amount }                      -> { overview }
+    bank_deposit     { amount }                      -> { overview }
+
+  Overview { characterId, name, number, balance, cash, atmRemaining?: number, recent: [Entry], debts: { count, total, overdue } }
+  Entry    { id, kind, amount, balance, text, other?, channel, at: "JJJJ-MM-TT hh:mm" }
+
+  FEHLERCODES: no_session, too_far, is_dead, not_here, busy, invalid_amount, over_limit, daily_limit, not_enough_money,
+               not_enough_cash, no_space, server_error, timeout
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bankautomat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Command (schnell Geld holen oder einzahlen). Dichte 7, Bewegung 1, Varianz 2.
+  Richtung
+    Zweck: Am Automaten in wenigen Sekunden Bargeld holen oder einzahlen.
+    Charakter: knapp, direkt, eindeutig.
+    Welt: Bildschirm eines Geldautomaten mit Schnellwahl und Ziffernfeld.
+    Highlight: der getippte Betrag, gross ueber dem Ziffernfeld.
+    Signatur: das Ziffernfeld. Es laesst sich klicken oder direkt auf der Tastatur tippen.
+  Flaeche: kompaktes Panel in der Bildmitte, links die Bedienung, rechts das Konto. Gleiche Bauteile und Farben
+  wie die Bank (bank.html), damit beides wie aus einer Hand aussieht.
+*/
+:root {
+  --rgb-base:   16 17 20;
+  --rgb-ink:    255 245 236;
+  --rgb-accent: 231 62 192;
+  --rgb-mark:   244 154 102;
+  --rgb-signal: 244 67 54;
+
+  --c-bg:          rgb(var(--rgb-base) / 0.96);
+  --c-side:        rgb(var(--rgb-ink) / 0.03);
+  --c-surface:     rgb(var(--rgb-ink) / 0.05);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.09);
+  --c-border:      rgb(var(--rgb-ink) / 0.08);
+  --c-text:        rgb(var(--rgb-ink) / 0.94);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.72);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.14);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.12);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --edge-light:    inset 0 1px 0 rgb(var(--rgb-ink) / 0.08);
+  --shadow:        0 16px 48px rgb(var(--rgb-base) / 0.6);
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+
+  --fs-xs: clamp(11px, 0.55vw, 13px);
+  --fs-sm: clamp(12px, 0.65vw, 14px);
+  --fs-md: clamp(14px, 0.75vw, 16px);
+  --fs-lg: clamp(17px, 0.95vw, 20px);
+  --fs-xl: clamp(21px, 1.25vw, 26px);
+  --fs-xxl: clamp(26px, 1.7vw, 36px);
+
+  --panel-w: min(94vw, clamp(880px, 52vw, 1320px));
+  --side-w: clamp(300px, 19vw, 360px);
+  --head-h: 64px;
+  --field-h: 36px;
+  --key-h: clamp(44px, 5.2dvh, 56px);
+  --icon: 18px;
+
+  --dur-fast: 120ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --z-panel: 10;
+  --z-toast: 30;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; background: transparent; overflow: hidden;
+  font-family: 'Montserrat', sans-serif; font-size: var(--fs-md); color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.icon { width: var(--icon); height: var(--icon); flex: none; }
+:focus-visible { outline: 2px solid rgb(var(--rgb-accent) / 0.6); outline-offset: 2px; }
+
+.panel {
+  position: fixed; left: 50%; top: 50%; z-index: var(--z-panel);
+  width: var(--panel-w); max-height: 94dvh; transform: translate(-50%, -50%);
+  display: grid; grid-template-columns: 1fr var(--side-w); grid-template-rows: var(--head-h) 1fr;
+  background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+
+.head { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-5); border-bottom: 1px solid var(--c-border); }
+.head > .icon { color: var(--c-accent); }
+.head__title { margin: 0; font-size: var(--fs-md); font-weight: 700; }
+.head__sub { margin: 0; font-size: var(--fs-xs); color: var(--c-text-muted); }
+.close { margin-left: auto; display: inline-grid; place-items: center; width: var(--field-h); height: var(--field-h); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--c-text-2); cursor: pointer; }
+.close:hover { background: var(--c-surface); color: var(--c-text); }
+
+.label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.05em; text-transform: uppercase; }
+
+/* ---------- Bedienung ---------- */
+.work { padding: var(--space-5) var(--space-6) var(--space-6); display: grid; grid-template-rows: auto auto 1fr auto; gap: var(--space-4); min-height: 0; overflow: auto; }
+.tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--c-border); }
+.tab {
+  height: var(--field-h); padding: 0 var(--space-3); border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  background: transparent; color: var(--c-text-muted); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+}
+.tab:hover { color: var(--c-text); }
+.tab[aria-selected="true"] { color: var(--c-text); border-bottom-color: var(--c-accent); }
+
+.amount { display: grid; gap: var(--space-1); }
+.amount__value { display: flex; align-items: baseline; gap: var(--space-2); min-height: 44px; font-size: var(--fs-xxl); font-weight: 700; }
+.amount__value[data-empty="true"] { color: var(--c-text-muted); }
+.amount__hint { min-height: 1.5em; font-size: var(--fs-sm); color: var(--c-text-muted); }
+.amount__hint[data-error="true"] { color: var(--c-signal); font-weight: 500; }
+
+.pads { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: var(--space-5); }
+.quick, .keys { display: grid; gap: var(--space-2); grid-auto-rows: minmax(var(--key-h), 1fr); }
+.quick { grid-template-columns: 1fr 1fr; }
+.keys { grid-template-columns: repeat(3, 1fr); }
+.key {
+  display: inline-grid; place-items: center; min-height: var(--key-h); padding: 0 var(--space-2);
+  border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: var(--c-surface);
+  color: var(--c-text); font-size: var(--fs-lg); font-weight: 600; cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.key:hover:not(:disabled) { background: var(--c-surface-hi); }
+.key:active:not(:disabled) { transform: scale(0.97); }
+.key:disabled { opacity: 0.35; cursor: default; }
+.key--quick { font-size: var(--fs-md); }
+.key--word { font-size: var(--fs-sm); color: var(--c-text-2); }
+.key--wide { grid-column: 1 / -1; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; height: var(--key-h); padding: 0 var(--space-4); width: 100%;
+  border: 0; border-radius: var(--radius-sm); background: rgb(var(--rgb-ink) / 0.92); color: var(--c-on-accent);
+  font-size: var(--fs-md); font-weight: 600; cursor: pointer; transition: transform var(--dur-fast) var(--ease-out);
+}
+.btn:active:not(:disabled) { transform: scale(0.98); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+
+/* ---------- Konto ---------- */
+.side { background: var(--c-side); border-left: 1px solid var(--c-border); padding: var(--space-5); display: grid; gap: var(--space-4); align-content: start; min-height: 0; overflow: auto; }
+.account { display: grid; gap: var(--space-1); }
+.account__name { font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; }
+.account__number { font-size: var(--fs-sm); color: var(--c-text-2); }
+.card {
+  display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-4); align-items: center;
+  padding: var(--space-4); border-radius: var(--radius-md); border: 1px solid var(--c-border); background: var(--c-surface);
+}
+.card__mark { grid-row: span 2; width: 12px; height: 12px; border-radius: 50%; background: var(--c-accent); box-shadow: 0 0 0 4px var(--c-accent-soft); }
+.card__title { font-size: var(--fs-lg); font-weight: 700; }
+.card__sub { font-size: var(--fs-sm); color: var(--c-text-muted); }
+.card--alert { border-color: rgb(var(--rgb-signal) / 0.35); background: var(--c-signal-soft); }
+.card--alert .card__mark { background: var(--c-signal); box-shadow: 0 0 0 4px rgb(var(--rgb-signal) / 0.2); }
+.card--alert .card__title { font-size: var(--fs-md); }
+.details { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2) var(--space-3); margin: 0; font-size: var(--fs-sm); }
+.details dt { color: var(--c-text-muted); }
+.details dd { margin: 0; font-weight: 600; text-align: right; }
+.recent { list-style: none; margin: 0; padding: 0; display: grid; }
+.recent li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--c-border); font-size: var(--fs-sm); }
+.recent li:first-child { border-top: 0; padding-top: 0; }
+.recent__text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent__amount { font-weight: 600; white-space: nowrap; }
+.recent__amount--in { color: var(--c-accent); }
+.recent time { grid-column: 1 / -1; font-size: var(--fs-xs); color: var(--c-text-muted); }
+.none { color: var(--c-text-muted); font-size: var(--fs-sm); line-height: 1.5; }
+
+.toast {
+  position: fixed; left: 50%; bottom: var(--space-6); z-index: var(--z-toast);
+  transform: translateX(-50%); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm);
+  background: rgb(var(--rgb-ink)); color: var(--c-on-accent); font-size: var(--fs-sm); font-weight: 600; box-shadow: var(--shadow);
+}
+.toast--error { background: var(--c-signal); color: rgb(var(--rgb-base)); }
+
+@media (max-width: 900px) { .pads { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-bank" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 18h14M12 3 3 8h18z"/><path d="M6 11v7M10 11v7M14 11v7M18 11v7"/></g>
+    <g id="i-close" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></g>
+    <g id="i-back" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><path d="m12 9 6 6M18 9l-6 6"/></g>
+  </defs>
+</svg>
+
+<div class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="title" hidden>
+  <header class="head">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bank"/></svg>
+    <div>
+      <h1 class="head__title" id="title"></h1>
+      <p class="head__sub" id="subtitle"></p>
+    </div>
+    <button class="close" type="button" data-action="close" id="close"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-close"/></svg></button>
+  </header>
+
+  <section class="work">
+    <div class="tabs" id="tabs" role="tablist"></div>
+    <div class="amount">
+      <span class="label" id="amount-label"></span>
+      <output class="amount__value num" id="amount" aria-live="polite"></output>
+      <span class="amount__hint num" id="hint" role="status"></span>
+    </div>
+    <div class="pads">
+      <div class="quick" id="quick"></div>
+      <div class="keys" id="keys"></div>
+    </div>
+    <button class="btn" type="button" data-action="confirm" id="confirm"></button>
+  </section>
+
+  <aside class="side">
+    <div class="account">
+      <span class="label" id="account-label"></span>
+      <span class="account__name" id="account-name"></span>
+      <span class="account__number num" id="account-number"></span>
+    </div>
+    <div class="card">
+      <span class="card__mark"></span>
+      <span class="card__title num" id="balance"></span>
+      <span class="card__sub" id="balance-sub"></span>
+    </div>
+    <dl class="details" id="details"></dl>
+    <div class="card card--alert" id="debts" hidden>
+      <span class="card__mark"></span>
+      <span class="card__title" id="debts-title"></span>
+      <span class="card__sub" id="debts-sub"></span>
+    </div>
+    <div>
+      <div class="label" id="recent-label" style="margin-bottom: var(--space-3)"></div>
+      <ol class="recent" id="recent"></ol>
+    </div>
+  </aside>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  // Die UI laeuft in einem iframe der Shell (index.html), darum auch im Elternfenster suchen
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    try { if (window.parent !== window && typeof window.parent.GetParentResourceName === 'function') return window.parent.GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+  function on(event, fn) { (handlers[event] ||= []).push(fn); }
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+  return { on, send, emit, platform };
+})();
+
+// Testdaten fuer den Browser. ?leer: neues Konto ohne Buchungen und Schulden, ?betrag=500: Betrag schon getippt
+const Mock = (() => {
+  const params = new URLSearchParams(location.search);
+  const EMPTY = params.has('leer');
+  const NOW = '2026-11-14 16:40';
+  const LIMITS = { withdrawMax: 5000, depositMax: 10000, daily: 20000 };
+  let balance = EMPTY ? 2500 : 48210;
+  let cash = EMPTY ? 500 : 1240;
+  let used = EMPTY ? 0 : 500;
+  let nextId = 900;
+  const entries = EMPTY ? [] : [
+    { id: 418, kind: 'transfer_in', amount: 1850, balance: 48210, text: 'Gehalt November', other: 'Emergency Medical Service', channel: 'system', at: '2026-11-14 12:00' },
+    { id: 417, kind: 'withdraw', amount: -500, balance: 46360, text: 'Auszahlung am Bankautomaten', channel: 'atm', at: '2026-11-13 22:14' },
+    { id: 416, kind: 'transfer_out', amount: -750, balance: 46860, text: 'Miete November', other: 'Lena Hoffmann', channel: 'bank', at: '2026-11-13 18:02' },
+    { id: 415, kind: 'collect', amount: -240, balance: 47610, text: 'Strafe: Zu schnell gefahren', other: 'Staat San Andreas', channel: 'system', at: '2026-11-12 09:30' },
+    { id: 414, kind: 'deposit', amount: 3200, balance: 47850, text: 'Einzahlung in der Filiale', channel: 'bank', at: '2026-11-11 17:45' },
+  ];
+  const overview = () => ({ characterId: 256, name: 'Fabian Nandes', number: '48210375', balance, cash, atmRemaining: LIMITS.daily - used,
+    recent: entries.slice(0, 5), debts: EMPTY ? { count: 0, total: 0, overdue: 0 } : { count: 3, total: 890, overdue: 1 } });
+  const whole = (v) => Number.isInteger(v) && v >= 1;
+  const calls = {
+    bank_overview: () => ({ ok: true, data: { overview: overview() } }),
+    bank_withdraw: (d) => {
+      if (!whole(d.amount)) return { ok: false, error: 'invalid_amount' };
+      if (d.amount > LIMITS.withdrawMax) return { ok: false, error: 'over_limit' };
+      if (d.amount > LIMITS.daily - used) return { ok: false, error: 'daily_limit' };
+      if (d.amount > balance) return { ok: false, error: 'not_enough_money' };
+      balance -= d.amount; cash += d.amount; used += d.amount;
+      entries.unshift({ id: nextId++, kind: 'withdraw', amount: -d.amount, balance, text: 'Auszahlung am Bankautomaten', channel: 'atm', at: NOW });
+      return { ok: true, data: { overview: overview() } };
+    },
+    bank_deposit: (d) => {
+      if (!whole(d.amount)) return { ok: false, error: 'invalid_amount' };
+      if (d.amount > LIMITS.depositMax) return { ok: false, error: 'over_limit' };
+      if (d.amount > cash) return { ok: false, error: 'not_enough_cash' };
+      balance += d.amount; cash -= d.amount;
+      entries.unshift({ id: nextId++, kind: 'deposit', amount: d.amount, balance, text: 'Einzahlung am Bankautomaten', channel: 'atm', at: NOW });
+      return { ok: true, data: { overview: overview() } };
+    },
+  };
+  return {
+    delay: 120,
+    overview,
+    limits: LIMITS,
+    async handle(event, data) {
+      await new Promise((r) => setTimeout(r, this.delay));
+      console.info(`[mock] ${event}`, data);
+      if (event === 'bank_call') return calls[data.name] ? calls[data.name](data.data || {}) : { ok: false, error: 'invalid_input' };
+      return { ok: true };
+    },
+    push(event, data) { Bridge.emit(event, data); },
+  };
+})();
+</script>
+
+<script id="app">
+const TEXT = {
+  subtitle: 'Bankautomat',
+  close: 'Schließen',
+  modes: { withdraw: 'Auszahlen', deposit: 'Einzahlen' },
+  amountLabel: { withdraw: 'Betrag zum Auszahlen', deposit: 'Betrag zum Einzahlen' },
+  hint: {
+    withdraw: (max) => `Höchstens ${max} auf einmal`,
+    deposit: (max) => `Höchstens ${max} auf einmal`,
+    daily: (rest) => `Heute gehen am Automaten noch ${rest}`,
+    dailyDone: 'Die Grenze für heute ist erreicht. Mehr gibt es in der Filiale.',
+    overLimit: (max) => `Am Automaten gehen höchstens ${max} auf einmal. Mehr gibt es in der Filiale.`,
+    overDaily: (rest) => `Heute gehen am Automaten nur noch ${rest}`,
+    overBalance: 'So viel ist nicht auf dem Konto',
+    overCash: 'So viel Bargeld hast du nicht dabei',
+  },
+  confirm: { withdraw: (a) => `${a} auszahlen`, deposit: (a) => `${a} einzahlen`, withdrawEmpty: 'Betrag wählen', depositEmpty: 'Betrag wählen', busy: 'Einen Moment…' },
+  done: { withdraw: (a) => `${a} ausgezahlt`, deposit: (a) => `${a} eingezahlt` },
+  keys: { clear: 'Löschen', back: 'Letzte Ziffer löschen', max: { withdraw: (a) => `Höchstbetrag: ${a}`, deposit: (a) => `Alles Bargeld: ${a}` } },
+  account: 'Konto',
+  balance: 'Kontostand',
+  details: { cash: 'Bargeld dabei', today: 'Heute noch am Automaten' },
+  debts: (n) => (n === 1 ? '1 offene Forderung' : `${n} offene Forderungen`),
+  debtsSub: (total) => `${total} offen. Bezahlen kannst du in der Filiale.`,
+  recent: 'Letzte Buchungen',
+  noEntries: 'Noch keine Buchungen.',
+  errors: {
+    no_session: 'Die Sitzung ist abgelaufen. Öffne den Automaten noch einmal.',
+    too_far: 'Du bist zu weit vom Automaten weg.',
+    is_dead: 'Bewusstlos kannst du nicht an dein Konto.',
+    not_here: 'Das geht am Automaten nicht. Geh in eine Filiale.',
+    busy: 'Einen Moment, die letzte Buchung läuft noch.',
+    invalid_amount: 'Der Betrag passt nicht. Ganze Dollar, mindestens 1.',
+    over_limit: 'Das ist mehr, als am Automaten auf einmal geht.',
+    daily_limit: 'Die Grenze für heute ist erreicht. Mehr gibt es in der Filiale.',
+    not_enough_money: 'Auf dem Konto ist nicht genug Geld.',
+    not_enough_cash: 'So viel Bargeld hast du nicht dabei.',
+    no_space: 'Im Inventar ist kein Platz für das Bargeld. Das Geld ist wieder auf dem Konto.',
+    server_error: 'Fehler auf dem Server. Bitte nochmal versuchen.',
+    timeout: 'Der Server antwortet nicht.',
+    default: 'Das hat nicht geklappt.',
+  },
+};
+
+const DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+const MAX_DIGITS = 7;
+const NUMBER_LENGTH = 8;
+const TOAST_MS = 2600;
+const RGB_MAX = 255;
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_VARS = { base: '--rgb-base', ink: '--rgb-ink', accent: '--rgb-accent', mark: '--rgb-mark', signal: '--rgb-signal' };
+const MONEY = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
+
+const state = {
+  open: false, busy: false, bankName: '', mode: 'withdraw', typed: '',
+  atm: { withdrawMax: 5000, depositMax: 10000, deposit: true, daily: null, quick: [100, 200, 500, 1000, 2000, 5000] },
+  overview: null,
+};
+
+const el = {
+  panel: document.getElementById('panel'),
+  title: document.getElementById('title'),
+  subtitle: document.getElementById('subtitle'),
+  close: document.getElementById('close'),
+  tabs: document.getElementById('tabs'),
+  amountLabel: document.getElementById('amount-label'),
+  amount: document.getElementById('amount'),
+  hint: document.getElementById('hint'),
+  quick: document.getElementById('quick'),
+  keys: document.getElementById('keys'),
+  confirm: document.getElementById('confirm'),
+  accountLabel: document.getElementById('account-label'),
+  accountName: document.getElementById('account-name'),
+  accountNumber: document.getElementById('account-number'),
+  balance: document.getElementById('balance'),
+  balanceSub: document.getElementById('balance-sub'),
+  details: document.getElementById('details'),
+  debts: document.getElementById('debts'),
+  debtsTitle: document.getElementById('debts-title'),
+  debtsSub: document.getElementById('debts-sub'),
+  recentLabel: document.getElementById('recent-label'),
+  recent: document.getElementById('recent'),
+  toast: document.getElementById('toast'),
+};
+
+/* ---------- Helfer ---------- */
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+function icon(id) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.append(use);
+  return svg;
+}
+const money = (value) => `${MONEY.format(Number(value) || 0)} $`;
+const signed = (value) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${MONEY.format(Math.abs(Number(value) || 0))} $`;
+const account = (number) => (typeof number === 'string' && number.length === NUMBER_LENGTH ? `${number.slice(0, 4)} ${number.slice(4)}` : (number || ''));
+function when(text) {
+  const m = typeof text === 'string' && text.match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?/);
+  return m ? `${m[3]}.${m[2]}.${m[1]}${m[4] ? `, ${m[4]}` : ''}` : (text || '');
+}
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  const root = document.documentElement.style;
+  for (const [key, cssVar] of Object.entries(COLOR_VARS)) {
+    const value = typeof colors[key] === 'string' ? colors[key].trim() : '';
+    const valid = COLOR_PATTERN.test(value) && value.split(' ').every((n) => Number(n) <= RGB_MAX);
+    if (valid) root.setProperty(cssVar, value);
+    else root.removeProperty(cssVar);
+  }
+}
+let toastTimer = null;
+function toast(text, error = false) {
+  el.toast.textContent = text;
+  el.toast.classList.toggle('toast--error', error);
+  el.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.toast.hidden = true; }, TOAST_MS);
+}
+
+/* ---------- Grenzen: nur zur Anzeige, der Server prueft selbst ---------- */
+// Hoechster Betrag, der in diesem Modus gerade geht, und der Grund fuer die Grenze
+function limitOf(mode) {
+  const o = state.overview;
+  const a = state.atm;
+  if (mode === 'deposit') {
+    return o.cash < a.depositMax ? { max: o.cash, reason: 'cash' } : { max: a.depositMax, reason: 'limit' };
+  }
+  let limit = { max: a.withdrawMax, reason: 'limit' };
+  if (typeof o.atmRemaining === 'number' && o.atmRemaining < limit.max) limit = { max: o.atmRemaining, reason: 'daily' };
+  if (o.balance < limit.max) limit = { max: o.balance, reason: 'balance' };
+  return limit;
+}
+function check(amount) {
+  const limit = limitOf(state.mode);
+  if (amount <= limit.max) return '';
+  const a = state.atm;
+  if (limit.reason === 'cash') return TEXT.hint.overCash;
+  if (limit.reason === 'balance') return TEXT.hint.overBalance;
+  if (limit.reason === 'daily') return limit.max > 0 ? TEXT.hint.overDaily(money(limit.max)) : TEXT.hint.dailyDone;
+  return TEXT.hint.overLimit(money(state.mode === 'deposit' ? a.depositMax : a.withdrawMax));
+}
+
+/* ---------- Rendern ---------- */
+function renderTabs() {
+  el.tabs.replaceChildren();
+  const modes = state.atm.deposit ? ['withdraw', 'deposit'] : ['withdraw'];
+  modes.forEach((mode) => {
+    const b = make('button', 'tab', TEXT.modes[mode]);
+    b.type = 'button';
+    b.dataset.action = 'mode';
+    b.dataset.mode = mode;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(mode === state.mode));
+    el.tabs.append(b);
+  });
+}
+
+function renderPads() {
+  el.quick.replaceChildren();
+  state.atm.quick.forEach((value) => {
+    const b = make('button', 'key key--quick num', MONEY.format(value));
+    b.type = 'button';
+    b.dataset.action = 'quick';
+    b.dataset.value = value;
+    el.quick.append(b);
+  });
+  // Hoechster Betrag, der gerade geht (Grenze, Kontostand oder Bargeld)
+  const max = make('button', 'key key--word key--wide');
+  max.type = 'button';
+  max.dataset.action = 'max';
+  max.id = 'key-max';
+  el.quick.append(max);
+  el.keys.replaceChildren();
+  DIGITS.forEach((digit) => {
+    const b = make('button', 'key num', digit);
+    b.type = 'button';
+    b.dataset.action = 'digit';
+    b.dataset.value = digit;
+    el.keys.append(b);
+  });
+  const clear = make('button', 'key key--word', TEXT.keys.clear);
+  clear.type = 'button';
+  clear.dataset.action = 'clear';
+  const zero = make('button', 'key num', '0');
+  zero.type = 'button';
+  zero.dataset.action = 'digit';
+  zero.dataset.value = '0';
+  const back = make('button', 'key key--word');
+  back.type = 'button';
+  back.dataset.action = 'back';
+  back.setAttribute('aria-label', TEXT.keys.back);
+  back.append(icon('i-back'));
+  el.keys.append(clear, zero, back);
+}
+
+// Betrag, Hinweis, Schnellwahl und Hauptbutton: aendert sich bei jedem Tastendruck
+function renderAmount() {
+  const amount = Number(state.typed) || 0;
+  const limit = limitOf(state.mode);
+  const error = amount > 0 ? check(amount) : '';
+  el.amountLabel.textContent = TEXT.amountLabel[state.mode];
+  el.amount.textContent = money(amount);
+  el.amount.dataset.empty = String(amount === 0);
+
+  let hint = error;
+  if (!hint) {
+    const a = state.atm;
+    if (state.mode === 'withdraw' && limit.reason === 'daily') hint = limit.max > 0 ? TEXT.hint.daily(money(limit.max)) : TEXT.hint.dailyDone;
+    else hint = TEXT.hint[state.mode](money(state.mode === 'deposit' ? a.depositMax : a.withdrawMax));
+  }
+  el.hint.textContent = hint;
+  el.hint.dataset.error = String(Boolean(error));
+
+  el.quick.querySelectorAll('.key[data-action="quick"]').forEach((b) => { b.disabled = state.busy || Number(b.dataset.value) > limit.max; });
+  const maxKey = document.getElementById('key-max');
+  maxKey.textContent = TEXT.keys.max[state.mode](money(limit.max));
+  maxKey.disabled = state.busy || limit.max < 1;
+  el.keys.querySelectorAll('.key').forEach((b) => { b.disabled = state.busy; });
+  el.confirm.disabled = state.busy || amount < 1 || Boolean(error);
+  el.confirm.textContent = state.busy ? TEXT.confirm.busy : amount > 0 ? TEXT.confirm[state.mode](money(amount)) : TEXT.confirm[`${state.mode}Empty`];
+}
+
+function renderAccount() {
+  const o = state.overview;
+  el.title.textContent = state.bankName;
+  el.subtitle.textContent = TEXT.subtitle;
+  el.accountLabel.textContent = TEXT.account;
+  el.accountName.textContent = o.name;
+  el.accountNumber.textContent = account(o.number);
+  el.balance.textContent = money(o.balance);
+  el.balanceSub.textContent = TEXT.balance;
+
+  el.details.replaceChildren();
+  el.details.append(make('dt', '', TEXT.details.cash), make('dd', 'num', money(o.cash)));
+  if (typeof o.atmRemaining === 'number') el.details.append(make('dt', '', TEXT.details.today), make('dd', 'num', money(o.atmRemaining)));
+
+  const debts = o.debts || { count: 0, total: 0 };
+  el.debts.hidden = debts.count < 1;
+  el.debtsTitle.textContent = TEXT.debts(debts.count);
+  el.debtsSub.textContent = TEXT.debtsSub(money(debts.total));
+
+  el.recentLabel.textContent = TEXT.recent;
+  el.recent.replaceChildren();
+  const recent = Array.isArray(o.recent) ? o.recent : [];
+  if (!recent.length) el.recent.append(make('li', 'none', TEXT.noEntries));
+  recent.forEach((e) => {
+    const li = make('li');
+    li.append(make('span', 'recent__text', e.text), make('span', `recent__amount num${e.amount > 0 ? ' recent__amount--in' : ''}`, signed(e.amount)), make('time', 'num', when(e.at)));
+    el.recent.append(li);
+  });
+}
+
+function render() {
+  if (!state.overview) return;
+  renderTabs();
+  renderAccount();
+  renderAmount();
+}
+
+/* ---------- Aktionen ---------- */
+function type(digit) {
+  if (state.busy) return;
+  const next = state.typed === '0' ? digit : state.typed + digit;
+  if (next.length > MAX_DIGITS) return;
+  state.typed = next.replace(/^0+(?=\d)/, '');
+  renderAmount();
+}
+function setMode(mode) {
+  if (state.busy || mode === state.mode || (mode === 'deposit' && !state.atm.deposit)) return;
+  state.mode = mode;
+  state.typed = '';
+  renderTabs();
+  renderAmount();
+}
+
+async function confirm() {
+  const amount = Number(state.typed) || 0;
+  if (state.busy || amount < 1 || check(amount)) return;
+  state.busy = true;
+  renderAmount();
+  const mode = state.mode;
+  const res = await Bridge.send('bank_call', { name: mode === 'deposit' ? 'bank_deposit' : 'bank_withdraw', data: { amount } });
+  state.busy = false;
+  if (!res || !res.ok) {
+    toast(TEXT.errors[res && res.error] || TEXT.errors.default, true);
+    renderAmount();
+    return;
+  }
+  if (res.data && res.data.overview) state.overview = res.data.overview;
+  state.typed = '';
+  toast(TEXT.done[mode](money(amount)));
+  render();
+}
+
+async function refresh() {
+  if (!state.open || state.busy) return;
+  const res = await Bridge.send('bank_call', { name: 'bank_overview', data: {} });
+  if (res && res.ok && res.data && res.data.overview) {
+    state.overview = res.data.overview;
+    renderAccount();
+    renderAmount();
+  }
+}
+
+function close() {
+  if (!state.open) return;
+  state.open = false;
+  el.panel.hidden = true;
+  el.toast.hidden = true;
+  Bridge.send('atm_close', {});
+  // Den iframe in der Shell ausblenden, sonst faengt er weiter Klicks ab
+  if (window.parent !== window) window.parent.postMessage({ type: 'shell_hide', ui: 'atm' }, '*');
+}
+
+/* ---------- Ereignisse ---------- */
+document.addEventListener('click', (event) => {
+  const t = event.target.closest('[data-action]');
+  if (!t || !state.open) return;
+  const a = t.dataset.action;
+  if (a === 'close') close();
+  if (a === 'mode') setMode(t.dataset.mode);
+  if (a === 'digit') type(t.dataset.value);
+  if (a === 'quick' && !state.busy) { state.typed = String(t.dataset.value); renderAmount(); }
+  if (a === 'max' && !state.busy) { state.typed = String(limitOf(state.mode).max); renderAmount(); }
+  if (a === 'clear' && !state.busy) { state.typed = ''; renderAmount(); }
+  if (a === 'back' && !state.busy) { state.typed = state.typed.slice(0, -1); renderAmount(); }
+  if (a === 'confirm') confirm();
+});
+
+// Ziffern direkt tippen, Enter bestaetigt, Pfeile wechseln zwischen Auszahlen und Einzahlen
+document.addEventListener('keydown', (event) => {
+  if (!state.open) return;
+  if (event.key === 'Escape') { event.preventDefault(); close(); return; }
+  if (/^\d$/.test(event.key)) { event.preventDefault(); type(event.key); return; }
+  if (event.key === 'Backspace') { event.preventDefault(); if (!state.busy) { state.typed = state.typed.slice(0, -1); renderAmount(); } return; }
+  if (event.key === 'Delete') { event.preventDefault(); if (!state.busy) { state.typed = ''; renderAmount(); } return; }
+  if (event.key === 'Enter') { event.preventDefault(); confirm(); return; }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); setMode('withdraw'); }
+  if (event.key === 'ArrowRight') { event.preventDefault(); setMode('deposit'); }
+});
+
+Bridge.on('atm_open', (data) => {
+  applyColors(data.colors);
+  const atm = data.atm && typeof data.atm === 'object' ? data.atm : {};
+  Object.assign(state, {
+    open: true, busy: false, mode: 'withdraw', typed: '',
+    bankName: typeof data.bankName === 'string' ? data.bankName : '',
+    overview: data.overview || null,
+    atm: {
+      withdrawMax: Number(atm.withdrawMax) || state.atm.withdrawMax, depositMax: Number(atm.depositMax) || state.atm.depositMax,
+      deposit: atm.deposit === true, daily: Number(atm.daily) || null,
+      quick: Array.isArray(atm.quick) && atm.quick.length ? atm.quick.map(Number).filter((n) => Number.isInteger(n) && n > 0) : state.atm.quick,
+    },
+  });
+  el.panel.hidden = !state.overview;
+  if (!state.overview) return;
+  renderPads();
+  render();
+  el.confirm.focus();
+});
+
+Bridge.on('atm_refresh', () => { refresh(); });
+
+Bridge.on('atm_close', () => {
+  state.open = false;
+  el.panel.hidden = true;
+  el.toast.hidden = true;
+});
+
+el.close.setAttribute('aria-label', TEXT.close);
+
+(async () => {
+  const res = await Bridge.send('ui_ready', { ui: 'atm', version: CONTRACT_VERSION });
+  if (res && res.ok && res.data) applyColors(res.data.colors);
+  if (Bridge.platform === 'mock') {
+    const params = new URLSearchParams(location.search);
+    Mock.push('atm_open', { bankName: 'Fleeca Bank', overview: Mock.overview(),
+      atm: { withdrawMax: Mock.limits.withdrawMax, depositMax: Mock.limits.depositMax, deposit: true, daily: Mock.limits.daily, quick: [100, 200, 500, 1000, 2000, 5000] } });
+    if (params.has('einzahlen')) setMode('deposit');
+    const typed = params.get('betrag');
+    if (typed) [...typed].forEach((digit) => type(digit));
+  }
+})();
+</script>
+</body>
+</html>

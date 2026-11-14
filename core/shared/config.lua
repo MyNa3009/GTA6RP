@@ -242,6 +242,9 @@ Config.Death = {
     HoldToRespawnMs = 1500,
     -- Bild im Spiel grau und dunkler, solange man bewusstlos ist (Effekt steht in data/effects_gta5.lua)
     ScreenEffect = true,
+    -- "Getötet von" bei indirekten Tötungen: Nennt das Spiel keinen Täter (angefahren und am Sturz gestorben,
+    -- angezündet, weggeschleudert), zählt der letzte Spieler, der in dieser Zeit Schaden gemacht hat.
+    KillerWindowSeconds = 10,
 }
 
 ------------------------------------------------------------------------

@@ -70,6 +70,9 @@ Core.RegisterCallback('death_report', function(source, data)
             killerCharacterId = killer and killer.characterId or nil,
             killerName = killerCharacter and ('%s %s'):format(killerCharacter.firstname, killerCharacter.lastname) or nil,
             killerOnDuty = killer and killer.adminDuty ~= nil or nil,
+            -- indirekt: das Spiel nannte keinen Taeter, es zaehlt der letzte Schaden durch einen Spieler (z. B. angefahren)
+            killerIndirect = killer and data.indirect == true or nil,
+            killerByVehicle = killer and data.byVehicle == true or nil,
             weapon = weapon and math.floor(weapon) % 4294967296 or nil,
             weaponName = WeaponLabel(weapon),
             position = Platform.GetPlayerPosition(source),
