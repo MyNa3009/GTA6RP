@@ -1920,6 +1920,32 @@ function Platform.ClearOwnTasks()
     ClearPedTasks(PlayerPedId())
 end
 
+-- Szenario des eigenen Peds sicher beenden (seit Core 1.17.1). Manche Szenarien (Bankautomat) laufen nach
+-- ClearPedTasks einfach weiter. Erst sanft mit Ausstiegs-Animation, haengt es danach noch, hart abbrechen.
+local SCENARIO_EXIT_MS = 1500
+local SCENARIO_POLL_MS = 100
+
+function Platform.StopOwnScenario()
+    local ped = PlayerPedId()
+    if not IsPedUsingAnyScenario(ped) then
+        ClearPedTasks(ped)
+        return
+    end
+    ClearPedTasks(ped)
+    CreateThread(function()
+        local waited = 0
+        while waited < SCENARIO_EXIT_MS do
+            Wait(SCENARIO_POLL_MS)
+            waited = waited + SCENARIO_POLL_MS
+            ped = PlayerPedId()
+            if not IsPedUsingAnyScenario(ped) then
+                return
+            end
+        end
+        ClearPedTasksImmediately(PlayerPedId())
+    end)
+end
+
 -- Objekt an einem Knochen des eigenen Peds. bone ist die GTA-Knochen-ID, pos und rot { x, y, z }.
 -- Gibt das Objekt zurueck (spaeter mit Platform.DeleteLocalProp entfernen) oder nil.
 function Platform.AttachPropToOwnPed(model, bone, pos, rot)

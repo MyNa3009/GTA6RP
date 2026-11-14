@@ -1,8 +1,13 @@
-# core_bank 1.0.1
+# core_bank 1.0.2
 
 Bank für die eigene Core. Jeder Charakter hat ein Girokonto mit Kontonummer. In der Filiale zahlt man ein und aus, überweist, liest den Kontoauszug und begleicht Schulden. An jedem Bankautomaten der Spielwelt gibt es schnelles Bargeld mit Grenzen. Schulden sind Strafen, Rechnungen und Gebühren mit Frist: Danach kommt eine Mahngebühr dazu, und die Bank zieht vom Konto ein. Alle Daten gibt es als Export, damit später das Handy dasselbe zeigen kann.
 
 Das Geld selbst liegt weiter in der Core (Bankkonto am Charakter). `core_bank` bucht nur über deren Exports und führt Kontonummer, Kontoauszug und Schulden.
+
+## Update von 1.0.1
+
+1. Erst Core 1.17.1, dann den Ordner `core_bank` ersetzen und neu starten. Keine Migration.
+2. **Fehler behoben:** Die Bewegung am Bankautomaten lief nach dem Schließen weiter. Jetzt endet sie beim Schließen, beim Bewusstlos-Werden und beim Neustart der Resource.
 
 ## Update von 1.0.0
 

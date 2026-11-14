@@ -90,6 +90,15 @@ Platform.UiOn('ui_ready', function(data)
     return { ok = true, data = { colors = BankClient.Colors() } }
 end)
 
+-- Bewegung am Automaten beenden. Ab Core 1.17.1 sicher (das Szenario laeuft nach ClearPedTasks sonst weiter).
+local function stopScenario()
+    if type(Platform.StopOwnScenario) == 'function' then
+        Platform.StopOwnScenario()
+    else
+        Platform.ClearOwnTasks()
+    end
+end
+
 local function close(tellUi)
     local ui = BankClient.open
     if not ui then
@@ -101,7 +110,7 @@ local function close(tellUi)
         Platform.UiSend(ui .. '_close', {})
     end
     if ui == 'atm' and BankAtmScenario then
-        Platform.ClearOwnTasks()
+        stopScenario()
     end
     Platform.Async(function()
         Network.Call('bank_close', {})
@@ -208,7 +217,7 @@ Platform.OnEvent('onResourceStop', function(resource)
     if resource == Platform.GetResourceName() and BankClient.open then
         Platform.UiFocus(false)
         if BankClient.open == 'atm' and BankAtmScenario then
-            Platform.ClearOwnTasks()
+            stopScenario()
         end
     end
 end)
