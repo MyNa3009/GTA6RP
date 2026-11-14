@@ -69,8 +69,22 @@ function Bank.Money(amount)
     return (formatted:gsub('^%.', '')) .. ' $'
 end
 
+-- Login eines Charakters, damit der Eintrag in seiner Akte im Admin-Menue steht (die Akte sucht ueber den Login)
+local accountOf = {}   -- [permanente ID] = Login-Nummer
+
+local function accountIdOf(characterId)
+    if accountOf[characterId] == nil then
+        accountOf[characterId] = tonumber(Bank.Core('GetCharacterAccount', characterId)) or false
+    end
+    return accountOf[characterId] or nil
+end
+
 function Bank.Log(entry)
     entry.category = 'bank'
+    entry.resource = entry.resource or 'core_bank'
+    if entry.character_id and not entry.account_id then
+        entry.account_id = accountIdOf(entry.character_id)
+    end
     Bank.Core('Log', entry)
 end
 

@@ -1,8 +1,14 @@
-# core_bank 1.0.0
+# core_bank 1.0.1
 
 Bank für die eigene Core. Jeder Charakter hat ein Girokonto mit Kontonummer. In der Filiale zahlt man ein und aus, überweist, liest den Kontoauszug und begleicht Schulden. An jedem Bankautomaten der Spielwelt gibt es schnelles Bargeld mit Grenzen. Schulden sind Strafen, Rechnungen und Gebühren mit Frist: Danach kommt eine Mahngebühr dazu, und die Bank zieht vom Konto ein. Alle Daten gibt es als Export, damit später das Handy dasselbe zeigen kann.
 
 Das Geld selbst liegt weiter in der Core (Bankkonto am Charakter). `core_bank` bucht nur über deren Exports und führt Kontonummer, Kontoauszug und Schulden.
+
+## Update von 1.0.0
+
+1. Erst Core 1.17.0, dann den Ordner `core_bank` ersetzen und neu starten. Keine Migration.
+2. **Bank im Admin-Menü:** Die Akte im Admin-Menü der Core hat den Reiter "Bank" mit Konto, Schulden und Kontoauszug. Von dort öffnet ein Knopf die Ansicht von `/konto`.
+3. Die Einträge der Bank im Log tragen jetzt den Login der Person. Dadurch stehen sie in ihrer Akte. Einträge von vor dem Update tauchen dort nicht auf.
 
 ## Installation
 
@@ -52,6 +58,8 @@ Mitglieder einer Organisation aus `Debts.Issuers` stellen im Dienst über das G-
 |---|---|---|
 | `/konto 17` | `player.view` | Konto, Kontoauszug und Schulden von ID 17 ansehen, auch offline. Geld bewegt man hier nicht, dafür gibt es `/givemoney` und `/removemoney` |
 | `/schuld 17 500 Rotlicht überfahren` | `money.manage`, im Admin-Dienst | Strafe des Staats eintragen |
+
+Dieselben Daten stehen im Admin-Menü in der Akte der Person unter dem Reiter "Bank". Der Knopf "In der Bank öffnen" führt von dort in die Ansicht von `/konto`.
 
 In der Ansicht von `/konto` können Admins mit `money.manage` im Admin-Dienst Forderungen eintragen und mit Grund erlassen. Schon Bezahltes bleibt beim Gläubiger. Jeder Blick in ein Konto und jede Änderung steht im Log (Kategorie `bank`).
 

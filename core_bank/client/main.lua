@@ -193,6 +193,17 @@ Platform.RegisterClientCommand(CFG.Admin.Command, function(args)
     BankClient.Open({ channel = 'admin', characterId = characterId })
 end)
 
+-- Aus dem Admin-Menue der Core (Akte, Reiter Bank): dieselbe Ansicht wie /konto
+Platform.OnEvent('core_bank:adminOpen', function(characterId)
+    characterId = tonumber(characterId)
+    if not characterId then
+        return
+    end
+    Platform.Async(function()
+        BankClient.Open({ channel = 'admin', characterId = characterId })
+    end)
+end)
+
 Platform.OnEvent('onResourceStop', function(resource)
     if resource == Platform.GetResourceName() and BankClient.open then
         Platform.UiFocus(false)

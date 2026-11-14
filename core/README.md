@@ -1,10 +1,18 @@
-# Core 1.16.0 (Testserver)
+# Core 1.17.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.16.0
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration. Für den neuen Reiter dazu `core_bank` 1.0.1.
+2. **Bank im Admin-Menü:** Die Akte hat den Reiter "Bank", wenn `core_bank` läuft. Er zeigt für den gewählten Charakter Kontonummer und Kontostand, offene und erledigte Forderungen und den Kontoauszug, auch offline. Jeder Blick wird geloggt (`admin.view_bank`).
+3. Der Knopf "In der Bank öffnen" schließt das Menü und öffnet dasselbe Konto wie `/konto <ID>`. Dort trägst du Forderungen ein oder erlässt sie.
+4. Alles, was die Bank loggt (Forderung bekommen, bezahlt, eingezogen, erlassen, Mahngebühr), steht jetzt in der Akte der Person unter "Alles", mit lesbaren Namen.
+5. Im Reiter "Tode" steht bei indirekten Tötungen "Indirekt: letzter Schaden vor dem Tod" und bei Fahrzeugen "Mit Fahrzeug".
 
 ## Update von 1.15.0
 

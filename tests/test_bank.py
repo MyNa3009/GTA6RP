@@ -320,6 +320,31 @@ env.command(3, f'schuld {ids[2]} 500 Test')
 check('/schuld ohne Rechte: nichts passiert', len(env.sql('SELECT id FROM bank_debts')) == before_count)
 B(4, 'bank_close')
 
+print('Bank im Admin-Menü (Akte)')
+B(4, 'bank_close')
+acc1 = env.sql('SELECT account_id FROM characters WHERE id = %s', (ids[1],))[0]['account_id']
+check('Akte meldet: Bank ist da', env.call(4, 'admin_profile', {'characterId': ids[1]})['data']['bank'] is True)
+ab = env.call(4, 'admin_bank', {'characterId': ids[1]})
+abd = ab['data'] if ab['ok'] else {}
+check('Reiter Bank: Konto, Kontostand, Schulden in Kurzform', ab['ok'] and abd['account'] == {'name': 'Lena Hoffmann', 'number': numbers[ids[1]], 'balance': bank_of(ids[1])}
+      and abd['debts']['count'] == 2, ab)
+check('offene und erledigte Forderungen', len(abd['open']) == 2 and abd['open'][0]['title'] and {d['status'] for d in abd['closed']} == {'paid', 'cancelled'}, (abd.get('open'), abd.get('closed')))
+check('Kontoauszug Seite 1 mit Buchungen', abd['statement']['page'] == 1 and len(abd['statement']['entries']) > 5 and abd['statement']['entries'][0]['at'])
+bank.execute('Config.Bank.PageSize = 4')
+p2 = env.call(4, 'admin_bank', {'characterId': ids[1], 'page': 2})
+check('Seite 2 bringt nur den Kontoauszug', p2['ok'] and set(p2['data'].keys()) == {'characterId', 'statement'} and p2['data']['statement']['page'] == 2
+      and len(p2['data']['statement']['entries']) == 4, p2)
+bank.execute('Config.Bank.PageSize = 20')
+check('geht auch für Sara, die offline ist', env.call(4, 'admin_bank', {'characterId': ids[5]})['data']['account']['name'] == 'Sara Yilmaz')
+check('unbekannte ID: character_not_found', env.call(4, 'admin_bank', {'characterId': 99999})['error'] == 'character_not_found')
+check('ohne Rechte: no_permission', env.call(3, 'admin_bank', {'characterId': ids[1]})['error'] == 'no_permission')
+env.flush_log()
+lg = env.call(4, 'admin_logs', {'accountId': acc1, 'category': 'bank', 'page': 0})
+acts = [e['action'] for e in lg['data']['entries']] if lg['ok'] else []
+check('Log-Kategorie bank steht in der Akte der Person', lg['ok'] and {'debt_add', 'debt_pay', 'debt_collect', 'debt_overdue', 'debt_cancel', 'admin_view'} <= set(acts), lg if not lg['ok'] else acts)
+views = env.sql("SELECT COUNT(*) AS n FROM audit_log WHERE category = 'admin' AND action = 'view_bank' AND character_id = %s", (ids[1],))[0]['n']
+check('jeder Blick ist geloggt, Nachladen nicht noch einmal', views == 1, views)
+
 print('Zustand und Exports')
 r = env.call(1, 'death_report', {'killer': 3, 'weapon': 0, 'indirect': True, 'byVehicle': True})
 check('Tod nach Anfahren: "Getötet von" nennt die ID des Fahrers', r['ok'] and r['data']['killerId'] == ids[3], r)

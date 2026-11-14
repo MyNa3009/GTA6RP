@@ -14,9 +14,11 @@ local SEARCH_MAX_LENGTH = 50
 local LOG_CATEGORIES = {
     money = true, death = true, connection = true, account = true,
     character = true, admin = true, security = true, test = true, punishment = true, twink = true, ticket = true, item = true,
+    bank = true,
 }
 local NOCLIP_EVENT = 'core:admin:noclip'
 local INVENTORY_RESOURCE = 'core_inventory'
+local BANK_RESOURCE = 'core_bank'
 
 ------------------------------------------------------------------------
 -- Admin-Dienst
@@ -672,6 +674,7 @@ Core.RegisterCallback('admin_profile', function(source, data)
             twinks = twinkSummary(accountId),
             focusCharacterId = focusCharacterId,
             inventory = Platform.IsResourceStarted(INVENTORY_RESOURCE),
+            bank = Platform.IsResourceStarted(BANK_RESOURCE),
             adminKeys = adminKeyList(source, characters),
         },
     }
@@ -711,6 +714,58 @@ Core.RegisterCallback('admin_inventory', function(source, data)
             state = state,
             items = Platform.CallExport(INVENTORY_RESOURCE, 'GetItemDefs') or {},
             layout = Platform.CallExport(INVENTORY_RESOURCE, 'GetLayout') or {},
+        },
+    }
+end)
+
+-- Bank eines Charakters fuer die Akte (kommt aus core_bank, geht auch offline): Konto, Schulden, Kontoauszug.
+-- page ab 2 laedt nur weitere Seiten des Kontoauszugs.
+Core.RegisterCallback('admin_bank', function(source, data)
+    local denied = deny(source, 'player.view')
+    if denied then return denied end
+    local characterId = tonumber(data.characterId)
+    if not characterId then
+        return { ok = false, error = 'character_not_found' }
+    end
+    if not Platform.IsResourceStarted(BANK_RESOURCE) then
+        return { ok = false, error = 'no_bank' }
+    end
+    characterId = math.floor(characterId)
+    local accountId = DB.Scalar('SELECT account_id FROM characters WHERE id = ?', { characterId })
+    if not accountId then
+        return { ok = false, error = 'character_not_found' }
+    end
+    local page = math.max(1, math.floor(tonumber(data.page) or 1))
+    local statement = Platform.CallExport(BANK_RESOURCE, 'GetTransactions', characterId, { page = page })
+    if type(statement) ~= 'table' then
+        return { ok = false, error = 'no_bank' }
+    end
+    if page > 1 then
+        return { ok = true, data = { characterId = characterId, statement = statement } }
+    end
+    local overview = Platform.CallExport(BANK_RESOURCE, 'GetOverview', characterId, 0)
+    if type(overview) ~= 'table' then
+        return { ok = false, error = 'no_bank' }
+    end
+    local open = Platform.CallExport(BANK_RESOURCE, 'GetDebts', characterId, { status = 'open' }) or {}
+    local closed = Platform.CallExport(BANK_RESOURCE, 'GetDebts', characterId, { status = 'closed' }) or {}
+    local admin = Core.GetPlayer(source)
+    Core.Log({
+        actor_account_id = admin and admin.accountId or nil,
+        account_id = accountId,
+        character_id = characterId,
+        category = 'admin',
+        action = 'view_bank',
+    })
+    return {
+        ok = true,
+        data = {
+            characterId = characterId,
+            account = { name = overview.name, number = overview.number, balance = overview.balance },
+            debts = overview.debts,
+            open = open.debts or {},
+            closed = closed.debts or {},
+            statement = statement,
         },
     }
 end)

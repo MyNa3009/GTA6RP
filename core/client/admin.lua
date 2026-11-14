@@ -117,12 +117,23 @@ Platform.UiOn('admin_open_tickets', function()
     return { ok = true }
 end)
 
+-- Knopf "In der Bank öffnen" in der Akte: Menue zu, core_bank zeigt das Konto (dort prueft der Server die Rechte)
+Platform.UiOn('admin_open_bank', function(data)
+    local characterId = tonumber(data.characterId)
+    if not characterId then
+        return { ok = false, error = 'character_not_found' }
+    end
+    close()
+    Platform.Emit('core_bank:adminOpen', math.floor(characterId))
+    return { ok = true }
+end)
+
 Platform.UiOn('admin_refresh', function()
     return Network.Call('admin_overview', {})
 end)
 
 -- Diese Anfragen gehen unveraendert an den Server
-for _, name in ipairs({ 'admin_search', 'admin_profile', 'admin_logs', 'admin_action', 'admin_duty', 'admin_link', 'admin_warnings', 'admin_accounts', 'admin_punish', 'admin_device_alert', 'admin_inventory', 'admin_key_create', 'admin_key_delete' }) do
+for _, name in ipairs({ 'admin_search', 'admin_profile', 'admin_logs', 'admin_action', 'admin_duty', 'admin_link', 'admin_warnings', 'admin_accounts', 'admin_punish', 'admin_device_alert', 'admin_inventory', 'admin_bank', 'admin_key_create', 'admin_key_delete' }) do
     Platform.UiOn(name, function(data)
         return Network.Call(name, data)
     end)
