@@ -2340,6 +2340,49 @@ function Platform.PlayUiSound(name)
     end
 end
 
+-- Laute Toene fuer /tg (seit Core 1.18.0): Alarm, Hupen, Fehlertoene, durcheinander. GTA-5-Sounds stehen nur hier.
+local LOUD_SOUNDS = {
+    { 'Air_Defences_Activated', 'DLC_sum20_Business_Battle_AC_Sounds' },
+    { 'Altitude_Warning', 'EXILE_1' },
+    { 'Beep_Red', 'DLC_HEIST_HACKING_SNAKE_SOUNDS' },
+    { 'Hack_Failed', 'DLC_HEIST_BIOLAB_PREP_HACKING_SOUNDS' },
+    { 'TIMER_STOP', 'HUD_MINI_GAME_SOUNDSET' },
+    { 'LOSER', 'HUD_AWARDS' },
+    { 'CHECKPOINT_MISSED', 'HUD_MINI_GAME_SOUNDSET' },
+    { 'Bed', 'WastedSounds' },
+}
+local LOUD_STEP_MS = 350      -- alle so viele Millisekunden ein neuer Ton
+local LOUD_LAYERS = 3         -- so viele Toene gleichzeitig
+local loudUntil = 0
+
+-- Spielt durationMs lang laute Toene. Laeuft es schon, wird nur die Zeit verlaengert.
+function Platform.PlayLoudSounds(durationMs)
+    local running = loudUntil > GetGameTimer()
+    loudUntil = math.max(loudUntil, GetGameTimer() + durationMs)
+    if running then
+        return
+    end
+    CreateThread(function()
+        local ids = {}
+        local slot = 0
+        while GetGameTimer() < loudUntil do
+            slot = slot % LOUD_LAYERS + 1
+            if ids[slot] then
+                StopSound(ids[slot])
+                ReleaseSoundId(ids[slot])
+            end
+            local sound = LOUD_SOUNDS[math.random(#LOUD_SOUNDS)]
+            ids[slot] = GetSoundId()
+            PlaySoundFrontend(ids[slot], sound[1], sound[2], true)
+            Wait(LOUD_STEP_MS)
+        end
+        for _, id in pairs(ids) do
+            StopSound(id)
+            ReleaseSoundId(id)
+        end
+    end)
+end
+
 -- Wegpunkt auf der Karte setzen (GPS-Route im Spiel) und wieder entfernen
 function Platform.SetWaypoint(coords)
     SetNewWaypoint(coords.x + 0.0, coords.y + 0.0)

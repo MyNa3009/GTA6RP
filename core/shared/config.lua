@@ -75,7 +75,7 @@ Config.Ranks = {
     { id = 'player',      level = 0, label = 'Spieler',                    permissions = {} },
     { id = 'assistant',   level = 1, label = 'Administrator Assistant',    permissions = { 'admin.menu', 'admin.duty', 'player.view', 'admin.message', 'admin.esp', 'tickets.manage', 'factions.view' } },
     { id = 'junior',      level = 2, label = 'Junior Administrator',       permissions = { 'player.revive', 'player.teleport', 'player.ajail', 'admin.noclip', 'player.freeze', 'player.heal', 'vehicle.fix', 'vehicle.delete', 'admin.dimension', 'player.spectate' } },
-    { id = 'admin',       level = 3, label = 'Administrator',              permissions = { 'player.kick', 'accounts.links', 'player.dimension', 'player.kill', 'player.rename' } },
+    { id = 'admin',       level = 3, label = 'Administrator',              permissions = { 'player.kick', 'accounts.links', 'player.dimension', 'player.kill', 'player.rename', 'player.troll' } },
     { id = 'serveradmin', level = 4, label = 'Server Administrator',       permissions = { 'player.warn', 'player.ban', 'vehicle.spawn', 'player.silentkick', 'weapon.give', 'admin.mass' } },
     { id = 'senior',      level = 5, label = 'Senior Administrator',       permissions = { 'player.unban', 'money.manage', 'vehicle.boost', 'items.manage', 'admin.keys', 'factions.manage' } },
     { id = 'deputy',      level = 6, label = 'Deputy Chief Administrator', permissions = { 'ranks.manage', 'data.private' } },
@@ -140,6 +140,7 @@ Config.AdminTools = {
     MaxAmmo = 9999,
     MaxDimension = 9999,        -- 0 ist die normale Welt
     MessageMaxLength = 250,     -- /dm
+    TrollSeconds = 8,           -- /tg: so lange laufen die lauten Geraeusche
     LookDistance = 30.0,        -- /fixcars ohne Umkreis: so weit wird nach dem Fahrzeug gesucht, auf das man schaut
     CarTeleportOffset = 4.0,    -- /cartp zu einem Spieler: so viele Meter daneben, damit niemand im Auto steckt
     -- /silentk: Das sieht der Spieler. Absichtlich wie ein Verbindungsabbruch, der echte Grund steht nur im Log.

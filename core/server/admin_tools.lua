@@ -1,4 +1,4 @@
--- Admin-Werkzeuge: /freeze, /unfreeze, /kill, /heal, /armor, /fixcars, /cartp, /dim, /setdim, /dm, /silentk, /gun, /regun.
+-- Admin-Werkzeuge: /freeze, /unfreeze, /kill, /heal, /armor, /fixcars, /cartp, /dim, /setdim, /dm, /silentk, /tg, /gun, /regun.
 -- Ziele bei den meisten Befehlen:
 --   (leer)      man selbst, wo es Sinn ergibt (/heal, /armor, /gun, /regun)
 --   17          permanente ID
@@ -636,6 +636,45 @@ Core.RegisterAdminCommand('silentk', 'player.silentkick', function(source, args)
     local characterId = player.characterId
     Platform.DropPlayer(player.source, Config.AdminTools.SilentKickReason)
     Platform.Notify(source, ('ID %d still gekickt. Für die Person sieht es wie ein Verbindungsabbruch aus.'):format(characterId), 'success')
+end, { requireDuty = true })
+
+-- /tg <permanente ID>
+-- Troll: Die Person hoert ein paar Sekunden laute Geraeusche. Keine Meldung an die Person, Eintrag in der Akte.
+local TROLL_EVENT = 'core:admin:troll'
+local trollUntil = {}   -- [permanente ID] = Zeitpunkt in Sekunden, bis die Geraeusche laufen
+
+Core.RegisterAdminCommand('tg', 'player.troll', function(source, args)
+    if not args[1] or not args[1]:match('^%d+$') or args[2] then
+        usage(source, 'Benutzung: /tg <permanente ID>')
+        return
+    end
+    local player = Core.GetPlayerByCharacter(args[1])
+    if not player or not player.character then
+        Platform.Notify(source, TEXT.offline, 'error')
+        return
+    end
+    if player.source == source and not DEBUG then
+        Platform.Notify(source, TEXT.self, 'error')
+        return
+    end
+    if not outranks(source, player) then
+        Platform.Notify(source, SKIP_SINGLE.rank, 'error')
+        return
+    end
+    if player.adminDuty then
+        Platform.Notify(source, SKIP_SINGLE.duty, 'error')
+        return
+    end
+    local now = os.time()
+    if (trollUntil[player.characterId] or 0) > now then
+        Platform.Notify(source, ('Bei ID %d laufen die Geräusche noch.'):format(player.characterId), 'error')
+        return
+    end
+    local seconds = Config.AdminTools.TrollSeconds
+    trollUntil[player.characterId] = now + seconds
+    Network.SendToClient(player.source, TROLL_EVENT, { seconds = seconds })
+    log(source, player, 'troll', { seconds = seconds, console = source == CONSOLE or nil })
+    Platform.Notify(source, ('ID %d hört jetzt %d Sekunden laute Geräusche.'):format(player.characterId, seconds), 'success')
 end, { requireDuty = true })
 
 ------------------------------------------------------------------------

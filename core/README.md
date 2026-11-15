@@ -1,10 +1,17 @@
-# Core 1.17.1 (Testserver)
+# Core 1.18.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.17.1
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. **Neuer Befehl `/tg <ID>`:** Troll. Die Person hört 8 Sekunden lang laute Geräusche (Alarm, Hupen, Fehlertöne durcheinander). Sie bekommt keine Meldung, in ihrer Akte steht "Getrollt". Recht `player.troll` (ab Administrator), nur im Admin-Dienst. Übersprungen: gleicher oder höherer Rang und Admins im Dienst. Solange es läuft, geht kein zweites `/tg` an dieselbe Person.
+3. Die Dauer steht in `Config.AdminTools.TrollSeconds`, die Töne in der Client-Bridge (`Platform.PlayLoudSounds`).
+4. Wer schon eine eigene `Config.Ranks` hat: `player.troll` beim Rang `admin` ergänzen.
 
 ## Update von 1.17.0
 
@@ -447,6 +454,7 @@ ensure core
 | Dimension und Teleport | `/tp`, `/goto` und `/bring` nehmen die Dimension mit, damit man sich sieht. A-Jail und Ausloggen setzen auf 0 zurück. Im Admin-Menü steht "Dim 5" neben dem Namen |
 | `/dm 17 Komm bitte in den Warteraum` | ID 17 sieht in der Bildschirmmitte eine goldene "Teamnachricht von <Name>". Recht `admin.message` (ab Assistant) |
 | `/dm r 30 Alle kurz herhören`, `/dm all Neustart in 5 Minuten` | An alle im Umkreis (ohne dich selbst) oder an alle im Spiel (`all` braucht `admin.mass`) |
+| `/tg 17` | Troll: ID 17 hört 8 Sekunden laute Geräusche, ohne Meldung. Steht in der Akte. Recht `player.troll` (ab Administrator), nur im Admin-Dienst |
 | `/silentk 17 Cheat-Verdacht` | ID 17 fliegt und sieht nur einen Verbindungsabbruch. Der echte Grund und wer es war steht in der Akte unter "Still gekickt". Grund optional. Recht `player.silentkick` (ab Server Administrator) |
 | `/gun`, `/gun 17 carbinerifle 120`, `/gun r 20 pistol`, `/gun all` | Waffe geben, ohne Angabe Pistole mit 250 Schuss. Namen wie `pistol`, `combatpistol`, `smg`, `pumpshotgun`, `carbinerifle` (Liste in `data/weapons_gta5.lua`). Nicht im A-Jail. Recht `weapon.give` (ab Server Administrator) |
 | `/regun 17`, `/regun 17 pistol`, `/regun r 20` | Nimmt die Waffen wieder weg, die ein Admin mit `/gun` gegeben hat. Andere Waffen bleiben. Charakterwechsel nimmt sie auch weg |

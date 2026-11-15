@@ -62,6 +62,14 @@ Network.On('core:admin:kill', function()
     Platform.KillSelf()
 end)
 
+-- /tg: laute Geraeusche fuer ein paar Sekunden (die Toene stehen in der Bridge)
+Network.On('core:admin:troll', function(data)
+    local seconds = type(data) == 'table' and tonumber(data.seconds) or nil
+    if seconds and seconds > 0 then
+        Platform.PlayLoudSounds(math.floor(seconds * 1000))
+    end
+end)
+
 ------------------------------------------------------------------------
 -- Heilen und Weste (vom Server)
 ------------------------------------------------------------------------

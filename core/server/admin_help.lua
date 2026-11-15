@@ -51,6 +51,7 @@ local GROUPS = {
             { usage = '/freeze ziel, /unfreeze ziel', text = 'Einfrieren und wieder frei lassen.', permission = 'player.freeze', command = 'freeze' },
             { usage = '/kill [ziel]', text = 'Bewusstlos machen. Admins im Dienst werden übersprungen.', permission = 'player.kill', command = 'kill' },
             { usage = '/dm ziel Text', text = 'Teamnachricht in der Bildschirmmitte.', permission = 'admin.message', command = 'dm' },
+            { usage = '/tg 17', text = 'Troll: ID 17 hört ein paar Sekunden laute Geräusche. Keine Meldung an die Person, steht in der Akte.', permission = 'player.troll', command = 'tg' },
             { usage = '/gun [ziel] [waffe] [munition]', text = 'Waffe geben, ohne Angabe Pistole mit 250 Schuss.', permission = 'weapon.give', command = 'gun' },
             { usage = '/regun [ziel] [waffe]', text = 'Waffen wieder wegnehmen, die ein Admin gegeben hat.', permission = 'weapon.give', command = 'regun' },
         },
