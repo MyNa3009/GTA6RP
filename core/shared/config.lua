@@ -371,10 +371,13 @@ Config.Consent = {
 }
 
 Config.Notify = {
-    MaxVisible = 4,                 -- aeltere verschwinden, wenn mehr kommen
+    MaxVisible = 3,                 -- aeltere verschwinden, wenn mehr kommen (unten mittig, darum wenige)
     DurationMs = { info = 5000, success = 4000, error = 6000, warning = 9000, message = 12000 }, -- message: /dm vom Team
     PerCharacterMs = 35,            -- lange Texte bleiben laenger stehen
     MaxDurationMs = 15000,
+    -- Kleiner Ton zu jeder Meldung. false = still. Als Tabelle pro Art ein Ton aus der Client-Bridge oder false,
+    -- z. B. { info = 'notify_info', success = 'notify_success', error = 'notify_error', warning = 'notify_warning', message = 'notify_message' }
+    Sound = true,
 }
 
 ------------------------------------------------------------------------

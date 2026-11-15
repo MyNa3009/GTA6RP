@@ -2329,6 +2329,12 @@ local UI_SOUNDS = {
     alert  = { 'Event_Message_Purple', 'GTAO_FM_Events_Soundset' },   -- neuer Einsatz
     urgent = { 'TIMER_STOP', 'HUD_MINI_GAME_SOUNDSET' },             -- Lebensgefahr, Einheit in Not
     click  = { 'NAV_UP_DOWN', 'HUD_FRONTEND_DEFAULT_SOUNDSET' },
+    -- Benachrichtigungen der Core (seit Core 1.19.0), bewusst leise und kurz
+    notify_info    = { 'SELECT', 'HUD_FRONTEND_DEFAULT_SOUNDSET' },
+    notify_success = { 'PICK_UP', 'HUD_FRONTEND_DEFAULT_SOUNDSET' },
+    notify_error   = { 'ERROR', 'HUD_FRONTEND_DEFAULT_SOUNDSET' },
+    notify_warning = { 'CHECKPOINT_NORMAL', 'HUD_MINI_GAME_SOUNDSET' },
+    notify_message = { 'Event_Message_Purple', 'GTAO_FM_Events_Soundset' },
     done   = { 'CHECKPOINT_PERFECT', 'HUD_MINI_GAME_SOUNDSET' },
 }
 

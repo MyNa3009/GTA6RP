@@ -1,10 +1,18 @@
-# Core 1.18.1 (Testserver)
+# Core 1.19.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.18.1
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. **Benachrichtigungen neu:** Sie stehen jetzt unten mittig, frei im Bild ohne Kasten und größer, wie Untertitel. Die Art steht farbig davor (Erledigt, Fehler, Warnung), Hinweise ohne Wort. Die neueste steht unten.
+3. Zu jeder Meldung kommt ein kleiner Ton, je nach Art ein anderer. Kommen viele auf einmal, gibt es nur einen. Abschalten mit `Config.Notify.Sound = false`, einzelne Töne über eine Tabelle (siehe Kommentar in der Config).
+4. Höchstens 3 Meldungen gleichzeitig (`Config.Notify.MaxVisible`), damit sie nicht in Fortschrittsbalken und Hinweise der core_lib laufen.
+5. Teamnachrichten (`/dm`) bleiben wie bisher groß in der Bildschirmmitte.
 
 ## Update von 1.18.0
 
@@ -393,7 +401,7 @@ ensure core
 
 | Schritt | Erwartet |
 |---|---|
-| Irgendein Befehl, z. B. `/meineid` | Kurze Zeile oben rechts unter der Geldanzeige. Vor dem Text steht "Erledigt" (gold), "Fehler" oder "Warnung" (rot), Hinweise ohne Wort. Gleiche Meldung mehrmals: `×2` |
+| Irgendein Befehl, z. B. `/meineid` | Große Zeile unten mittig ohne Kasten, mit kleinem Ton. Vor dem Text steht "Erledigt" (Akzent), "Fehler" oder "Warnung" (rot), Hinweise ohne Wort. Gleiche Meldung mehrmals: `×2` |
 | Joinen | Login-Screen in der Mitte, bei bekanntem Gerät steht die E-Mail schon drin und der Cursor im Passwortfeld (`Config.Accounts.RememberEmail`) |
 | Einloggen | Charakterauswahl erscheint |
 | Ohne Charakter | Formular "Dein erster Charakter" |

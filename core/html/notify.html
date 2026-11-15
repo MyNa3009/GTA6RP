@@ -2,9 +2,10 @@
 <!--
   UI: Benachrichtigungen
   CONTRACT_VERSION: 1
-  Reine Anzeige oben rechts unter der Geldanzeige, ohne Maus- und Tastaturfokus.
+  Reine Anzeige unten mittig, frei im Bild ohne Kasten, ohne Maus- und Tastaturfokus.
   Teamnachrichten (type message, /dm) stehen dagegen gross in der Bildschirmmitte.
-  Neueste Meldung oben. Gleiche Meldung kurz hintereinander zaehlt hoch statt neu.
+  Neueste Meldung unten. Gleiche Meldung kurz hintereinander zaehlt hoch statt neu.
+  Den kleinen Ton dazu spielt Lua (core/client/notify.lua), nicht die UI.
 
   EINGEHEND (Lua -> UI)
   notify_open {
@@ -34,8 +35,9 @@
 <style>
 /*
   Oberflaechentyp: Monitor. Dichte 8, Bewegung 2, Varianz 3.
-  Kurze Zeilen am rechten Rand unter der Geldanzeige. Die Art steht als Wort vor dem Text,
-  keine Icon-Kreise, keine Farbschiene, kein Zeitbalken.
+  Grosse Zeilen unten mittig, frei im Bild wie Untertitel. Lesbar ueber einen engen dunklen Rand und
+  weichen Schein (text-shadow), auch vor hellem Himmel. Die Art steht als Wort in ihrer Farbe vor dem Text.
+  Unter Fortschrittsbalken und Hinweisen der core_lib (die sitzen ab 15 % Hoehe), damit sich nichts ueberdeckt.
 */
 :root {
   /* Grundfarben, werden aus der Config ueberschrieben */
@@ -63,6 +65,7 @@
   --fs-xs: clamp(11px, 0.55vw, 13px);
   --fs-sm: clamp(12px, 0.65vw, 14px);
   --fs-md: clamp(15px, 0.85vw, 18px);
+  --fs-notify: clamp(17px, 1.05vw, 24px);
   --fs-lg: clamp(17px, 1vw, 21px);
   --space-5: 24px;
   --radius-lg: 12px;
@@ -73,10 +76,11 @@
 
   --z-toast: 30;
 
-  /* Unter der Geldanzeige oben rechts, gleiche rechte Kante */
-  --stack-top: clamp(96px, 12vh, 140px);
-  --stack-right: clamp(16px, 2vw, 40px);
-  --toast-max: clamp(260px, 22vw, 420px);
+  /* Unten mittig, unter Fortschrittsbalken und Hinweisen der core_lib */
+  --stack-bottom: clamp(24px, 3.5vh, 48px);
+  --toast-max: min(calc(100vw - 2 * var(--space-4)), clamp(480px, 46vw, 960px));
+  /* Lesbarkeit ohne Kasten: enger dunkler Rand, dazu weicher Schein */
+  --text-shade: 0 0 2px rgb(var(--rgb-base)), 0 1px 3px rgb(var(--rgb-base) / 0.95), 0 0 12px rgb(var(--rgb-base) / 0.7);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -93,29 +97,29 @@ html, body {
 
 .stack {
   position: fixed;
-  top: var(--stack-top);
-  right: var(--stack-right);
+  bottom: var(--stack-bottom);
+  left: 50%;
   z-index: var(--z-toast);
+  width: var(--toast-max);
   margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: var(--space-1);
+  align-items: center;
+  gap: var(--space-2);
+  transform: translateX(-50%);
   pointer-events: none;
 }
 
 .toast {
-  max-width: var(--toast-max);
-  padding: var(--space-2) var(--space-3);
-  background: var(--c-bg);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow);
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  line-height: 1.4;
+  max-width: 100%;
+  font-size: var(--fs-notify);
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  text-shadow: var(--text-shade);
+  text-wrap: balance;
   overflow-wrap: anywhere;
   animation: toast-in var(--dur-in) var(--ease-out);
 }
@@ -127,12 +131,8 @@ html, body {
 .toast[data-type="error"] .toast__kind,
 .toast[data-type="warning"] .toast__kind { color: var(--c-signal); }
 
-/* Warnungen (Verwarnung, A-Jail) muessen auffallen: eigene Flaeche, zweizeilig */
-.toast[data-type="warning"] {
-  padding: var(--space-3) var(--space-4);
-  background: linear-gradient(var(--c-signal-bg), var(--c-signal-bg)), var(--c-bg);
-  border-color: var(--c-signal-line);
-}
+/* Warnungen (Verwarnung, A-Jail) muessen auffallen: Wort in eigener Zeile, Text etwas groesser */
+.toast[data-type="warning"] { font-size: calc(var(--fs-notify) * 1.08); }
 .toast[data-type="warning"] .toast__kind,
 .toast[data-type="message"] .toast__kind { display: block; margin: 0 0 var(--space-1); }
 
@@ -154,6 +154,11 @@ html, body {
 }
 .toast[data-type="message"] {
   max-width: none;
+  text-align: left;
+  text-shadow: none;
+  text-wrap: pretty;
+  border: 1px solid var(--c-border);
+  box-shadow: var(--shadow);
   padding: var(--space-4) var(--space-5);
   background: linear-gradient(var(--c-accent-bg), var(--c-accent-bg)), rgb(var(--rgb-base) / 0.94);
   border-color: var(--c-accent-line);
@@ -177,14 +182,15 @@ html, body {
 .toast__count {
   margin-left: var(--space-2);
   color: var(--c-text-muted);
-  font-size: var(--fs-xs);
-  font-weight: 600;
+  font-size: var(--fs-md);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  color: rgb(var(--rgb-ink) / 0.8);
 }
 .toast__count[hidden] { display: none; }
 
 @keyframes toast-in {
-  from { opacity: 0; transform: translateY(-4px); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 @keyframes toast-out {
@@ -346,7 +352,9 @@ function push(data) {
   count.hidden = true;
   node.append(count);
   const inCenter = CENTER_TYPES.has(type);
-  (inCenter ? center : stack).prepend(node);
+  // Am Rand steht die neueste unten (naechst am Bildschirmrand), in der Mitte oben
+  if (inCenter) center.prepend(node);
+  else stack.append(node);
 
   const item = { node, text, type, title, center: inCenter, count: 1, timer: null, shownAt: now };
   state.items.unshift(item);
@@ -372,7 +380,7 @@ if (Bridge.platform === 'mock') {
   // Im Browser: je eine Meldung pro Typ, danach eine doppelte
   Mock.push('notify_open', {
     colors: { base: '16 17 20', ink: '255 245 236', accent: '231 62 192', signal: '244 67 54' },
-    maxVisible: 5,
+    maxVisible: 4,
     items: [
       { text: 'Deine permanente ID ist 17 (Login 12).', type: 'info', duration: 60000 },
       { text: 'Neuer Kontostand (bank) von ID 17: 4.500 $', type: 'success', duration: 60000 },
