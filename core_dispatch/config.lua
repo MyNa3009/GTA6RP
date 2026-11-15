@@ -12,7 +12,7 @@ Config.Dispatch = {
     DefaultService = 'ems',
 
     Commands = {
-        Dispatch = 'dispatch',     -- /dispatch Text: Notruf. Ohne Text: Formular (oder MDT, wenn man im Dienst ist)
+        Dispatch = 'dispatch',     -- /dispatch Text: Notruf. Ohne Text: Formular zum Schreiben (fuer alle)
         Mdt = 'mdt',               -- MDT oeffnen (im Dienst). Admins: /mdt ems
         Status = 'status',         -- /status 3: eigener Funkstatus
     },

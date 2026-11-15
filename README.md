@@ -9,7 +9,7 @@ Eigene Core und Inventar für einen deutschen GTA 6 RP-Server. Bis es eine GTA 6
 | [`core_lib/`](core_lib/README.md) | 1.4.3 | Bibliothek für alle Scripts: G-Menü (Interaktionsmenü mit Kategorien), Kontextmenüs, Fortschrittsbalken, Minigames (Skillcheck, Schloss knacken, Hacken, Kabel verbinden), Dialoge, TextUI, Zonen |
 | [`core_factions/`](core_factions/README.md) | 1.3.1 | Organisationen: 30 Ränge, Rechte und Gehalt pro Rang, Divisionen, Abteilungen, Prüfungen, Erklärungen, Leitstelle mit Suche, Bonus, Archiv, Protokolle pro ID, Kasse, Dienst an der Umkleide, Dienstfahrzeuge ab Rang, Organisationsmenü in den Farben der Organisation |
 | [`core_ems/`](core_ems/README.md) | 1.4.2 | Rettungsdienst: Hochholen, Versorgen, Verbandskasten für alle, Verkauf, Behandlung, Krankheiten mit Stadien und Ansteckung, Krankenversicherung, Medizinische Datenbank mit Korrektur durch Leitung und Admins |
-| [`core_dispatch/`](core_dispatch/README.md) | 1.2.0 | Notrufe per `/dispatch` und im Bewusstlos-Bildschirm, Alarm am Bildschirmrand, MDT mit Funkstatus (FMS 0 bis 8), Disponieren, Nachricht an den Anrufer, Archiv und Statistik |
+| [`core_dispatch/`](core_dispatch/README.md) | 1.2.1 | Notrufe per `/dispatch` und im Bewusstlos-Bildschirm, Alarm am Bildschirmrand, MDT mit Funkstatus (FMS 0 bis 8), Disponieren, Nachricht an den Anrufer, Archiv und Statistik |
 | [`core_bank/`](core_bank/README.md) | 1.0.2 | Bank: Konto mit Kontonummer, Ein- und Auszahlen, Überweisen, Kontoauszug, Schulden (Strafen, Rechnungen, Gebühren) mit Frist, Mahngebühr und Einzug, Bankautomaten, Admin-Ansicht, Schnittstelle für das Handy |
 | [`tests/`](tests/README.md) | | Tests für die Serverlogik aller Resources |
 

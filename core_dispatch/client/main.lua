@@ -343,13 +343,12 @@ end
 -- Befehle und Tasten
 ------------------------------------------------------------------------
 
--- /dispatch Text: Notruf. Ohne Text: im Dienst das MDT, sonst das Formular.
+-- /dispatch Text: Notruf. Ohne Text: das Formular zum Schreiben, fuer alle, im Dienst oder nicht.
+-- Das MDT gibt es ueber /mdt, die Taste und das G-Menue.
 Platform.RegisterClientCommand(CFG.Commands.Dispatch, function(args)
     local text = table.concat(args or {}, ' ')
     if text ~= '' then
         sendCall(text)
-    elseif me.service then
-        openMdt()
     else
         openForm()
     end
