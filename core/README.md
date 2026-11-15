@@ -1,10 +1,15 @@
-# Core 1.18.0 (Testserver)
+# Core 1.18.1 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.18.0
+
+1. Den Ordner `core` ersetzen und neu starten. Keine Migration.
+2. Neuer Export `AddBankByCharacter(characterId, betrag, grund, optionen)`: bucht aufs Bankkonto, auch offline. `core_bank` braucht ihn, um eine Zahlung zurückzubuchen, wenn zwei gleichzeitig kommen.
 
 ## Update von 1.17.1
 
@@ -615,6 +620,7 @@ Exports (`exports.core:...`):
 | `AuthorizeCommand(source, name, recht, args, requireDuty)` | true und Login, sonst false. Prüft, meldet und loggt wie die Admin-Befehle der Core |
 | `AddCommandHelp({ title, entries })` | Eigene Gruppe in der Befehlsliste des Admin-Menüs |
 | `GetBankByCharacter(characterId)` | Kontostand, auch offline, nil wenn es den Charakter nicht gibt |
+| `AddBankByCharacter(characterId, betrag, grund, optionen)` | Bucht aufs Bankkonto, auch offline. Neuer Stand oder nil |
 | `RemoveBankByCharacter(characterId, betrag, grund, optionen)` | Bucht vom Bankkonto ab, auch offline. Neuer Stand oder nil und `not_enough_money` |
 | `TransferBankByCharacter(von, an, betrag, grund, optionen)` | Überweist zwischen zwei Bankkonten, auch offline. Neuer Stand des Absenders, nil, neuer Stand des Empfängers. Sonst nil und ein Fehlercode |
 | `Log(eintrag)` | Eintrag ins zentrale Log |

@@ -456,6 +456,13 @@ Platform.Export('GetBankByCharacter', function(characterId)
     characterId = tonumber(characterId)
     return characterId and tonumber(readBalance(characterId, 'bank')) or nil
 end)
+Platform.Export('AddBankByCharacter', function(characterId, amount, reason, options)
+    characterId = tonumber(characterId)
+    if not characterId then
+        return nil, 'no_character'
+    end
+    return Money.AddByCharacter(characterId, 'bank', amount, reason, options)
+end)
 Platform.Export('RemoveBankByCharacter', function(characterId, amount, reason, options)
     characterId = tonumber(characterId)
     if not characterId then

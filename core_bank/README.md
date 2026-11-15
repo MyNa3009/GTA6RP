@@ -1,8 +1,14 @@
-# core_bank 1.0.2
+# core_bank 1.0.3
 
 Bank für die eigene Core. Jeder Charakter hat ein Girokonto mit Kontonummer. In der Filiale zahlt man ein und aus, überweist, liest den Kontoauszug und begleicht Schulden. An jedem Bankautomaten der Spielwelt gibt es schnelles Bargeld mit Grenzen. Schulden sind Strafen, Rechnungen und Gebühren mit Frist: Danach kommt eine Mahngebühr dazu, und die Bank zieht vom Konto ein. Alle Daten gibt es als Export, damit später das Handy dasselbe zeigen kann.
 
 Das Geld selbst liegt weiter in der Core (Bankkonto am Charakter). `core_bank` bucht nur über deren Exports und führt Kontonummer, Kontoauszug und Schulden.
+
+## Update von 1.0.2
+
+1. Erst Core 1.18.1, dann den Ordner `core_bank` ersetzen und neu starten. Keine Migration.
+2. **Fehler behoben:** Wer eine Forderung bezahlen, Geld auszahlen oder überweisen wollte und zu wenig auf dem Konto hatte, bekam "Fehler auf dem Server". Jetzt steht dort "Auf dem Konto ist nicht genug Geld". Genauso beim Einzahlen mit zu wenig Bargeld.
+3. Grund: Über Exports kommt im Spiel oft nur der erste Rückgabewert an, der Fehlercode der Core fehlte. `core_bank` prüft das jetzt selbst nach.
 
 ## Update von 1.0.1
 

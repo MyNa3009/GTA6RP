@@ -226,7 +226,8 @@ function Bank.Deposit(source, amount, channel)
     local text = TEXT.deposit[atm and 'atm' or 'bank']
     local cash, cashError = Bank.Core('RemoveMoney', source, 'cash', amount, text, { data = ownData({ channel = channel }) })
     if not cash then
-        return nil, cashError == 'not_enough_money' and 'not_enough_cash' or (cashError or 'server_error')
+        cashError = Bank.Why(cashError, 'cash', source, amount)
+        return nil, cashError == 'not_enough_money' and 'not_enough_cash' or cashError
     end
     local balance, bankError = Bank.Core('AddMoney', source, 'bank', amount, text, { data = ownData({ channel = channel }) })
     if not balance then
@@ -260,7 +261,7 @@ function Bank.Withdraw(source, amount, channel)
     local text = TEXT.withdraw[atm and 'atm' or 'bank']
     local balance, bankError = Bank.Core('RemoveMoney', source, 'bank', amount, text, { data = ownData({ channel = channel }) })
     if not balance then
-        return nil, bankError or 'server_error'
+        return nil, Bank.Why(bankError, 'bank', characterId, amount)
     end
     Bank.Record(characterId, { kind = 'withdraw', amount = -amount, balance = balance, text = text, channel = channel })
     local cash, cashError = Bank.Core('AddMoney', source, 'cash', amount, text, { data = ownData({ channel = channel }) })
@@ -272,7 +273,8 @@ function Bank.Withdraw(source, amount, channel)
         else
             Platform.Print('error', ('core_bank: Auszahlung von %d an ID %d konnte nicht zurueckgebucht werden, bitte pruefen!'):format(amount, characterId))
         end
-        return nil, cashError == 'no_space' and 'no_space' or (cashError or 'server_error')
+        -- Ohne Fehlercode ist es fast immer ein volles Inventar
+        return nil, cashError or 'no_space'
     end
     return balance
 end
@@ -310,7 +312,7 @@ function Bank.Transfer(fromCharacterId, toNumber, amount, purpose, info)
     local fromBalance, err, toBalance = Bank.Core('TransferBankByCharacter', fromCharacterId, target.characterId, amount,
         ('Überweisung: %s'):format(purpose), { actorAccountId = info.actorAccountId, data = ownData({ channel = channel, purpose = purpose }) })
     if not fromBalance then
-        return nil, err or 'server_error'
+        return nil, Bank.Why(err, 'bank', fromCharacterId, amount)
     end
 
     local fromName = Bank.NameOf(fromCharacterId)

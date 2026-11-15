@@ -63,6 +63,25 @@ function Bank.Amount(value, max)
     return math.floor(value)
 end
 
+-- Warum ist eine Buchung der Core fehlgeschlagen? Ueber Exports kommt im Spiel oft nur der erste Rueckgabewert an,
+-- der Fehlercode fehlt dann. In dem Fall selbst nachsehen, ob einfach zu wenig Geld da war.
+-- account: 'bank' (ueber die permanente ID) oder 'cash' (ueber source, Bargeld liegt evtl. im Inventar).
+function Bank.Why(err, account, who, amount)
+    if type(err) == 'string' then
+        return err
+    end
+    local have
+    if account == 'cash' then
+        have = tonumber(Bank.Core('GetMoney', who, 'cash'))
+    else
+        have = tonumber(Bank.Core('GetBankByCharacter', who))
+    end
+    if have and have < amount then
+        return account == 'cash' and 'not_enough_cash' or 'not_enough_money'
+    end
+    return 'server_error'
+end
+
 function Bank.Money(amount)
     local text = tostring(math.floor(amount))
     local formatted = text:reverse():gsub('(%d%d%d)', '%1.'):reverse()

@@ -160,11 +160,17 @@ function Debts.Pay(characterId, debtId, amount, info)
         return nil, 'invalid_amount'
     end
 
+    -- Erst schauen, ob genug auf dem Konto ist, dann gibt es eine klare Meldung
+    local have = Bank.Balance(characterId)
+    if have and have < amount then
+        return nil, 'not_enough_money'
+    end
+
     local text = ('%s: %s'):format(debt.kindLabel, debt.title)
     local balance, err = Bank.Core('RemoveBankByCharacter', characterId, amount, text,
         { actorAccountId = info.actorAccountId, data = { [OWN] = true, debtId = debt.id, auto = info.auto or nil } })
     if not balance then
-        return nil, err or 'server_error'
+        return nil, Bank.Why(err, 'bank', characterId, amount)
     end
 
     local newPaid = debt.paid + amount

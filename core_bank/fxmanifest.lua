@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_bank'
 description 'Bank fuer die eigene Core: Konto mit Kontonummer, Kontoauszug, Ueberweisungen, Schulden (Strafen, Rechnungen), Bankautomaten'
-version '1.0.2'
+version '1.0.3'
 
 dependencies {
     'core',

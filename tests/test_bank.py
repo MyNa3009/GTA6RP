@@ -223,6 +223,15 @@ d4, _ = lua_debt(ids[1], "{ amount = 400, title = 'Zu schnell gefahren', kind = 
 check('zu wenig auf dem Konto: not_enough_money, nichts gebucht', B(1, 'bank_debt_pay', {'id': d4})['error'] == 'not_enough_money'
       and bank_of(ids[1]) == 150 and debt(d4)['paid'] == 0)
 
+# Im Spiel kommt ueber Exports oft nur der erste Rueckgabewert an: Fehlercode trotzdem richtig?
+bank.execute('BankCoreFull = Bank.Core; Bank.Core = function(...) local r = table.pack(BankCoreFull(...)); return r[1] end')
+bank.execute('BankBalanceFull = Bank.Balance; Bank.Balance = function() return nil end')
+check('ohne Fehlercode vom Export: trotzdem not_enough_money statt server_error', B(1, 'bank_debt_pay', {'id': d4})['error'] == 'not_enough_money')
+check('Auszahlen ohne Fehlercode: not_enough_money', B(1, 'bank_withdraw', {'amount': 99999})['error'] == 'not_enough_money')
+check('Einzahlen ohne Fehlercode: not_enough_cash', B(1, 'bank_deposit', {'amount': 99999})['error'] == 'not_enough_cash')
+check('Überweisen ohne Fehlercode: not_enough_money', B(1, 'bank_transfer', {'number': numbers[ids[2]], 'amount': 99999})['error'] == 'not_enough_money')
+bank.execute('Bank.Core = BankCoreFull; Bank.Balance = BankBalanceFull')
+
 print('Frist: Mahngebühr und Einzug')
 env.sql('UPDATE bank_debts SET due_at = NOW() - INTERVAL 1 HOUR WHERE id = %s', (d4,))
 env.sql('UPDATE characters SET bank = 700 WHERE id = %s', (ids[1],))
