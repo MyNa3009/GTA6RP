@@ -1,10 +1,16 @@
-# Core 1.19.0 (Testserver)
+# Core 1.20.0 (Testserver)
 
 Eigene Core: Datenbank-, Identity-, Netzwerk- und Plattform-Bridge, permanente IDs, Login-Screen mit Registrierung, Charakterauswahl mit Erstellen und Löschen, Spawn mit letzter Position, eigenes Todes-System, ID über dem Kopf, Geld mit Bargeld und Bank, Teamränge mit Rechten, persönliche Admin-Keys, Admin-Dienst, Admin-Menü mit Befehlsliste, Admin-Werkzeuge, Tickets, Beobachten, A-Jail, Noclip, Bans für Accounts und Charaktere, zentrales Logging.
 
 ## Permanente ID
 
 Jeder Charakter hat eine eigene permanente ID. Die steht über dem Kopf, in der Charakterauswahl und gilt in allen Befehlen (`/revive 17`, `/ajail 17 …`, `/ban 17 …`). Der Login (E-Mail) hat eine eigene Login-Nummer, dem mehrere Charaktere gehören. Multi-Account-Erkennung und Login-Bans gelten für den ganzen Login. Der Teamrang gilt nur für den einen Charakter: Twinks eines Admins sind normale Spieler, und in der Charakterauswahl hat niemand Admin-Rechte.
+
+## Update von 1.19.0
+
+1. Ordner `core` ersetzen und Server neu starten. Keine Migration.
+2. **Für das Handy (`core_phone`):** neue Bridge-Funktion `Platform.SetCallPartner(serverId, channel)` im Client. Sie lässt zwei Personen einander im Telefonat hören, egal wie weit sie auseinander stehen. Läuft `pma-voice`, übernimmt es das Gespräch, sonst die eingebaute Sprache. `nil` beendet es.
+3. Die Akte im Admin-Menü zeigt im Log die neue Kategorie `phone` (eSIM aktiviert, Anrufe, gelöschte Chats und Kontakte, Admin-Ansicht).
 
 ## Update von 1.18.1
 

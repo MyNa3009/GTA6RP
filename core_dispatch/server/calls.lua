@@ -382,7 +382,8 @@ local function openCount(characterId)
 end
 
 -- { text, service?, anonymous?, location? }. Ohne service: erstes Wort ("/dispatch ems ...") oder DefaultService.
-Disp.Register('dispatch_send', function(source, data)
+-- Notruf eines Spielers. Auch fuer andere Scripts (Handy), siehe Export SendCallFrom.
+local function sendFrom(source, data)
     local characterId = Disp.CharacterOf(source)
     local text = Disp.Text(data.text, CFG.TextMax)
     local service = Disp.Service(data.service)
@@ -429,6 +430,33 @@ Disp.Register('dispatch_send', function(source, data)
     end
     lastSent[characterId] = now
     return { ok = true, data = { id = call.id, number = call.number, service = service.label, units = #Disp.UnitsOf(service.key) } }
+end
+
+Disp.Register('dispatch_send', sendFrom)
+
+-- Fuer andere Scripts (Handy): Notruf im Namen eines Spielers, mit denselben Regeln wie /dispatch
+-- (Wartezeit, Sperre, hoechstens zwei offene). data: { text, service?, location?, anonymous? }.
+-- Gibt immer eine Tabelle zurueck: { ok = true, data = { id, number, service, units } } oder { ok = false, error, data? }.
+Platform.Export('SendCallFrom', function(source, data)
+    source = tonumber(source)
+    if not Disp.Ready or not source or not Disp.CharacterOf(source) then
+        return { ok = false, error = 'no_character' }
+    end
+    local ok, result = pcall(sendFrom, source, type(data) == 'table' and data or {})
+    if not ok then
+        Platform.Print('error', ('core_dispatch: Fehler in SendCallFrom: %s'):format(tostring(result)))
+        return { ok = false, error = 'server_error' }
+    end
+    return result
+end)
+
+-- Dienste mit der Zahl der Einheiten im Dienst: { { key, label, units } }, dazu der Standard-Dienst und die Textgrenzen
+Platform.Export('GetServices', function()
+    local services = {}
+    for _, service in ipairs(Disp.Services()) do
+        services[#services + 1] = { key = service.key, label = service.label, units = #Disp.UnitsOf(service.key) }
+    end
+    return { services = services, default = CFG.DefaultService, textMin = CFG.TextMin, textMax = CFG.TextMax }
 end)
 
 -- Fuer das Formular: Dienste, eigene letzte Notrufe mit Nachrichten der Leitstelle, Sperre, Wartezeit

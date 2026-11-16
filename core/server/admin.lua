@@ -14,7 +14,7 @@ local SEARCH_MAX_LENGTH = 50
 local LOG_CATEGORIES = {
     money = true, death = true, connection = true, account = true,
     character = true, admin = true, security = true, test = true, punishment = true, twink = true, ticket = true, item = true,
-    bank = true,
+    bank = true, phone = true,
 }
 local NOCLIP_EVENT = 'core:admin:noclip'
 local INVENTORY_RESOURCE = 'core_inventory'

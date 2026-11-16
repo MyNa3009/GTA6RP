@@ -49,7 +49,9 @@ Items = {
     pill_stomach  = { label = 'Magen-Darm-Tablette', weight = 10, stack = 20, description = 'Beruhigt Magen und Darm.',
                       use = { remove = 1, message = 'Du nimmst eine Magen-Darm-Tablette.' } },
     lockpick = { label = 'Dietrich', weight = 50,  stack = 10, description = 'Zum Öffnen einfacher Schlösser.' },
-    phone    = { label = 'Handy',    weight = 200, stack = 1,  description = 'Dein Smartphone.' },
+    -- Handy (core_phone): Benutzen oeffnet es. Die eSIM mit der Nummer haengt an der Person, nicht am Geraet.
+    phone    = { label = 'Handy',    weight = 200, stack = 1,  description = 'Smartphone mit eSIM. Benutzen öffnet es.',
+                 use = { remove = 0 } },
 
     -- Waffen: kommen in den Waffenplatz (= in der Hand). Benutzen im Schnellzugriff zieht sie und steckt sie wieder weg.
     -- Kaliber: pistol, smg, rifle, shotgun, sniper, mg. GTA-Namen in data/weapons_gta5.lua.

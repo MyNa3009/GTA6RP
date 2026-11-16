@@ -1,6 +1,12 @@
-# core_inventory 1.5.1
+# core_inventory 1.5.2
 
 Inventar für die eigene Core: Plätze plus Gewicht, Kleidungsplätze, Waffe in der Hand, Rucksack mit eigenem Inhalt, Schnellzugriff, Ausweis und Lizenzen, Durchsuchen, Kofferraum, Lager-Schnittstelle, `/invsee`. Eigene Resource, damit man sie neu starten kann, ohne dass alle aus dem Spiel fliegen.
+
+## Update von 1.5.1
+
+1. Ordner `core_inventory` ersetzen und neu starten. Keine Migration.
+2. **Handy benutzbar:** Das Item `phone` lässt sich jetzt benutzen und öffnet mit `core_phone` das Handy. Es wird dabei nicht verbraucht.
+3. Neuer Client-Export `exports.core_inventory:Close()`: schließt das Inventar, wenn ein benutztes Item eine eigene UI öffnet.
 
 ## Update von 1.5.0
 

@@ -1,6 +1,11 @@
-# core_dispatch 1.2.1
+# core_dispatch 1.3.0
 
 Notrufe und MDT für die eigene Core. Jeder setzt mit `/dispatch Text` einen Notruf ab. Die Einheiten im Dienst bekommen einen Alarm am Bildschirmrand und arbeiten den Einsatz im MDT ab: übernehmen, Route setzen, dem Anrufer antworten, Notizen, abschließen mit Ergebnis und Bericht. Dazu Funkstatus wie beim echten FMS (0 bis 8), Disponieren für die Leitstelle, Archiv und Statistik. Als erster Dienst ist der Rettungsdienst (`ems` aus `core_factions`) eingerichtet. LSPD und andere kommen als weiterer Eintrag in `config.lua` dazu.
+
+## Update von 1.2.1
+
+1. Ordner `core_dispatch` ersetzen und neu starten. Keine Migration.
+2. **Notruf vom Handy:** zwei neue Server-Exports für `core_phone`. `SendCallFrom(source, { service, text })` setzt einen Notruf für eine Person ab, mit denselben Prüfungen wie `/dispatch` (Position vom Server, Spam-Schutz, Sperre). `GetServices()` gibt die Dienste mit der Zahl der Einheiten im Dienst.
 
 ## Update von 1.2.0
 
@@ -99,6 +104,11 @@ Weiteren Dienst anlegen (z. B. LSPD, sobald es in `core_factions` steht):
 -- Server: Notruf ohne Formular, z. B. stiller Alarm einer Bank oder ein Handy
 exports.core_dispatch:SendCall('ems', { text = 'Stiller Alarm in der Fleeca Bank', pos = { x = 150.0, y = -1040.0, z = 29.0 },
     priority = 2, location = 'Legion Square', callerId = permanenteId, callerName = 'Fleeca Bank' })   -- gibt die Einsatznummer zurück
+
+-- Server: Notruf im Namen einer Person, mit allen Prüfungen von /dispatch (nutzt das Handy)
+exports.core_dispatch:SendCallFrom(source, { service = 'ems', text = 'Autounfall am Legion Square' })
+-- { ok = true, data = { id, number, service, units } } oder { ok = false, error = 'cooldown' }
+exports.core_dispatch:GetServices()   -- { services = { { key, label, units } }, default, textMin, textMax }
 ```
 
 Ereignisse an den Client: `core_dispatch:call`, `core_dispatch:units`, `core_dispatch:self`, `core_dispatch:talk`, `core_dispatch:mine`.

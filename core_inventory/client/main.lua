@@ -120,6 +120,9 @@ local function close()
     end
 end
 
+-- Fuer andere Scripts: Inventar schliessen, z. B. wenn ein benutztes Item eine eigene UI oeffnet (Handy)
+Platform.Export('Close', close)
+
 Platform.RegisterKeyCommand('inventar', 'Inventar öffnen', CFG.OpenKey, function()
     if isOpen then
         close()

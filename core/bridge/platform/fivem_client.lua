@@ -2389,6 +2389,32 @@ function Platform.PlayLoudSounds(durationMs)
     end)
 end
 
+-- Telefonat (seit Core 1.20.0): den Gespraechspartner unabhaengig vom Abstand hoeren. serverId = nil beendet es.
+-- channel: eindeutige Nummer des Gespraechs, fuer beide gleich. Laeuft pma-voice, uebernimmt es das Gespraech
+-- (setCallChannel). Sonst ueber die eingebaute Sprache: Lautstaerke des Partners fest auf voll.
+local PMA_VOICE = 'pma-voice'
+local CALL_VOLUME = 1.0
+local VOLUME_RESET = -1.0
+local callPartner = nil
+
+function Platform.SetCallPartner(serverId, channel)
+    serverId = tonumber(serverId)
+    if GetResourceState(PMA_VOICE) == 'started' then
+        callPartner = serverId
+        pcall(function()
+            exports[PMA_VOICE]:setCallChannel(serverId and (tonumber(channel) or serverId) or 0)
+        end)
+        return
+    end
+    if callPartner and callPartner ~= serverId then
+        MumbleSetVolumeOverrideByServerId(callPartner, VOLUME_RESET)
+    end
+    callPartner = serverId
+    if serverId then
+        MumbleSetVolumeOverrideByServerId(serverId, CALL_VOLUME)
+    end
+end
+
 -- Wegpunkt auf der Karte setzen (GPS-Route im Spiel) und wieder entfernen
 function Platform.SetWaypoint(coords)
     SetNewWaypoint(coords.x + 0.0, coords.y + 0.0)

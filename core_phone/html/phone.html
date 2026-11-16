@@ -1,0 +1,1741 @@
+<!DOCTYPE html>
+<!--
+  UI: Handy
+  CONTRACT_VERSION: 1
+
+  Smartphone unten rechts: Telefon, Kontakte, Nachrichten, Bank, Notruf, Einstellungen. Die UI zeigt nur an:
+  Jede Zahl und jeder Stand kommt vom Server. Ist das Handy zu, zeigt eine kleine Leiste Anrufe und neue Nachrichten.
+  Toene (Klingeln, Freizeichen, Nachricht) erzeugt die UI selbst, lautlos schaltet sie ab.
+
+  EINGEHEND (Lua -> UI)
+  phone_open   { colors: { base?, ink?, accent?, mark?, signal? }, key: string, Home }
+  phone_push   { type: "message", number, name?, kind, text, silent }
+               { type: "call", call?: Call, ended?: { reason, seconds } }
+               { type: "missed", number, name?, silent }
+  phone_close  {}
+
+  AUSGEHEND (UI -> Lua), Antwort immer { ok, data?, error? }
+  ui_ready       { ui: "phone", version: 1 }          -> { colors, key, volume }
+  phone_close    {}
+  phone_waypoint { x, y }                             // Standort aus einer Nachricht als Wegpunkt
+  phone_call     { name, data }                       // Anfrage an den Server
+    phone_home           {}                           -> Home
+    phone_settings       { silent?, airplane? }       -> { silent, airplane }
+    phone_contact_save   { id?, name, number }        -> { contacts }
+    phone_contact_delete { id }                       -> { contacts }
+    phone_thread         { number, before? }          -> { number, messages: [Message], more, unread }
+    phone_message_send   { number, text } | { number, location: true }   -> { number, message }
+    phone_thread_delete  { number }                   -> { threads, unread }
+    phone_call_start     { number }                   -> { call }
+    phone_call_answer    {}                           -> { call }
+    phone_call_end       {}
+    phone_calls_seen     {}                           -> { missed }
+    phone_bank           {}                           -> { overview: Bank }
+    phone_bank_lookup    { number }                   -> { name, number }
+    phone_bank_transfer  { number, amount, purpose }  -> { to, overview }
+    phone_bank_debts     {}                           -> { debts: [Debt] }
+    phone_bank_pay       { id, amount? }              -> { debt, paid, debts, overview }
+    phone_dispatch       {}                           -> { services: [{ key, label, units }], default, textMin, textMax }
+    phone_dispatch_send  { service, text }            -> { number, service, units }
+
+  Home    { number, name, characterId, silent, airplane, contacts: [{ id, name, number }], threads: [Thread], unread,
+            calls: [{ id, number, direction, status, seconds, at }], missed, call?: Call, apps: { bank, dispatch },
+            admin?: true, limits: { number, name, message, contacts }, volume }
+  Thread  { number, text, kind, direction: "in" | "out", at, unread, hidden? }
+  Message { id, direction, kind: "text" | "location", text, at, x?, y?, hidden? }
+  Call    { id, state: "dialing" | "incoming" | "active", number, name?, silent?, seconds? }
+  Bank    { name, number, balance, recent: [{ kind, amount, text, other?, at }], debts: { count, total, overdue }, recipients: [{ name, number }] }
+  Debt    { id, kindLabel, creditorLabel, title, amount, fee, paid, rest, overdue, due }
+  Zeiten als "JJJJ-MM-TT hh:mm". Eine "number" aus Buchstaben ist ein Dienst (z. B. "Bank"), darauf antwortet man nicht.
+
+  FEHLERCODES: no_phone, is_dead, read_only, busy, invalid_name, invalid_number, invalid_text, invalid_amount, own_number,
+    unknown_number, contact_exists, contacts_full, not_found, too_fast, airplane, in_call, no_call, unreachable, line_busy,
+    no_bank, unknown_account, same_account, not_enough_money, debt_closed, no_dispatch, text_too_short, cooldown,
+    too_many_open, blocked, invalid_service, server_error, timeout
+-->
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Handy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+  Oberflaechentyp: Command (schnell anrufen, schreiben, bezahlen) mit Inspect (Chat, Konto). Dichte 7, Bewegung 2.
+  Richtung
+    Zweck: Das eigene Handy fuer Anrufe, Nachrichten, Bank und Notruf.
+    Charakter: handlich, ruhig, eindeutig.
+    Welt: ein dunkles Smartphone mit eSIM, wie man es in der Hand haelt.
+    Highlight: der Startbildschirm mit Uhr und App-Raster vor einem leisen Schein in den Farben des Servers.
+    Signatur: Nummern stehen immer in Dreiergruppen, ungelesenes traegt einen Akzentpunkt.
+  Flaeche: Geraet unten rechts, die Spielsicht bleibt frei. Alle Masse in em, das Geraet waechst mit der Bildhoehe.
+  Bauteile (Etiketten, Listenzeilen, heller Hauptbutton, Eingaben) wie in den Fenstern des Servers.
+*/
+:root {
+  --rgb-base:   16 17 20;
+  --rgb-ink:    255 245 236;
+  --rgb-accent: 231 62 192;
+  --rgb-mark:   244 154 102;
+  --rgb-signal: 244 67 54;
+
+  --c-screen:      rgb(var(--rgb-base));
+  --c-surface:     rgb(var(--rgb-ink) / 0.06);
+  --c-surface-hi:  rgb(var(--rgb-ink) / 0.11);
+  --c-border:      rgb(var(--rgb-ink) / 0.09);
+  --c-text:        rgb(var(--rgb-ink) / 0.95);
+  --c-text-2:      rgb(var(--rgb-ink) / 0.74);
+  --c-text-muted:  rgb(var(--rgb-ink) / 0.56);
+  --c-accent:      rgb(var(--rgb-accent));
+  --c-accent-soft: rgb(var(--rgb-accent) / 0.16);
+  --c-signal:      rgb(var(--rgb-signal));
+  --c-signal-soft: rgb(var(--rgb-signal) / 0.14);
+  --c-on-accent:   rgb(var(--rgb-base));
+  --wallpaper:
+    radial-gradient(120% 70% at 0% 0%, rgb(var(--rgb-accent) / 0.26), transparent 62%),
+    radial-gradient(100% 60% at 100% 100%, rgb(var(--rgb-mark) / 0.18), transparent 62%);
+  --shadow: 0 1.2em 3em rgb(var(--rgb-base) / 0.6);
+  --text-shade: 0 0 2px rgb(var(--rgb-base)), 0 1px 3px rgb(var(--rgb-base) / 0.95), 0 0 12px rgb(var(--rgb-base) / 0.7);
+
+  /* Geraet: Hoehe folgt dem Bild, alles andere haengt in em daran */
+  --phone-h: clamp(540px, 80vh, 880px);
+  --phone-ratio: 0.485;
+  --edge: clamp(16px, 2.2vw, 44px);
+
+  --fs-xs: max(10px, 0.72em);
+  --fs-sm: max(11px, 0.84em);
+  --fs-md: 1em;
+  --fs-lg: 1.2em;
+  --fs-xl: 1.6em;
+  --fs-clock: 3.6em;
+
+  --dur-fast: 120ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --z-phone: 10;
+  --z-peek: 20;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; background: transparent; overflow: hidden;
+  font-family: 'Montserrat', sans-serif; color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+[hidden] { display: none !important; }
+button, input, textarea { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.icon { width: 1.25em; height: 1.25em; flex: none; }
+:focus-visible { outline: 2px solid rgb(var(--rgb-accent) / 0.6); outline-offset: 2px; }
+
+/* ---------- Geraet ---------- */
+.phone {
+  position: fixed; right: var(--edge); bottom: var(--edge); z-index: var(--z-phone);
+  height: var(--phone-h); width: calc(var(--phone-h) * var(--phone-ratio));
+  font-size: calc(var(--phone-h) / 46);
+  padding: 0.55em; border-radius: 2.6em;
+  background: rgb(var(--rgb-base)); border: 1px solid rgb(var(--rgb-ink) / 0.16);
+  box-shadow: var(--shadow), inset 0 0 0 0.12em rgb(var(--rgb-ink) / 0.05);
+}
+.screen {
+  position: relative; height: 100%; border-radius: 2.1em; overflow: hidden;
+  display: grid; grid-template-rows: auto auto 1fr auto;
+  background: var(--c-screen); border: 1px solid var(--c-border);
+}
+.screen[data-home="true"] { background: var(--wallpaper), var(--c-screen); }
+
+.status { display: flex; align-items: center; gap: 0.5em; padding: 0.8em 1.3em 0.3em; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
+.status__icons { margin-left: auto; display: flex; align-items: center; gap: 0.5em; }
+.status .icon { width: 1.15em; height: 1.15em; }
+.banner { margin: 0.2em 0.8em 0; padding: 0.5em 0.8em; border-radius: 0.6em; font-size: var(--fs-xs); font-weight: 600; }
+.banner--admin { background: var(--c-accent-soft); border: 1px dashed rgb(var(--rgb-accent) / 0.5); }
+.banner--call { display: flex; align-items: center; gap: 0.6em; width: calc(100% - 1.6em); border: 0; background: var(--c-accent); color: var(--c-on-accent); cursor: pointer; text-align: left; }
+.banner--call .num { margin-left: auto; }
+
+.view { min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; }
+.view::-webkit-scrollbar { width: 0; }
+.homebar { display: grid; place-items: center; padding: 0.5em 0 0.7em; }
+.homebar button { width: 34%; height: 0.36em; padding: 0; border: 0; border-radius: 1em; background: rgb(var(--rgb-ink) / 0.4); cursor: pointer; }
+.homebar button:hover { background: rgb(var(--rgb-ink) / 0.7); }
+
+/* ---------- Kopf einer App ---------- */
+.head { display: flex; align-items: center; gap: 0.4em; padding: 0.5em 0.7em 0.5em 0.5em; min-height: 3em; }
+.head__title { flex: 1; min-width: 0; margin: 0; font-size: var(--fs-lg); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head__sub { display: block; font-size: var(--fs-xs); font-weight: 500; color: var(--c-text-muted); }
+.iconbtn { display: inline-grid; place-items: center; width: 2.4em; height: 2.4em; flex: none; border: 0; border-radius: 0.6em; background: transparent; color: var(--c-text-2); cursor: pointer; }
+.iconbtn:hover { background: var(--c-surface); color: var(--c-text); }
+.iconbtn--danger { color: var(--c-signal); }
+.pad { padding: 0.4em 1em 1em; display: grid; gap: 0.9em; align-content: start; }
+.grow { flex: 1; min-height: 0; }
+.label { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); letter-spacing: 0.05em; text-transform: uppercase; }
+.none { padding: 2em 1.2em; text-align: center; color: var(--c-text-muted); font-size: var(--fs-sm); line-height: 1.5; }
+.none strong { display: block; margin-bottom: 0.3em; color: var(--c-text); font-size: var(--fs-md); font-weight: 600; }
+
+/* ---------- Start ---------- */
+.clock { padding: 2.2em 1.4em 1.6em; }
+.clock__time { font-size: var(--fs-clock); font-weight: 700; line-height: 1; }
+.clock__date { margin-top: 0.5em; font-size: var(--fs-sm); font-weight: 500; color: var(--c-text-2); }
+.apps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.3em 0.4em; padding: 0.6em 1em; margin-top: auto; margin-bottom: 1.4em; }
+.app { position: relative; display: grid; justify-items: center; gap: 0.45em; padding: 0.2em 0; border: 0; background: transparent; cursor: pointer; font-size: inherit; }
+.app__tile {
+  display: grid; place-items: center; width: 3.7em; height: 3.7em; border-radius: 1.05em;
+  background: rgb(var(--rgb-base) / 0.72); border: 1px solid rgb(var(--rgb-ink) / 0.12);
+  transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.app__tile .icon { width: 1.7em; height: 1.7em; }
+.app:hover .app__tile { background: rgb(var(--rgb-base) / 0.92); }
+.app:active .app__tile { transform: scale(0.95); }
+.app__name { font-size: var(--fs-xs); font-weight: 600; text-shadow: 0 1px 3px rgb(var(--rgb-base) / 0.8); }
+.badge { display: inline-grid; place-items: center; min-width: 1.6em; height: 1.6em; padding: 0 0.4em; border-radius: 1em; background: var(--c-accent); color: var(--c-on-accent); font-size: var(--fs-xs); font-weight: 700; }
+.app .badge { position: absolute; top: -0.3em; right: calc(50% - 2.7em); }
+
+/* ---------- Listen ---------- */
+.list { list-style: none; margin: 0; padding: 0 0.5em 0.8em; display: grid; gap: 2px; }
+.row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.15em 0.75em; width: 100%;
+  padding: 0.65em 0.6em; border: 0; border-radius: 0.6em; background: transparent; text-align: left; cursor: pointer;
+}
+.row:hover { background: var(--c-surface); }
+.row__mark { grid-row: span 2; display: grid; place-items: center; width: 2.5em; height: 2.5em; border-radius: 50%; background: var(--c-surface-hi); font-size: var(--fs-sm); font-weight: 700; color: var(--c-text-2); }
+.row__mark .icon { width: 1.2em; height: 1.2em; }
+.row__mark--alert { background: var(--c-signal-soft); color: var(--c-signal); }
+.row__title { font-size: var(--fs-md); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row__side { font-size: var(--fs-xs); color: var(--c-text-muted); white-space: nowrap; }
+.row__text { grid-column: 2; font-size: var(--fs-sm); color: var(--c-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row__dot { justify-self: end; }
+.row[data-unread="true"] .row__title { font-weight: 700; }
+.row[data-unread="true"] .row__text { color: var(--c-text-2); }
+.row[data-alert="true"] .row__title { color: var(--c-signal); }
+.tag { font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-muted); }
+
+/* ---------- Formulare und Buttons ---------- */
+.field { display: grid; gap: 0.4em; }
+.input, .textarea {
+  width: 100%; padding: 0.7em 0.8em; border: 1px solid var(--c-border); border-radius: 0.6em;
+  background: rgb(var(--rgb-ink) / 0.05); font-size: var(--fs-md); outline: none;
+}
+.textarea { min-height: 7em; resize: none; line-height: 1.4; }
+.input:focus, .textarea:focus { border-color: rgb(var(--rgb-accent) / 0.5); }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5em; width: 100%; min-height: 2.9em; padding: 0 1em;
+  border: 0; border-radius: 0.6em; background: rgb(var(--rgb-ink) / 0.92); color: var(--c-on-accent);
+  font-size: var(--fs-md); font-weight: 600; cursor: pointer; transition: transform var(--dur-fast) var(--ease-out);
+}
+.btn:active:not(:disabled) { transform: scale(0.98); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn--ghost { background: transparent; color: var(--c-text); border: 1px solid var(--c-border); }
+.btn--ghost:hover:not(:disabled) { background: var(--c-surface); }
+.btn--danger { background: transparent; color: var(--c-signal); border: 1px solid rgb(var(--rgb-signal) / 0.45); }
+.btn--danger:hover:not(:disabled) { background: var(--c-signal-soft); }
+.btnrow { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6em; }
+.error { margin: 0; color: var(--c-signal); font-size: var(--fs-sm); font-weight: 500; }
+.hint { margin: 0; color: var(--c-text-muted); font-size: var(--fs-sm); line-height: 1.5; }
+
+.tabs { display: flex; gap: 0.3em; padding: 0 1em; border-bottom: 1px solid var(--c-border); }
+.tab { padding: 0.7em 0.6em; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: transparent; color: var(--c-text-muted); font-size: var(--fs-sm); font-weight: 600; cursor: pointer; }
+.tab[aria-selected="true"] { color: var(--c-text); border-bottom-color: var(--c-accent); }
+
+/* Der wichtigste Stand als Karte */
+.card { display: grid; grid-template-columns: auto 1fr; gap: 0.2em 0.9em; align-items: center; padding: 0.9em 1em; border-radius: 0.8em; border: 1px solid var(--c-border); background: var(--c-surface); text-align: left; width: 100%; }
+.card__mark { grid-row: span 2; width: 0.75em; height: 0.75em; border-radius: 50%; background: var(--c-accent); box-shadow: 0 0 0 0.28em var(--c-accent-soft); }
+.card__title { font-size: var(--fs-xl); font-weight: 700; }
+.card__sub { font-size: var(--fs-sm); color: var(--c-text-muted); }
+.card--sm .card__title { font-size: var(--fs-md); }
+.card--alert { border-color: rgb(var(--rgb-signal) / 0.4); background: var(--c-signal-soft); }
+.card--alert .card__mark { background: var(--c-signal); box-shadow: 0 0 0 0.28em rgb(var(--rgb-signal) / 0.2); }
+button.card { cursor: pointer; font-size: inherit; }
+button.card:hover { background: var(--c-surface-hi); }
+
+/* ---------- Telefon ---------- */
+.dial { display: grid; gap: 1em; padding: 0.6em 1.4em 1em; margin-top: auto; }
+.dial__number { min-height: 1.6em; text-align: center; font-size: var(--fs-xl); font-weight: 700; letter-spacing: 0.04em; }
+.dial__name { min-height: 1.3em; text-align: center; font-size: var(--fs-sm); color: var(--c-text-muted); }
+.keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6em; }
+.key { height: 3.3em; border: 1px solid var(--c-border); border-radius: 0.8em; background: var(--c-surface); font-size: var(--fs-lg); font-weight: 600; cursor: pointer; display: grid; place-items: center; }
+.key:hover { background: var(--c-surface-hi); }
+.key:active { transform: scale(0.97); }
+.key--plain { background: transparent; border-color: transparent; color: var(--c-text-2); }
+
+/* ---------- Chat ---------- */
+.chat { flex: 1; min-height: 0; overflow-y: auto; padding: 0.4em 0.8em 0.6em; display: flex; flex-direction: column; gap: 0.35em; }
+.chat::-webkit-scrollbar { width: 0; }
+.chat > :first-child { margin-top: auto; }
+.phone:focus { outline: none; }
+.bubble { max-width: 82%; padding: 0.55em 0.8em; border-radius: 1em; background: var(--c-surface-hi); font-size: var(--fs-sm); line-height: 1.4; overflow-wrap: anywhere; align-self: flex-start; border-bottom-left-radius: 0.3em; }
+.bubble[data-dir="out"] { align-self: flex-end; background: var(--c-accent-soft); border-bottom-left-radius: 1em; border-bottom-right-radius: 0.3em; }
+.bubble[data-hidden="true"] { opacity: 0.6; border: 1px dashed var(--c-border); }
+.bubble time { display: block; margin-top: 0.2em; font-size: var(--fs-xs); color: var(--c-text-muted); }
+.bubble__loc { display: flex; align-items: center; gap: 0.5em; font-weight: 600; }
+.bubble .btn { margin-top: 0.5em; min-height: 2.3em; font-size: var(--fs-sm); }
+.more { align-self: center; padding: 0.4em 0.9em; border: 1px solid var(--c-border); border-radius: 1em; background: transparent; color: var(--c-text-2); font-size: var(--fs-xs); font-weight: 600; cursor: pointer; }
+.composer { display: flex; align-items: center; gap: 0.3em; padding: 0.5em 0.6em 0.3em; border-top: 1px solid var(--c-border); }
+.composer .input { border-radius: 1.4em; padding: 0.6em 0.9em; font-size: var(--fs-sm); }
+.composer .send { background: rgb(var(--rgb-ink) / 0.92); color: var(--c-on-accent); border-radius: 50%; }
+.composer .send:hover { background: rgb(var(--rgb-ink)); color: var(--c-on-accent); }
+
+/* ---------- Gespraech ---------- */
+.callscreen { position: absolute; inset: 0; z-index: 2; display: grid; grid-template-rows: 1fr auto; justify-items: center; padding: 3.2em 1.4em 2.4em; background: var(--wallpaper), var(--c-screen); text-align: center; }
+.callscreen__state { font-size: var(--fs-sm); font-weight: 600; color: var(--c-text-2); }
+.callscreen__name { margin: 0.5em 0 0.2em; font-size: var(--fs-xl); font-weight: 700; overflow-wrap: anywhere; }
+.callscreen__number { font-size: var(--fs-sm); color: var(--c-text-muted); }
+.callscreen__time { margin-top: 1.2em; font-size: var(--fs-clock); font-weight: 700; line-height: 1; }
+.callscreen__actions { display: flex; justify-content: center; gap: 2.4em; width: 100%; }
+.round { display: grid; justify-items: center; gap: 0.5em; border: 0; background: transparent; cursor: pointer; font-size: var(--fs-xs); font-weight: 600; color: var(--c-text-2); }
+.round__disc { display: grid; place-items: center; width: 4.2em; height: 4.2em; border-radius: 50%; background: var(--c-surface-hi); color: var(--c-text); font-size: 1.15em; transition: transform var(--dur-fast) var(--ease-out); }
+.round:active .round__disc { transform: scale(0.95); }
+.round--accept .round__disc { background: var(--c-accent); color: var(--c-on-accent); }
+.round--end .round__disc { background: var(--c-signal); color: rgb(var(--rgb-base)); }
+.round .icon { width: 1.6em; height: 1.6em; }
+
+/* ---------- Schalter ---------- */
+.switch { display: flex; align-items: center; gap: 0.8em; width: 100%; padding: 0.8em 0.9em; border: 1px solid var(--c-border); border-radius: 0.8em; background: var(--c-surface); cursor: pointer; text-align: left; font-size: inherit; }
+.switch__text { flex: 1; }
+.switch__title { display: block; font-size: var(--fs-md); font-weight: 600; }
+.switch__sub { display: block; font-size: var(--fs-xs); color: var(--c-text-muted); margin-top: 0.15em; }
+.switch__knob { position: relative; width: 2.6em; height: 1.5em; border-radius: 1em; background: rgb(var(--rgb-ink) / 0.18); flex: none; transition: background-color var(--dur-fast) var(--ease-out); }
+.switch__knob::after { content: ""; position: absolute; top: 0.2em; left: 0.2em; width: 1.1em; height: 1.1em; border-radius: 50%; background: rgb(var(--rgb-ink)); transition: transform var(--dur-fast) var(--ease-out); }
+.switch[aria-checked="true"] .switch__knob { background: var(--c-accent); }
+.switch[aria-checked="true"] .switch__knob::after { transform: translateX(1.1em); }
+
+.toast { position: absolute; left: 0.8em; right: 0.8em; top: 2.6em; z-index: 3; padding: 0.7em 0.9em; border-radius: 0.8em; background: rgb(var(--rgb-ink)); color: var(--c-on-accent); font-size: var(--fs-sm); font-weight: 600; box-shadow: 0 0.6em 1.6em rgb(var(--rgb-base) / 0.5); }
+.toast--error { background: var(--c-signal); color: rgb(var(--rgb-base)); }
+
+/* ---------- Handy zu: Leiste fuer Anruf und neue Nachricht, frei im Bild ---------- */
+.peek {
+  position: fixed; right: var(--edge); bottom: var(--edge); z-index: var(--z-peek);
+  max-width: min(46vw, 520px); display: flex; align-items: center; gap: 0.7em; justify-content: flex-end;
+  font-size: clamp(15px, 0.95vw, 21px); font-weight: 600; text-shadow: var(--text-shade); text-align: right; pointer-events: none;
+}
+.peek .icon { color: var(--c-accent); filter: drop-shadow(0 1px 2px rgb(var(--rgb-base))); }
+.peek__text { overflow-wrap: anywhere; }
+.peek__kind { color: var(--c-accent); font-weight: 700; margin-right: 0.4em; }
+.keycap { display: inline-block; padding: 0.1em 0.5em; border-radius: 0.3em; background: rgb(var(--rgb-base) / 0.85); border: 1px solid rgb(var(--rgb-ink) / 0.25); font-size: 0.85em; font-weight: 700; text-shadow: none; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-phone" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.900.7 2.800a2 2 0 0 1-.5 2.100L8.100 9.900a16 16 0 0 0 6 6l1.300-1.300a2 2 0 0 1 2.100-.400c.900.300 1.800.600 2.800.700a2 2 0 0 1 1.700 2z"/></g>
+    <g id="i-hangup" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13.500c5.500-4.700 12.500-4.700 18 0l-1.800 2.800a1.500 1.500 0 0 1-1.800.600l-2.700-1a1.500 1.500 0 0 1-1-1.400v-1.600a9 9 0 0 0-3.400 0v1.600a1.500 1.500 0 0 1-1 1.400l-2.700 1a1.500 1.500 0 0 1-1.800-.600z"/></g>
+    <g id="i-message" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></g>
+    <g id="i-users" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.500 20a6.500 6.500 0 0 1 13 0M16 4.700a3.500 3.500 0 0 1 0 6.600M18.500 14.200A6.500 6.500 0 0 1 21.500 20"/></g>
+    <g id="i-bank" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 18h14M12 3 3 8h18z"/><path d="M6 11v7M10 11v7M14 11v7M18 11v7"/></g>
+    <g id="i-alert" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18v-5a6 6 0 0 1 12 0v5M4 21h16M5 18h14M12 3v1.500M4.200 6.200l1.100 1.100M19.800 6.200l-1.100 1.100"/></g>
+    <g id="i-settings" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></g>
+    <g id="i-back" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></g>
+    <g id="i-plus" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></g>
+    <g id="i-send" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></g>
+    <g id="i-pin" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.200 7-11.500a7 7 0 0 0-14 0C5 14.800 12 21 12 21z"/><circle cx="12" cy="9.500" r="2.500"/></g>
+    <g id="i-trash" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></g>
+    <g id="i-edit" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16zM13.500 6.500l4 4"/></g>
+    <g id="i-in" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17M7 9v8h8"/></g>
+    <g id="i-out" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></g>
+    <g id="i-plane" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10.500 3.500a1.500 1.500 0 0 1 3 0V9l7.500 4.500v2L13.500 13.500v4.500l2 1.500V21l-3.500-1-3.500 1v-1.500l2-1.500v-4.500L3 15.500v-2L10.500 9z"/></g>
+    <g id="i-mute" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.700 4.700A6 6 0 0 1 18 9.500c0 2.500.600 4.300 1.300 5.500M6.300 6.800A6 6 0 0 0 6 9.500c0 4.500-2 6-2 6.500h12M10 20a2.200 2.200 0 0 0 4 0M3 3l18 18"/></g>
+    <g id="i-erase" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><path d="m12 9 6 6M18 9l-6 6"/></g>
+  </defs>
+</svg>
+
+<div class="peek" id="peek" role="status" aria-live="polite" hidden></div>
+
+<div class="phone" id="phone" role="dialog" aria-modal="true" aria-label="Handy" tabindex="-1" hidden>
+  <div class="screen" id="screen">
+    <header class="status">
+      <span class="num" id="status-time"></span>
+      <span class="status__icons" id="status-icons"></span>
+    </header>
+    <div id="banners"></div>
+    <main class="view" id="view"></main>
+    <footer class="homebar"><button type="button" data-action="home" id="homebutton"></button></footer>
+    <div class="callscreen" id="callscreen" hidden></div>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+</div>
+
+<script id="bridge">
+const CONTRACT_VERSION = 1;
+
+const Bridge = (() => {
+  const handlers = {};
+  const resourceName = (() => {
+    try { if (typeof GetParentResourceName === 'function') return GetParentResourceName(); } catch (err) { /* weiter */ }
+    return null;
+  })();
+  // Spaeter: weiteren Adapter ergaenzen, z. B. 'gta6', wenn die Plattform bekannt ist
+  const platform = resourceName !== null ? 'fivem' : 'mock';
+  function on(event, fn) { (handlers[event] ||= []).push(fn); }
+  function emit(event, data) {
+    (handlers[event] || []).forEach((fn) => {
+      try { fn(data ?? {}); } catch (err) { console.error(`[bridge] ${event}`, err); }
+    });
+  }
+  window.addEventListener('message', (e) => {
+    const msg = e.data;
+    if (!msg || typeof msg.action !== 'string') return;
+    emit(msg.action, msg.data);
+  });
+  async function send(event, data = {}) {
+    if (platform === 'mock') return Mock.handle(event, data);
+    try {
+      const res = await fetch(`https://${resourceName}/${event}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(`[bridge] send ${event}`, err);
+      return { ok: false, error: 'bridge_error' };
+    }
+  }
+  return { on, send, emit, platform };
+})();
+
+// Testdaten fuer den Browser. ?screen=phone|contacts|messages|thread|bank|dispatch|settings, ?admin, ?leer,
+// ?anruf=incoming|dialing|active, ?zu (Handy zu, mit ?anruf oder ?nachricht fuer die Leiste)
+const Mock = (() => {
+  const params = new URLSearchParams(location.search);
+  const EMPTY = params.has('leer');
+  const NOW = '2026-11-16 14:20';
+  const OWN = '482103';
+  const people = { '555014': 'Lena Hoffmann', '731820': 'Paul Krüger', '690244': 'Mira Schulz', '118306': 'Tom Becker' };
+  let nextId = 900;
+  let settings = { silent: false, airplane: false };
+  let contacts = EMPTY ? [] : [
+    { id: 1, name: 'Lena Hoffmann', number: '555014' }, { id: 2, name: 'Mira (EMS)', number: '690244' }, { id: 3, name: 'Paul Werkstatt', number: '731820' },
+  ];
+  const chats = EMPTY ? {} : {
+    '555014': [
+      { id: 1, direction: 'in', kind: 'text', text: 'Bist du heute Abend am Pier?', at: '2026-11-16 13:02' },
+      { id: 2, direction: 'out', kind: 'text', text: 'Ja, ab acht. Bringst du die Papiere für den Sultan mit?', at: '2026-11-16 13:05' },
+      { id: 3, direction: 'in', kind: 'location', text: 'Standort', x: -1602.4, y: -1048.1, at: '2026-11-16 13:06' },
+      { id: 4, direction: 'in', kind: 'text', text: 'Hier treffen wir uns. Papiere hab ich dabei.', at: '2026-11-16 13:06', unread: true },
+    ],
+    '731820': [{ id: 5, direction: 'out', kind: 'text', text: 'Wann ist die Stoßstange fertig?', at: '2026-11-15 18:40' }],
+    '204417': [{ id: 6, direction: 'in', kind: 'text', text: 'Hey, hier ist Jonas vom Parkplatz. Meld dich wegen dem Kratzer.', at: '2026-11-14 21:15', unread: true }],
+    Bank: [{ id: 7, direction: 'in', kind: 'text', text: 'Frist abgelaufen: Rotlicht überfahren. Offen sind jetzt 660 $.', at: '2026-11-13 10:15' }],
+  };
+  let calls = EMPTY ? [] : [
+    { id: 1, number: '690244', direction: 'in', status: 'missed', seconds: 0, at: '2026-11-16 12:48' },
+    { id: 2, number: '555014', direction: 'out', status: 'answered', seconds: 187, at: '2026-11-16 11:30' },
+    { id: 3, number: '731820', direction: 'in', status: 'answered', seconds: 42, at: '2026-11-15 18:22' },
+    { id: 4, number: '204417', direction: 'out', status: 'unreachable', seconds: 0, at: '2026-11-14 21:20' },
+    { id: 5, number: '118306', direction: 'in', status: 'declined', seconds: 0, at: '2026-11-14 09:03' },
+  ];
+  let missed = EMPTY ? 0 : 1;
+  let call = null;
+  let balance = 48210;
+  const debts = EMPTY ? [] : [
+    { id: 31, kindLabel: 'Strafe', creditorLabel: 'Staat San Andreas', title: 'Rotlicht überfahren, Kreuzung Vespucci Boulevard', amount: 600, fee: 60, paid: 0, rest: 660, overdue: true, due: '2026-11-13 10:15' },
+    { id: 34, kindLabel: 'Rechnung', creditorLabel: 'Emergency Medical Service', title: 'Behandlung Bluthochdruck, 2 von 4', amount: 250, fee: 0, paid: 100, rest: 150, overdue: false, due: '2026-11-18 17:10' },
+  ];
+  const recent = EMPTY ? [] : [
+    { kind: 'transfer_in', amount: 1850, text: 'Gehalt November', other: 'Emergency Medical Service', at: '2026-11-14 12:00' },
+    { kind: 'withdraw', amount: -500, text: 'Auszahlung am Bankautomaten', at: '2026-11-13 22:14' },
+    { kind: 'transfer_out', amount: -750, text: 'Miete November', other: 'Lena Hoffmann', at: '2026-11-13 18:02' },
+  ];
+  const accounts = { '12035567': 'Lena Hoffmann', '77410932': 'Mira Schulz' };
+  const threads = () => Object.entries(chats).map(([number, list]) => {
+    const last = list[list.length - 1];
+    return { number, text: last.text, kind: last.kind, direction: last.direction, at: last.at, unread: list.filter((m) => m.unread).length, last: last.id };
+  }).sort((a, b) => b.last - a.last);
+  const unread = () => threads().reduce((sum, t) => sum + t.unread, 0);
+  const bankOverview = () => ({ name: 'Fabian Nandes', number: '48210375', balance, recent,
+    debts: { count: debts.length, total: debts.reduce((s, d) => s + d.rest, 0), overdue: debts.filter((d) => d.overdue).length },
+    recipients: EMPTY ? [] : [{ name: 'Lena Hoffmann', number: '12035567' }] });
+  const home = () => ({ number: OWN, name: 'Fabian Nandes', characterId: 256, ...settings, contacts, threads: threads(), unread: unread(), calls, missed, call,
+    apps: { bank: !params.has('admin'), dispatch: !params.has('admin') }, admin: params.has('admin') || undefined,
+    limits: { number: 6, name: 32, message: 300, contacts: 100 }, volume: 0.25 });
+  const digits = (v) => String(v ?? '').replace(/\D/g, '');
+  const api = {
+    phone_home: () => ({ ok: true, data: home() }),
+    phone_settings: (d) => { settings = { ...settings, ...d }; return { ok: true, data: settings }; },
+    phone_contact_save: (d) => {
+      const number = digits(d.number);
+      const name = String(d.name || '').trim();
+      if (!name) return { ok: false, error: 'invalid_name' };
+      if (number.length !== 6) return { ok: false, error: 'invalid_number' };
+      if (contacts.some((c) => c.number === number && c.id !== d.id)) return { ok: false, error: 'contact_exists' };
+      if (d.id) contacts = contacts.map((c) => (c.id === d.id ? { ...c, name, number } : c));
+      else contacts = [...contacts, { id: nextId++, name, number }];
+      contacts.sort((a, b) => a.name.localeCompare(b.name));
+      return { ok: true, data: { contacts } };
+    },
+    phone_contact_delete: (d) => { contacts = contacts.filter((c) => c.id !== d.id); return { ok: true, data: { contacts } }; },
+    phone_thread: (d) => {
+      const list = chats[d.number] || [];
+      list.forEach((m) => { delete m.unread; });
+      return { ok: true, data: { number: d.number, messages: list.map((m) => ({ ...m })), more: false, unread: unread() } };
+    },
+    phone_message_send: (d) => {
+      const number = digits(d.number);
+      if (number.length !== 6) return { ok: false, error: 'invalid_number' };
+      if (number === OWN) return { ok: false, error: 'own_number' };
+      if (settings.airplane) return { ok: false, error: 'airplane' };
+      if (!d.location && !String(d.text || '').trim()) return { ok: false, error: 'invalid_text' };
+      const message = d.location ? { id: nextId++, direction: 'out', kind: 'location', text: 'Standort', x: 215.5, y: -810.2, at: NOW }
+        : { id: nextId++, direction: 'out', kind: 'text', text: String(d.text).trim(), at: NOW };
+      (chats[number] ||= []).push(message);
+      return { ok: true, data: { number, message } };
+    },
+    phone_thread_delete: (d) => { delete chats[d.number]; return { ok: true, data: { threads: threads(), unread: unread() } }; },
+    phone_call_start: (d) => {
+      const number = digits(d.number);
+      if (number.length !== 6) return { ok: false, error: 'invalid_number' };
+      if (number === OWN) return { ok: false, error: 'own_number' };
+      if (!people[number]) { calls = [{ id: nextId++, number, direction: 'out', status: 'unreachable', seconds: 0, at: NOW }, ...calls]; return { ok: false, error: 'unreachable' }; }
+      call = { id: nextId++, state: 'dialing', number };
+      setTimeout(() => { if (call && call.state === 'dialing') { call = { ...call, state: 'active', seconds: 0 }; Mock.push('phone_push', { type: 'call', call }); } }, 1800);
+      return { ok: true, data: { call } };
+    },
+    phone_call_answer: () => { if (!call) return { ok: false, error: 'no_call' }; call = { ...call, state: 'active', seconds: 0 }; return { ok: true, data: { call } }; },
+    phone_call_end: () => {
+      if (!call) return { ok: false, error: 'no_call' };
+      calls = [{ id: nextId++, number: call.number, direction: call.state === 'incoming' ? 'in' : 'out', status: call.state === 'active' ? 'answered' : 'declined', seconds: 12, at: NOW }, ...calls];
+      call = null;
+      setTimeout(() => Mock.push('phone_push', { type: 'call', ended: { reason: 'ended', seconds: 12 } }), 30);
+      return { ok: true };
+    },
+    phone_calls_seen: () => { missed = 0; return { ok: true, data: { missed } }; },
+    phone_bank: () => ({ ok: true, data: { overview: bankOverview() } }),
+    phone_bank_lookup: (d) => {
+      const number = digits(d.number);
+      if (number === '48210375') return { ok: false, error: 'same_account' };
+      return accounts[number] ? { ok: true, data: { name: accounts[number], number } } : { ok: false, error: 'unknown_account' };
+    },
+    phone_bank_transfer: (d) => {
+      const found = api.phone_bank_lookup(d);
+      if (!found.ok) return found;
+      if (!Number.isInteger(d.amount) || d.amount < 1) return { ok: false, error: 'invalid_amount' };
+      if (d.amount > balance) return { ok: false, error: 'not_enough_money' };
+      balance -= d.amount;
+      recent.unshift({ kind: 'transfer_out', amount: -d.amount, text: d.purpose || 'Überweisung', other: found.data.name, at: NOW });
+      return { ok: true, data: { to: found.data, overview: bankOverview() } };
+    },
+    phone_bank_debts: () => ({ ok: true, data: { debts } }),
+    phone_bank_pay: (d) => {
+      const index = debts.findIndex((x) => x.id === d.id);
+      if (index < 0) return { ok: false, error: 'not_found' };
+      const debt = debts[index];
+      const amount = d.amount === undefined ? debt.rest : d.amount;
+      if (!Number.isInteger(amount) || amount < 1 || amount > debt.rest) return { ok: false, error: 'invalid_amount' };
+      if (amount > balance) return { ok: false, error: 'not_enough_money' };
+      balance -= amount; debt.rest -= amount; debt.paid += amount;
+      const done = debt.rest === 0;
+      if (done) debts.splice(index, 1);
+      return { ok: true, data: { debt: { ...debt, status: done ? 'paid' : 'open' }, paid: amount, debts, overview: bankOverview() } };
+    },
+    phone_dispatch: () => ({ ok: true, data: { services: [{ key: 'ems', label: 'Rettungsdienst', units: 3 }, { key: 'lspd', label: 'Polizei', units: 0 }], default: 'ems', textMin: 5, textMax: 200 } }),
+    phone_dispatch_send: (d) => (String(d.text || '').trim().length < 5 ? { ok: false, error: 'text_too_short' }
+      : { ok: true, data: { number: 'EMS-0412', service: d.service === 'lspd' ? 'Polizei' : 'Rettungsdienst', units: d.service === 'lspd' ? 0 : 3 } }),
+  };
+  return {
+    delay: 90,
+    home,
+    setCall(value) { call = value; },
+    async handle(event, data) {
+      await new Promise((r) => setTimeout(r, this.delay));
+      console.info(`[mock] ${event}`, data);
+      if (event === 'ui_ready') return { ok: true, data: { key: 'F1', volume: 0.25 } };
+      if (event === 'phone_call') return api[data.name] ? api[data.name](data.data || {}) : { ok: false, error: 'invalid_input' };
+      return { ok: true };
+    },
+    push(event, data) { Bridge.emit(event, data); },
+  };
+})();
+</script>
+
+<script id="app">
+const TEXT = {
+  apps: { phone: 'Telefon', messages: 'Nachrichten', contacts: 'Kontakte', bank: 'Bank', dispatch: 'Notruf', settings: 'Einstellungen' },
+  home: 'Startbildschirm',
+  back: 'Zurück',
+  admin: (name, id) => `Admin-Ansicht: ${name}, ID ${id}. Nur lesen`,
+  callBar: 'Gespräch läuft',
+  phone: {
+    tabs: { log: 'Verlauf', keys: 'Ziffern' },
+    empty: 'Noch keine Anrufe', emptyText: 'Ruf jemanden über die Ziffern oder aus den Kontakten an.',
+    call: 'Anrufen', erase: 'Letzte Ziffer löschen', save: 'Als Kontakt speichern',
+    status: { missed: 'Verpasst', declined: 'Abgelehnt', unreachable: 'Nicht erreichbar', busy: 'Besetzt', answered: '' },
+    outMissed: 'Nicht rangegangen',
+  },
+  call: {
+    dialing: 'Wählt…', incoming: 'Eingehender Anruf', active: 'Im Gespräch',
+    accept: 'Annehmen', decline: 'Ablehnen', end: 'Auflegen', hide: 'Zum Handy',
+    ended: { ended: 'Gespräch beendet', declined: 'Abgelehnt', cancelled: 'Anruf abgebrochen', timeout: 'Nicht rangegangen', left: 'Verbindung verloren' },
+  },
+  contacts: {
+    search: 'Name oder Nummer suchen', add: 'Kontakt anlegen', empty: 'Noch keine Kontakte', emptyText: 'Leg mit dem Plus oben deinen ersten Kontakt an.',
+    noMatch: 'Nichts gefunden', name: 'Name', number: 'Nummer', save: 'Speichern', saved: 'Kontakt gespeichert',
+    call: 'Anrufen', message: 'Nachricht', edit: 'Bearbeiten', remove: 'Kontakt löschen', removeConfirm: 'Wirklich löschen', removed: 'Kontakt gelöscht',
+    newTitle: 'Neuer Kontakt', editTitle: 'Kontakt bearbeiten',
+  },
+  messages: {
+    empty: 'Noch keine Nachrichten', emptyText: 'Schreib jemandem über das Plus oben.',
+    new: 'Neue Nachricht', to: 'An welche Nummer', toHint: 'Oder wähl einen Kontakt:', start: 'Chat öffnen',
+    placeholder: 'Nachricht', send: 'Senden', location: 'Standort senden', locationSent: 'Standort gesendet',
+    locationLabel: 'Standort', waypoint: 'Wegpunkt setzen', waypointSet: 'Wegpunkt gesetzt',
+    older: 'Ältere laden', remove: 'Chat löschen', removeConfirm: 'Chat wirklich löschen', removed: 'Chat gelöscht',
+    you: 'Du: ', deleted: 'gelöscht', service: 'Auf diese Nachricht kannst du nicht antworten.', threadEmpty: 'Schreib die erste Nachricht.',
+  },
+  bank: {
+    balance: 'Kontostand', account: (n) => `Konto ${n}`, transfer: 'Überweisen', debts: 'Schulden',
+    debtCard: (n) => (n === 1 ? '1 offene Forderung' : `${n} offene Forderungen`), debtSub: (total, overdue) => (overdue > 0 ? `${total} offen, davon ${overdue} überfällig` : `${total} offen`),
+    recent: 'Letzte Buchungen', noRecent: 'Noch keine Buchungen.',
+    number: 'Kontonummer des Empfängers', amount: 'Betrag in $', purpose: 'Verwendungszweck', check: 'Empfänger prüfen',
+    confirm: (amount, number) => `${amount} an Konto ${number}`, send: 'Jetzt überweisen', change: 'Ändern', sent: (amount, name) => `${amount} an ${name} überwiesen`,
+    recipients: 'Zuletzt überwiesen an',
+    noDebts: 'Keine offenen Forderungen', noDebtsText: 'Strafen und Rechnungen erscheinen hier, sobald jemand eine ausstellt.',
+    due: (d) => `fällig bis ${d}`, late: (d) => `überfällig seit ${d}`, open: (rest) => `Offen: ${rest}`,
+    fee: (fee) => `Darin ${fee} Mahngebühr`, pay: 'Bezahlen', paid: (a) => `${a} bezahlt`, done: 'Forderung erledigt',
+    payHint: (b) => `Vom Konto, Kontostand ${b}. Auch ein Teilbetrag geht.`,
+  },
+  dispatch: {
+    service: 'Wen brauchst du', units: (n) => (n === 0 ? 'Niemand im Dienst' : n === 1 ? '1 Einheit im Dienst' : `${n} Einheiten im Dienst`),
+    text: 'Was ist passiert', placeholder: 'z. B. Autounfall am Legion Square, eine Person verletzt', send: 'Notruf absenden',
+    hint: 'Dein Standort wird mitgeschickt.',
+    sent: (number) => `Notruf ${number} ist raus`, sentUnits: (service, n) => (n > 0 ? `${service}: ${n} ${n === 1 ? 'Einheit' : 'Einheiten'} im Dienst.` : `${service}: gerade niemand im Dienst. Der Notruf bleibt offen.`),
+    again: 'Weiteren Notruf schreiben',
+  },
+  settings: {
+    number: 'Deine Nummer', esim: (name) => `eSIM von ${name}. Die Nummer bleibt, auch mit einem neuen Handy.`,
+    silent: 'Lautlos', silentSub: 'Kein Klingeln, kein Ton bei Nachrichten',
+    airplane: 'Flugmodus', airplaneSub: 'Nicht erreichbar, Nachrichten warten im Chat',
+  },
+  peek: { incoming: 'Anruf von', active: 'Im Gespräch mit', dialing: 'Anruf an', message: 'Nachricht von', missed: 'Verpasster Anruf von', open: 'öffnen' },
+  locationPreview: 'Standort',
+  errors: {
+    no_phone: 'Du hast kein Handy dabei.', is_dead: 'Bewusstlos geht das Handy nicht.', read_only: 'In der Admin-Ansicht kannst du nichts ändern.',
+    busy: 'Einen Moment, das Handy arbeitet noch.', invalid_name: 'Gib einen Namen ein.', invalid_number: 'Die Nummer hat 6 Ziffern.',
+    invalid_text: 'Schreib erst etwas.', invalid_amount: 'Der Betrag passt nicht. Ganze Dollar, mindestens 1.', own_number: 'Das ist deine eigene Nummer.',
+    unknown_number: 'Diese Nummer ist nicht vergeben.', contact_exists: 'Die Nummer ist schon als Kontakt gespeichert.', contacts_full: 'Deine Kontakte sind voll.',
+    not_found: 'Das gibt es nicht mehr.', too_fast: 'Nicht so schnell. Warte kurz.', airplane: 'Du bist im Flugmodus. Schalt ihn in den Einstellungen aus.',
+    in_call: 'Du telefonierst gerade.', no_call: 'Es läuft kein Gespräch.', unreachable: 'Nicht erreichbar. Der Anruf steht bei der Person als verpasst.',
+    line_busy: 'Besetzt. Die Person telefoniert gerade.', no_bank: 'Die Bank ist gerade nicht erreichbar.', unknown_account: 'Zu dieser Kontonummer gibt es kein Konto.',
+    same_account: 'Das ist dein eigenes Konto.', not_enough_money: 'Auf dem Konto ist nicht genug Geld.', debt_closed: 'Die Forderung ist schon erledigt.',
+    no_dispatch: 'Die Leitstelle ist gerade nicht erreichbar.', text_too_short: 'Beschreib kurz, was passiert ist.', cooldown: 'Du hast gerade erst einen Notruf abgesetzt. Warte einen Moment.',
+    too_many_open: 'Du hast schon offene Notrufe. Warte, bis sie bearbeitet sind.', blocked: 'Du kannst gerade keinen Notruf absetzen.', invalid_service: 'Diesen Dienst gibt es nicht.',
+    twink_blocked: 'Geld zwischen deinen eigenen Charakteren ist nicht erlaubt.', server_error: 'Fehler auf dem Server. Versuch es noch einmal.', timeout: 'Der Server antwortet nicht.',
+    default: 'Das hat nicht geklappt.',
+  },
+};
+
+const APPS = [
+  { id: 'phone', icon: 'i-phone' }, { id: 'messages', icon: 'i-message' }, { id: 'contacts', icon: 'i-users' },
+  { id: 'bank', icon: 'i-bank', needs: 'bank' }, { id: 'dispatch', icon: 'i-alert', needs: 'dispatch' }, { id: 'settings', icon: 'i-settings' },
+];
+const DIAL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+const TOAST_MS = 2600;
+const PEEK_MS = 6000;
+const CLOCK_MS = 15000;
+const SECOND_MS = 1000;
+const PREVIEW_LENGTH = 70;
+const RGB_MAX = 255;
+const COLOR_PATTERN = /^\d{1,3} \d{1,3} \d{1,3}$/;
+const COLOR_VARS = { base: '--rgb-base', ink: '--rgb-ink', accent: '--rgb-accent', mark: '--rgb-mark', signal: '--rgb-signal' };
+const MONEY = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
+const TIME = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
+const DATE = new Intl.DateTimeFormat('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+// Toene: [Frequenz in Hz, Start in ms, Dauer in ms]
+const TONES = {
+  ring: { notes: [[784, 0, 170], [988, 190, 170], [1175, 380, 260], [784, 900, 170], [988, 1090, 170], [1175, 1280, 260]], every: 3200 },
+  ringback: { notes: [[425, 0, 1000]], every: 5000 },
+  message: { notes: [[1175, 0, 90], [1568, 110, 150]] },
+  end: { notes: [[392, 0, 160], [330, 180, 220]] },
+};
+
+const state = {
+  open: false, busy: false, key: 'F1', volume: 0.25,
+  home: null,              // Home vom Server
+  stack: [{ name: 'home' }],
+  call: null, callHidden: false, callSince: 0,
+  peekToast: null,
+  dial: '', phoneTab: 'log',
+  contactSearch: '', confirm: null,
+  thread: null,            // { number, messages, more }
+  bank: null, transfer: { number: '', amount: '', purpose: '', checked: null, error: '' }, debts: null,
+  dispatch: null, dispatchService: null, dispatchSent: null,
+};
+
+const el = {
+  phone: document.getElementById('phone'), screen: document.getElementById('screen'), view: document.getElementById('view'),
+  statusTime: document.getElementById('status-time'), statusIcons: document.getElementById('status-icons'), banners: document.getElementById('banners'),
+  callscreen: document.getElementById('callscreen'), toast: document.getElementById('toast'), peek: document.getElementById('peek'),
+  homebutton: document.getElementById('homebutton'),
+};
+
+/* ---------- Helfer ---------- */
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+function icon(id) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.append(use);
+  return svg;
+}
+function button(className, action, label, data = {}) {
+  const b = make('button', className, label);
+  b.type = 'button';
+  b.dataset.action = action;
+  Object.entries(data).forEach(([k, v]) => { b.dataset[k] = v; });
+  return b;
+}
+function iconButton(iconId, action, label, extra = '', data = {}) {
+  const b = button(`iconbtn ${extra}`.trim(), action, undefined, data);
+  b.setAttribute('aria-label', label);
+  b.title = label;
+  b.append(icon(iconId));
+  return b;
+}
+function lock(node) { node.dataset.lock = '1'; return node; }
+function input(id, options = {}) {
+  const node = make(options.area ? 'textarea' : 'input', options.area ? 'textarea' : 'input');
+  node.id = id;
+  if (!options.area) node.type = 'text';
+  node.autocomplete = 'off';
+  if (options.numeric) node.inputMode = 'numeric';
+  if (options.maxLength) node.maxLength = options.maxLength;
+  if (options.placeholder) node.placeholder = options.placeholder;
+  if (options.value !== undefined) node.value = options.value;
+  if (options.label) node.setAttribute('aria-label', options.label);
+  return node;
+}
+function field(labelText, control) {
+  const wrap = make('div', 'field');
+  const label = make('label', 'label', labelText);
+  label.htmlFor = control.id;
+  wrap.append(label, control);
+  return wrap;
+}
+const list = (value) => (Array.isArray(value) ? value : []);   // Lua schickt leere Listen als {}
+const isNumber = (value) => /^\d+$/.test(String(value ?? ''));
+const digits = (value) => String(value ?? '').replace(/\D/g, '');
+// Nummern in Dreiergruppen: 482103 -> "482 103"
+const formatNumber = (value) => (isNumber(value) ? String(value).replace(/(\d{3})(?=\d)/g, '$1 ') : String(value ?? ''));
+const formatAccount = (value) => (isNumber(value) && String(value).length === 8 ? `${String(value).slice(0, 4)} ${String(value).slice(4)}` : String(value ?? ''));
+const money = (value) => `${MONEY.format(Number(value) || 0)} $`;
+const signed = (value) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${MONEY.format(Math.abs(Number(value) || 0))} $`;
+function contactOf(number) { return state.home ? list(state.home.contacts).find((c) => c.number === number) : undefined; }
+function nameOf(number, fallback) { const c = contactOf(number); return c ? c.name : (fallback || formatNumber(number)); }
+// "2026-11-16 14:20": heute nur die Uhrzeit, sonst das Datum
+function when(text, full = false) {
+  const m = typeof text === 'string' && text.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})/);
+  if (!m) return text || '';
+  const now = new Date();
+  const today = Number(m[1]) === now.getFullYear() && Number(m[2]) === now.getMonth() + 1 && Number(m[3]) === now.getDate();
+  if (full) return `${m[3]}.${m[2]}.${m[1]}, ${m[4]}`;
+  return today ? m[4] : `${m[3]}.${m[2]}.`;
+}
+function duration(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+function parseAmount(value) {
+  const text = String(value ?? '').trim().replace(/[.\s$]/g, '');
+  return /^\d+$/.test(text) ? Number(text) : NaN;
+}
+function applyColors(colors) {
+  if (!colors || typeof colors !== 'object') return;
+  const root = document.documentElement.style;
+  for (const [key, cssVar] of Object.entries(COLOR_VARS)) {
+    const value = typeof colors[key] === 'string' ? colors[key].trim() : '';
+    const valid = COLOR_PATTERN.test(value) && value.split(' ').every((n) => Number(n) <= RGB_MAX);
+    if (valid) root.setProperty(cssVar, value);
+    else root.removeProperty(cssVar);
+  }
+}
+const errorText = (code) => TEXT.errors[code] || TEXT.errors.default;
+let toastTimer = null;
+function toast(text, error = false) {
+  el.toast.textContent = text;
+  el.toast.classList.toggle('toast--error', error);
+  el.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.toast.hidden = true; }, TOAST_MS);
+}
+
+/* ---------- Toene: erzeugt die UI selbst, damit keine Spiel-Sounds noetig sind ---------- */
+const Sound = (() => {
+  let ctx = null;
+  let loop = null;
+  let loopName = null;
+  function context() {
+    if (!ctx) {
+      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (err) { ctx = null; }
+    }
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+    return ctx;
+  }
+  function play(name) {
+    const audio = context();
+    const tone = TONES[name];
+    if (!audio || !tone || !(state.volume > 0)) return;
+    tone.notes.forEach(([frequency, start, length]) => {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      const from = audio.currentTime + start / SECOND_MS;
+      const to = from + length / SECOND_MS;
+      osc.type = 'sine';
+      osc.frequency.value = frequency;
+      gain.gain.setValueAtTime(0, from);
+      gain.gain.linearRampToValueAtTime(state.volume, from + 0.015);
+      gain.gain.linearRampToValueAtTime(0, to);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(from);
+      osc.stop(to + 0.02);
+    });
+  }
+  function stop() { clearInterval(loop); loop = null; loopName = null; }
+  function start(name) {
+    if (loopName === name) return;
+    stop();
+    loopName = name;
+    play(name);
+    loop = setInterval(() => play(name), TONES[name].every);
+  }
+  return { play, start, stop };
+})();
+
+// Klingeln und Freizeichen folgen dem Stand des Gespraechs
+function updateSound() {
+  const call = state.call;
+  if (call && call.state === 'incoming' && !call.silent) Sound.start('ring');
+  else if (call && call.state === 'dialing') Sound.start('ringback');
+  else Sound.stop();
+}
+
+/* ---------- Server ---------- */
+async function request(name, data = {}, options = {}) {
+  if (state.busy && !options.force) return null;
+  setBusy(true);
+  const res = await Bridge.send('phone_call', { name, data });
+  setBusy(false);
+  if (!res || !res.ok) {
+    const code = (res && res.error) || 'default';
+    if (!options.silent) toast(errorText(code), true);
+    return options.raw ? { error: code } : null;
+  }
+  return res.data || {};
+}
+function setBusy(busy) {
+  state.busy = busy;
+  el.phone.querySelectorAll('[data-lock]').forEach((b) => { b.disabled = busy; });
+}
+async function reloadHome() {
+  const data = await request('phone_home', {}, { silent: true, force: true });
+  if (!data) return;
+  const call = state.call;
+  state.home = data;
+  // Den Stand des Gespraechs fuehrt die UI ueber die Push-Nachrichten, hier nur uebernehmen, wenn keiner da ist
+  if (!call && data.call) setCall(data.call);
+}
+
+/* ---------- Navigation ---------- */
+const current = () => state.stack[state.stack.length - 1];
+function go(name, params = {}) {
+  state.confirm = null;
+  state.stack.push({ name, ...params });
+  render();
+}
+function back() {
+  state.confirm = null;
+  if (state.stack.length > 1) { state.stack.pop(); render(); return true; }
+  return false;
+}
+function goHome() { state.confirm = null; state.stack = [{ name: 'home' }]; render(); }
+
+function head(title, sub, actions = []) {
+  const node = make('div', 'head');
+  node.append(iconButton('i-back', 'back', TEXT.back));
+  const h = make('h1', 'head__title', title);
+  if (sub) h.append(make('span', 'head__sub num', sub));
+  node.append(h, ...actions);
+  return node;
+}
+function empty(title, text) {
+  const node = make('div', 'none');
+  node.append(make('strong', '', title), document.createTextNode(text || ''));
+  return node;
+}
+function card(title, sub, variant = '', action = null, data = {}) {
+  const node = action ? button(`card ${variant}`.trim(), action, undefined, data) : make('div', `card ${variant}`.trim());
+  node.append(make('span', 'card__mark'), make('span', 'card__title num', title), make('span', 'card__sub', sub));
+  return node;
+}
+const initial = (name) => (isNumber(name.replace(/\s/g, '')) ? '#' : name.trim().charAt(0).toUpperCase());
+
+/* ---------- Rahmen: Statusleiste, Hinweise, Gespraech ---------- */
+function renderChrome() {
+  const home = state.home;
+  el.statusTime.textContent = TIME.format(new Date());
+  el.statusIcons.replaceChildren();
+  if (home && home.airplane) el.statusIcons.append(icon('i-plane'));
+  if (home && home.silent) el.statusIcons.append(icon('i-mute'));
+  el.statusIcons.append(make('span', '', home && home.airplane ? '' : 'eSIM'));
+  el.banners.replaceChildren();
+  if (home && home.admin) el.banners.append(make('div', 'banner banner--admin', TEXT.admin(home.name, home.characterId)));
+  if (state.call && state.callHidden) {
+    const bar = button('banner banner--call', 'call-show');
+    bar.append(icon('i-phone'), make('span', '', `${TEXT.callBar}: ${nameOf(state.call.number, state.call.name)}`), make('span', 'num', state.call.state === 'active' ? duration(callSeconds()) : ''));
+    bar.id = 'callbar';
+    el.banners.append(bar);
+  }
+  el.screen.dataset.home = String(current().name === 'home');
+}
+
+const callSeconds = () => (state.call && state.call.state === 'active' ? (Date.now() - state.callSince) / SECOND_MS : 0);
+let callTimer = null;
+function tickCall() {
+  const time = document.getElementById('call-time');
+  if (time) time.textContent = duration(callSeconds());
+  const bar = document.querySelector('#callbar .num');
+  if (bar) bar.textContent = duration(callSeconds());
+}
+function renderCall() {
+  const call = state.call;
+  clearInterval(callTimer);
+  callTimer = null;
+  const visible = Boolean(call) && state.open && !state.callHidden;
+  el.callscreen.hidden = !visible;
+  if (call && call.state === 'active' && state.open) callTimer = setInterval(tickCall, SECOND_MS);
+  if (!visible) return;
+  const top = make('div');
+  const known = contactOf(call.number) || call.name;
+  top.append(make('div', 'callscreen__state', TEXT.call[call.state]), make('h2', 'callscreen__name', nameOf(call.number, call.name)));
+  if (known) top.append(make('div', 'callscreen__number num', formatNumber(call.number)));
+  if (call.state === 'active') { const time = make('div', 'callscreen__time num', duration(callSeconds())); time.id = 'call-time'; top.append(time); }
+  const actions = make('div', 'callscreen__actions');
+  const round = (variant, action, iconId, label) => {
+    const b = button(`round ${variant}`, action);
+    const disc = make('span', 'round__disc');
+    disc.append(icon(iconId));
+    b.append(disc, make('span', '', label));
+    return b;
+  };
+  if (call.state === 'incoming') actions.append(round('round--end', 'call-end', 'i-hangup', TEXT.call.decline), round('round--accept', 'call-answer', 'i-phone', TEXT.call.accept));
+  else {
+    if (call.state === 'active') actions.append(round('', 'call-hide', 'i-back', TEXT.call.hide));
+    actions.append(round('round--end', 'call-end', 'i-hangup', TEXT.call.end));
+  }
+  el.callscreen.replaceChildren(top, actions);
+}
+
+function setCall(call) {
+  const before = state.call;
+  state.call = call || null;
+  if (!call) state.callHidden = false;
+  else if (call.state === 'active' && (!before || before.state !== 'active')) state.callSince = Date.now() - (Number(call.seconds) || 0) * SECOND_MS;
+  if (call && (!before || before.state !== call.state) && call.state !== 'active') state.callHidden = false;
+  updateSound();
+  renderChrome();
+  renderCall();
+  renderPeek();
+}
+
+/* ---------- Handy zu: Leiste ---------- */
+let peekTimer = null;
+function renderPeek() {
+  const call = state.call;
+  const toastData = state.peekToast;
+  if (state.open || (!call && !toastData)) { el.peek.hidden = true; return; }
+  el.peek.replaceChildren();
+  const text = make('span', 'peek__text');
+  if (call) {
+    el.peek.append(icon('i-phone'));
+    text.append(make('span', 'peek__kind', TEXT.peek[call.state]), document.createTextNode(`${nameOf(call.number, call.name)} `));
+    const key = make('span', 'keycap', state.key);
+    text.append(key, document.createTextNode(` ${TEXT.peek.open}`));
+  } else {
+    el.peek.append(icon(toastData.type === 'missed' ? 'i-phone' : 'i-message'));
+    text.append(make('span', 'peek__kind', toastData.type === 'missed' ? TEXT.peek.missed : TEXT.peek.message), document.createTextNode(toastData.who));
+    if (toastData.text) text.append(document.createTextNode(`: ${toastData.text}`));
+  }
+  el.peek.append(text);
+  el.peek.hidden = false;
+}
+function showPeekToast(data) {
+  state.peekToast = data;
+  clearTimeout(peekTimer);
+  peekTimer = setTimeout(() => { state.peekToast = null; renderPeek(); }, PEEK_MS);
+  renderPeek();
+}
+
+/* ---------- Start ---------- */
+function renderHome() {
+  const home = state.home;
+  const clock = make('div', 'clock');
+  const time = make('div', 'clock__time num', TIME.format(new Date()));
+  time.id = 'clock-time';
+  clock.append(time, make('div', 'clock__date', DATE.format(new Date())));
+  const grid = make('div', 'apps');
+  APPS.filter((app) => !app.needs || (home.apps && home.apps[app.needs])).forEach((app) => {
+    const b = button('app', 'app', undefined, { app: app.id });
+    const tile = make('span', 'app__tile');
+    tile.append(icon(app.icon));
+    b.append(tile, make('span', 'app__name', TEXT.apps[app.id]));
+    const count = app.id === 'messages' ? home.unread : app.id === 'phone' ? home.missed : 0;
+    if (count > 0) b.append(make('span', 'badge num', count));
+    grid.append(b);
+  });
+  el.view.replaceChildren(clock, grid);
+}
+
+/* ---------- Telefon ---------- */
+function callRow(c) {
+  const b = button('row', 'call-number', undefined, { number: c.number });
+  const missed = c.direction === 'in' && c.status === 'missed';
+  b.dataset.alert = String(missed);
+  const mark = make('span', `row__mark${missed ? ' row__mark--alert' : ''}`);
+  mark.append(icon(c.direction === 'in' ? 'i-in' : 'i-out'));
+  const status = c.status === 'answered' ? duration(c.seconds) : (c.direction === 'out' && c.status === 'missed' ? TEXT.phone.outMissed : TEXT.phone.status[c.status] || '');
+  b.append(mark, make('span', 'row__title', nameOf(c.number)), make('span', 'row__side num', when(c.at)), make('span', 'row__text num', status));
+  return b;
+}
+function renderPhone() {
+  const home = state.home;
+  const tabs = make('div', 'tabs');
+  tabs.setAttribute('role', 'tablist');
+  Object.entries(TEXT.phone.tabs).forEach(([key, label]) => {
+    const t = button('tab', 'phone-tab', label, { tab: key });
+    t.setAttribute('role', 'tab');
+    t.setAttribute('aria-selected', String(key === state.phoneTab));
+    tabs.append(t);
+  });
+  const nodes = [head(TEXT.apps.phone), tabs];
+  if (state.phoneTab === 'log') {
+    const calls = list(home.calls);
+    if (!calls.length) nodes.push(empty(TEXT.phone.empty, TEXT.phone.emptyText));
+    else {
+      const ul = make('ul', 'list');
+      ul.style.paddingTop = '0.5em';
+      calls.forEach((c) => { const li = make('li'); li.append(callRow(c)); ul.append(li); });
+      nodes.push(ul);
+    }
+  } else if (!home.admin) {
+    const dial = make('div', 'dial');
+    const number = make('div', 'dial__number num', formatNumber(state.dial));
+    number.id = 'dial-number';
+    const known = contactOf(state.dial);
+    const name = make('div', 'dial__name', known ? known.name : '');
+    name.id = 'dial-name';
+    if (!known && state.dial.length === home.limits.number) name.append(button('more', 'contact-new', TEXT.phone.save, { number: state.dial }));
+    const keys = make('div', 'keys');
+    DIAL_KEYS.forEach((d) => keys.append(button('key num', 'dial', d, { digit: d })));
+    const erase = button('key key--plain', 'dial-erase');
+    erase.setAttribute('aria-label', TEXT.phone.erase);
+    erase.append(icon('i-erase'));
+    keys.append(make('span'), button('key num', 'dial', '0', { digit: '0' }), erase);
+    const callButton = lock(button('btn', 'dial-call'));
+    callButton.append(icon('i-phone'), make('span', '', TEXT.phone.call));
+    dial.append(number, name, keys, callButton);
+    nodes.push(dial);
+  }
+  el.view.replaceChildren(...nodes);
+}
+async function startCall(number) {
+  if (state.home.admin) return;
+  const data = await request('phone_call_start', { number }, { raw: true });
+  if (!data) return;
+  if (data.error) { await reloadHome(); render(); return; }
+  state.dial = '';
+  setCall(data.call);
+}
+
+/* ---------- Kontakte ---------- */
+function renderContacts() {
+  const home = state.home;
+  const search = input('contact-search', { placeholder: TEXT.contacts.search, label: TEXT.contacts.search, value: state.contactSearch });
+  const wrap = make('div', 'pad');
+  wrap.style.paddingBottom = '0.4em';
+  wrap.append(search);
+  const ul = make('ul', 'list');
+  ul.id = 'contact-list';
+  const actions = home.admin ? [] : [iconButton('i-plus', 'contact-new', TEXT.contacts.add)];
+  el.view.replaceChildren(head(TEXT.apps.contacts, undefined, actions), wrap, ul);
+  fillContacts();
+}
+function fillContacts() {
+  const ul = document.getElementById('contact-list');
+  if (!ul) return;
+  const all = list(state.home.contacts);
+  const query = state.contactSearch.trim().toLowerCase();
+  const found = all.filter((c) => !query || c.name.toLowerCase().includes(query) || c.number.includes(digits(query) || '\u0000'));
+  ul.replaceChildren();
+  if (!found.length) { const li = make('li'); li.append(all.length ? empty(TEXT.contacts.noMatch, '') : empty(TEXT.contacts.empty, TEXT.contacts.emptyText)); ul.append(li); return; }
+  found.forEach((c) => {
+    const li = make('li');
+    const b = button('row', 'contact', undefined, { id: c.id });
+    b.append(make('span', 'row__mark', initial(c.name)), make('span', 'row__title', c.name), make('span'), make('span', 'row__text num', formatNumber(c.number)));
+    li.append(b);
+    ul.append(li);
+  });
+}
+function renderContact(screen) {
+  const c = list(state.home.contacts).find((x) => x.id === screen.id);
+  if (!c) { back(); return; }
+  const admin = state.home.admin;
+  const pad = make('div', 'pad');
+  pad.append(card(formatNumber(c.number), TEXT.contacts.number, 'card--sm'));
+  if (!admin) {
+    const row = make('div', 'btnrow');
+    const callButton = lock(button('btn', 'call-number', undefined, { number: c.number }));
+    callButton.append(icon('i-phone'), make('span', '', TEXT.contacts.call));
+    const messageButton = button('btn btn--ghost', 'thread', undefined, { number: c.number });
+    messageButton.append(icon('i-message'), make('span', '', TEXT.contacts.message));
+    row.append(callButton, messageButton);
+    pad.append(row, lock(button('btn btn--danger', state.confirm === 'contact' ? 'contact-delete' : 'confirm', state.confirm === 'contact' ? TEXT.contacts.removeConfirm : TEXT.contacts.remove, { id: c.id, what: 'contact' })));
+  }
+  el.view.replaceChildren(head(c.name, undefined, admin ? [] : [iconButton('i-edit', 'contact-edit', TEXT.contacts.edit, '', { id: c.id })]), pad);
+}
+function renderContactForm(screen) {
+  const c = screen.id ? list(state.home.contacts).find((x) => x.id === screen.id) : null;
+  const limits = state.home.limits;
+  const form = make('form', 'pad');
+  form.id = 'contact-form';
+  form.noValidate = true;
+  const name = input('contact-name', { maxLength: limits.name, value: c ? c.name : '' });
+  const number = input('contact-number', { numeric: true, maxLength: limits.number + 2, value: formatNumber(c ? c.number : (screen.number || '')) });
+  number.classList.add('num');
+  const submit = lock(make('button', 'btn', TEXT.contacts.save));
+  submit.type = 'submit';
+  form.append(field(TEXT.contacts.name, name), field(TEXT.contacts.number, number), submit);
+  el.view.replaceChildren(head(c ? TEXT.contacts.editTitle : TEXT.contacts.newTitle), form);
+  (c || screen.number ? name : name).focus();
+}
+async function saveContact() {
+  const screen = current();
+  const data = await request('phone_contact_save', { id: screen.id, name: document.getElementById('contact-name').value, number: digits(document.getElementById('contact-number').value) });
+  if (!data) return;
+  state.home.contacts = list(data.contacts);
+  toast(TEXT.contacts.saved);
+  back();
+}
+
+/* ---------- Nachrichten ---------- */
+function preview(t) {
+  const text = t.kind === 'location' ? TEXT.locationPreview : t.text;
+  return `${t.direction === 'out' ? TEXT.messages.you : ''}${text}`;
+}
+function renderMessages() {
+  const home = state.home;
+  const threads = list(home.threads);
+  const actions = home.admin ? [] : [iconButton('i-plus', 'message-new', TEXT.messages.new)];
+  const nodes = [head(TEXT.apps.messages, undefined, actions)];
+  if (!threads.length) nodes.push(empty(TEXT.messages.empty, home.admin ? '' : TEXT.messages.emptyText));
+  else {
+    const ul = make('ul', 'list');
+    threads.forEach((t) => {
+      const li = make('li');
+      const b = button('row', 'thread', undefined, { number: t.number });
+      b.dataset.unread = String(t.unread > 0);
+      const name = nameOf(t.number);
+      b.append(make('span', 'row__mark', initial(name)), make('span', 'row__title', name), make('span', 'row__side num', when(t.at)), make('span', 'row__text', preview(t)));
+      if (t.unread > 0) b.append(make('span', 'badge num row__dot', t.unread));
+      else if (t.hidden) b.append(make('span', 'tag row__dot', TEXT.messages.deleted));
+      li.append(b);
+      ul.append(li);
+    });
+    nodes.push(ul);
+  }
+  el.view.replaceChildren(...nodes);
+}
+function renderNewMessage() {
+  const limits = state.home.limits;
+  const form = make('form', 'pad');
+  form.id = 'new-message-form';
+  form.noValidate = true;
+  const number = input('new-number', { numeric: true, maxLength: limits.number + 2 });
+  number.classList.add('num');
+  const submit = make('button', 'btn', TEXT.messages.start);
+  submit.type = 'submit';
+  form.append(field(TEXT.messages.to, number), submit);
+  const contacts = list(state.home.contacts);
+  const nodes = [head(TEXT.messages.new), form];
+  if (contacts.length) {
+    const label = make('div', 'label', TEXT.messages.toHint);
+    label.style.padding = '0 1em 0.5em';
+    const ul = make('ul', 'list');
+    contacts.forEach((c) => {
+      const li = make('li');
+      const b = button('row', 'thread', undefined, { number: c.number, replace: '1' });
+      b.append(make('span', 'row__mark', initial(c.name)), make('span', 'row__title', c.name), make('span'), make('span', 'row__text num', formatNumber(c.number)));
+      li.append(b);
+      ul.append(li);
+    });
+    nodes.push(label, ul);
+  }
+  el.view.replaceChildren(...nodes);
+  number.focus();
+}
+function bubble(m) {
+  const node = make('div', 'bubble');
+  node.dataset.dir = m.direction;
+  if (m.hidden) node.dataset.hidden = 'true';
+  if (m.kind === 'location') {
+    const loc = make('div', 'bubble__loc');
+    loc.append(icon('i-pin'), make('span', '', TEXT.messages.locationLabel));
+    node.append(loc);
+    if (Number.isFinite(m.x) && Number.isFinite(m.y)) node.append(button('btn btn--ghost', 'waypoint', TEXT.messages.waypoint, { x: m.x, y: m.y }));
+  } else node.append(make('span', '', m.text));
+  node.append(make('time', 'num', `${when(m.at)}${m.hidden ? `, ${TEXT.messages.deleted}` : ''}`));
+  return node;
+}
+function renderThread(screen) {
+  const thread = state.thread && state.thread.number === screen.number ? state.thread : null;
+  const admin = state.home.admin;
+  const service = !isNumber(screen.number);
+  const actions = [];
+  if (!admin && !service) actions.push(lock(iconButton('i-phone', 'call-number', TEXT.contacts.call, '', { number: screen.number })));
+  if (!admin && !service && !contactOf(screen.number)) actions.push(iconButton('i-plus', 'contact-new', TEXT.phone.save, '', { number: screen.number }));
+  if (!admin) actions.push(lock(iconButton('i-trash', state.confirm === 'thread' ? 'thread-delete' : 'confirm', state.confirm === 'thread' ? TEXT.messages.removeConfirm : TEXT.messages.remove, 'iconbtn--danger', { what: 'thread', number: screen.number })));
+  const chat = make('div', 'chat');
+  chat.id = 'chat';
+  if (thread) {
+    if (thread.more) chat.append(lock(button('more', 'thread-older', TEXT.messages.older)));
+    if (!thread.messages.length) chat.append(empty('', service ? '' : TEXT.messages.threadEmpty));
+    thread.messages.forEach((m) => chat.append(bubble(m)));
+  }
+  const nodes = [head(nameOf(screen.number), contactOf(screen.number) ? formatNumber(screen.number) : undefined, actions)];
+  if (state.confirm === 'thread') { const hint = make('p', 'hint', TEXT.messages.removeConfirm); hint.style.padding = '0 1em 0.4em'; nodes.push(hint); }
+  nodes.push(chat);
+  if (!admin && !service) {
+    const form = make('form', 'composer');
+    form.id = 'composer';
+    form.noValidate = true;
+    const text = input('message-text', { maxLength: state.home.limits.message, placeholder: TEXT.messages.placeholder, label: TEXT.messages.placeholder });
+    const send = lock(make('button', 'iconbtn send'));
+    send.type = 'submit';
+    send.setAttribute('aria-label', TEXT.messages.send);
+    send.append(icon('i-send'));
+    form.append(lock(iconButton('i-pin', 'send-location', TEXT.messages.location)), text, send);
+    nodes.push(form);
+  } else if (service) { const hint = make('p', 'hint', TEXT.messages.service); hint.style.padding = '0.6em 1em'; nodes.push(hint); }
+  el.view.replaceChildren(...nodes);
+  chat.scrollTop = chat.scrollHeight;
+  document.getElementById('message-text')?.focus();
+}
+async function openThread(number, replace) {
+  if (replace) state.stack.pop();
+  state.thread = { number, messages: [], more: false };
+  go('thread', { number });
+  const data = await request('phone_thread', { number }, { force: true });
+  if (!data || current().name !== 'thread' || current().number !== number) return;
+  state.thread = { number, messages: list(data.messages), more: data.more === true };
+  state.home.unread = Number(data.unread) || 0;
+  const t = list(state.home.threads).find((x) => x.number === number);
+  if (t) t.unread = 0;
+  render();
+}
+async function loadOlder() {
+  const thread = state.thread;
+  if (!thread || !thread.messages.length) return;
+  const data = await request('phone_thread', { number: thread.number, before: thread.messages[0].id });
+  if (!data) return;
+  thread.messages = list(data.messages).concat(thread.messages);
+  thread.more = data.more === true;
+  render();
+  document.getElementById('chat').scrollTop = 0;
+}
+function addOwnMessage(number, message) {
+  if (!message) return;
+  if (state.thread && state.thread.number === number) state.thread.messages.push(message);
+  const threads = list(state.home.threads).filter((t) => t.number !== number);
+  threads.unshift({ number, text: message.text, kind: message.kind, direction: 'out', at: message.at, unread: 0 });
+  state.home.threads = threads;
+}
+async function sendMessage(location) {
+  const screen = current();
+  const field = document.getElementById('message-text');
+  const text = field ? field.value.trim() : '';
+  if (!location && !text) return;
+  const data = await request('phone_message_send', location ? { number: screen.number, location: true } : { number: screen.number, text });
+  if (!data) { document.getElementById('message-text')?.focus(); return; }
+  addOwnMessage(screen.number, data.message);
+  if (location) toast(TEXT.messages.locationSent);
+  render();
+}
+
+/* ---------- Bank ---------- */
+async function openBank() {
+  state.bank = null;
+  go('bank');
+  const data = await request('phone_bank', {}, { force: true });
+  if (!data) { back(); return; }
+  state.bank = data.overview;
+  if (current().name === 'bank') render();
+}
+function renderBank() {
+  const o = state.bank;
+  if (!o) { el.view.replaceChildren(head(TEXT.apps.bank)); return; }
+  const pad = make('div', 'pad');
+  pad.append(card(money(o.balance), `${TEXT.bank.balance}, ${TEXT.bank.account(formatAccount(o.number))}`));
+  const debts = o.debts || { count: 0, total: 0, overdue: 0 };
+  if (debts.count > 0) pad.append(card(TEXT.bank.debtCard(debts.count), TEXT.bank.debtSub(money(debts.total), debts.overdue), `card--sm${debts.overdue > 0 ? ' card--alert' : ''}`, 'bank-debts'));
+  const row = make('div', 'btnrow');
+  row.append(button('btn', 'bank-transfer', TEXT.bank.transfer), button('btn btn--ghost', 'bank-debts', TEXT.bank.debts));
+  pad.append(row, make('div', 'label', TEXT.bank.recent));
+  const recent = list(o.recent);
+  const nodes = [head(TEXT.apps.bank, o.name), pad];
+  if (!recent.length) pad.append(make('p', 'hint', TEXT.bank.noRecent));
+  else {
+    const ul = make('ul', 'list');
+    recent.forEach((e) => {
+      const li = make('li');
+      const r = make('div', 'row');
+      r.style.cursor = 'default';
+      const mark = make('span', 'row__mark');
+      mark.append(icon(e.amount > 0 ? 'i-in' : 'i-out'));
+      const amount = make('span', 'row__side num', signed(e.amount));
+      amount.style.fontWeight = '600';
+      amount.style.color = e.amount > 0 ? 'var(--c-accent)' : 'var(--c-text)';
+      amount.style.fontSize = 'var(--fs-sm)';
+      r.append(mark, make('span', 'row__title', e.text), amount, make('span', 'row__text', `${e.other ? `${e.other}, ` : ''}${when(e.at)}`));
+      li.append(r);
+      ul.append(li);
+    });
+    nodes.push(ul);
+  }
+  el.view.replaceChildren(...nodes);
+}
+function renderTransfer() {
+  const t = state.transfer;
+  const o = state.bank;
+  const nodes = [head(TEXT.bank.transfer, o ? `${TEXT.bank.balance} ${money(o.balance)}` : undefined)];
+  const pad = make('div', 'pad');
+  if (t.checked) {
+    pad.append(card(t.checked.name, `${TEXT.bank.confirm(money(t.checked.amount), formatAccount(t.checked.number))}${t.checked.purpose ? `, ${t.checked.purpose}` : ''}`, 'card--sm'));
+    const row = make('div', 'btnrow');
+    row.append(lock(button('btn', 'transfer-send', TEXT.bank.send)), lock(button('btn btn--ghost', 'transfer-change', TEXT.bank.change)));
+    pad.append(row);
+    nodes.push(pad);
+  } else {
+    const form = make('form', 'pad');
+    form.id = 'transfer-form';
+    form.noValidate = true;
+    const number = input('transfer-number', { numeric: true, maxLength: 9, value: formatAccount(t.number) });
+    number.classList.add('num');
+    const amount = input('transfer-amount', { numeric: true, value: t.amount });
+    amount.classList.add('num');
+    const purpose = input('transfer-purpose', { maxLength: 60, value: t.purpose });
+    form.append(field(TEXT.bank.number, number), field(TEXT.bank.amount, amount), field(TEXT.bank.purpose, purpose));
+    if (t.error) { const error = make('p', 'error', t.error); error.setAttribute('role', 'alert'); form.append(error); }
+    const submit = lock(make('button', 'btn', TEXT.bank.check));
+    submit.type = 'submit';
+    form.append(submit);
+    nodes.push(form);
+    const recipients = list(o && o.recipients);
+    if (recipients.length) {
+      const label = make('div', 'label', TEXT.bank.recipients);
+      label.style.padding = '0 1em 0.5em';
+      const ul = make('ul', 'list');
+      recipients.forEach((r) => {
+        const li = make('li');
+        const b = button('row', 'transfer-pick', undefined, { number: r.number });
+        b.append(make('span', 'row__mark', initial(r.name)), make('span', 'row__title', r.name), make('span'), make('span', 'row__text num', formatAccount(r.number)));
+        li.append(b);
+        ul.append(li);
+      });
+      nodes.push(label, ul);
+    }
+  }
+  el.view.replaceChildren(...nodes);
+}
+function readTransfer() {
+  const number = document.getElementById('transfer-number');
+  if (!number) return;
+  Object.assign(state.transfer, { number: digits(number.value), amount: document.getElementById('transfer-amount').value.trim(), purpose: document.getElementById('transfer-purpose').value.trim() });
+}
+async function checkTransfer() {
+  const t = state.transfer;
+  readTransfer();
+  const amount = parseAmount(t.amount);
+  t.error = '';
+  if (t.number.length !== 8) t.error = TEXT.errors.unknown_account;
+  else if (!Number.isInteger(amount) || amount < 1) t.error = TEXT.errors.invalid_amount;
+  else if (state.bank && amount > state.bank.balance) t.error = TEXT.errors.not_enough_money;
+  if (!t.error) {
+    const data = await request('phone_bank_lookup', { number: t.number }, { silent: true, raw: true });
+    if (!data) return;
+    if (data.error) t.error = errorText(data.error);
+    else t.checked = { name: data.name, number: data.number, amount, purpose: t.purpose };
+  }
+  render();
+}
+async function sendTransfer() {
+  const t = state.transfer;
+  const data = await request('phone_bank_transfer', { number: t.checked.number, amount: t.checked.amount, purpose: t.checked.purpose });
+  if (!data) { t.checked = null; render(); return; }
+  state.bank = data.overview || state.bank;
+  toast(TEXT.bank.sent(money(t.checked.amount), data.to ? data.to.name : t.checked.name));
+  state.transfer = { number: '', amount: '', purpose: '', checked: null, error: '' };
+  back();
+}
+async function openDebts() {
+  state.debts = null;
+  go('debts');
+  const data = await request('phone_bank_debts', {}, { force: true });
+  if (!data) { back(); return; }
+  state.debts = list(data.debts);
+  if (current().name === 'debts') render();
+}
+function renderDebts() {
+  const nodes = [head(TEXT.bank.debts)];
+  if (state.debts && !state.debts.length) nodes.push(empty(TEXT.bank.noDebts, TEXT.bank.noDebtsText));
+  else if (state.debts) {
+    const ul = make('ul', 'list');
+    state.debts.forEach((d) => {
+      const li = make('li');
+      const b = button('row', 'debt', undefined, { id: d.id });
+      b.dataset.alert = String(d.overdue === true);
+      const amount = make('span', 'row__side num', money(d.rest));
+      amount.style.fontWeight = '600';
+      amount.style.color = 'var(--c-text)';
+      amount.style.fontSize = 'var(--fs-sm)';
+      b.append(make('span', `row__mark${d.overdue ? ' row__mark--alert' : ''}`, initial(d.kindLabel)), make('span', 'row__title', d.title), amount,
+        make('span', 'row__text num', `${d.creditorLabel}, ${d.overdue ? TEXT.bank.late(when(d.due, true)) : TEXT.bank.due(when(d.due, true))}`));
+      li.append(b);
+      ul.append(li);
+    });
+    nodes.push(ul);
+  }
+  el.view.replaceChildren(...nodes);
+}
+function renderDebt(screen) {
+  const d = list(state.debts).find((x) => x.id === screen.id);
+  if (!d) { back(); return; }
+  const form = make('form', 'pad');
+  form.id = 'pay-form';
+  form.noValidate = true;
+  form.append(card(TEXT.bank.open(money(d.rest)), d.overdue ? TEXT.bank.late(when(d.due, true)) : TEXT.bank.due(when(d.due, true)), d.overdue ? 'card--alert' : ''));
+  form.append(make('p', 'hint', `${d.title}. ${d.kindLabel}, ${d.creditorLabel}.${d.fee > 0 ? ` ${TEXT.bank.fee(money(d.fee))}.` : ''}`));
+  const amount = input('pay-amount', { numeric: true, value: String(d.rest) });
+  amount.classList.add('num');
+  const submit = lock(make('button', 'btn', TEXT.bank.pay));
+  submit.type = 'submit';
+  form.append(field(TEXT.bank.amount, amount), submit);
+  if (state.bank) form.append(make('p', 'hint num', TEXT.bank.payHint(money(state.bank.balance))));
+  el.view.replaceChildren(head(d.kindLabel), form);
+}
+async function payDebt() {
+  const screen = current();
+  const amount = parseAmount(document.getElementById('pay-amount').value);
+  if (!Number.isInteger(amount) || amount < 1) { toast(TEXT.errors.invalid_amount, true); return; }
+  const data = await request('phone_bank_pay', { id: screen.id, amount });
+  if (!data) return;
+  state.debts = list(data.debts);
+  state.bank = data.overview || state.bank;
+  const done = data.debt && data.debt.status === 'paid';
+  toast(done ? TEXT.bank.done : TEXT.bank.paid(money(data.paid || amount)));
+  if (done) back(); else render();
+}
+
+/* ---------- Notruf ---------- */
+async function openDispatch() {
+  state.dispatch = null;
+  state.dispatchSent = null;
+  go('dispatch');
+  const data = await request('phone_dispatch', {}, { force: true });
+  if (!data) { back(); return; }
+  state.dispatch = data;
+  state.dispatchService = data.default || (list(data.services)[0] || {}).key;
+  if (current().name === 'dispatch') render();
+}
+function renderDispatch() {
+  const info = state.dispatch;
+  const nodes = [head(TEXT.apps.dispatch)];
+  if (state.dispatchSent) {
+    const pad = make('div', 'pad');
+    pad.append(card(TEXT.dispatch.sent(state.dispatchSent.number), TEXT.dispatch.sentUnits(state.dispatchSent.service, Number(state.dispatchSent.units) || 0), 'card--sm'),
+      button('btn btn--ghost', 'dispatch-again', TEXT.dispatch.again));
+    nodes.push(pad);
+  } else if (info) {
+    const form = make('form', 'pad');
+    form.id = 'dispatch-form';
+    form.noValidate = true;
+    form.append(make('div', 'label', TEXT.dispatch.service));
+    const ul = make('ul', 'list');
+    ul.style.padding = '0';
+    list(info.services).forEach((s) => {
+      const li = make('li');
+      const b = button('row', 'dispatch-service', undefined, { key: s.key });
+      b.setAttribute('aria-pressed', String(s.key === state.dispatchService));
+      if (s.key === state.dispatchService) { b.style.background = 'var(--c-surface-hi)'; b.style.boxShadow = 'inset 0 1px 0 rgb(var(--rgb-ink) / 0.08)'; }
+      const mark = make('span', 'row__mark');
+      mark.append(icon('i-alert'));
+      if (s.key === state.dispatchService) mark.style.color = 'var(--c-accent)';
+      b.append(mark, make('span', 'row__title', s.label), make('span'), make('span', 'row__text', TEXT.dispatch.units(Number(s.units) || 0)));
+      li.append(b);
+      ul.append(li);
+    });
+    const text = input('dispatch-text', { area: true, maxLength: info.textMax || 200, placeholder: TEXT.dispatch.placeholder });
+    const submit = lock(make('button', 'btn', TEXT.dispatch.send));
+    submit.type = 'submit';
+    form.append(ul, field(TEXT.dispatch.text, text), submit, make('p', 'hint', TEXT.dispatch.hint));
+    nodes.push(form);
+  }
+  el.view.replaceChildren(...nodes);
+}
+async function sendDispatch() {
+  const text = document.getElementById('dispatch-text').value.trim();
+  if (text.length < (state.dispatch.textMin || 1)) { toast(TEXT.errors.text_too_short, true); return; }
+  const data = await request('phone_dispatch_send', { service: state.dispatchService, text });
+  if (!data) return;
+  state.dispatchSent = data;
+  render();
+}
+
+/* ---------- Einstellungen ---------- */
+function renderSettings() {
+  const home = state.home;
+  const pad = make('div', 'pad');
+  pad.append(card(formatNumber(home.number), TEXT.settings.number));
+  pad.append(make('p', 'hint', TEXT.settings.esim(home.name)));
+  ['silent', 'airplane'].forEach((key) => {
+    const b = lock(button('switch', 'setting', undefined, { key }));
+    b.setAttribute('role', 'switch');
+    b.setAttribute('aria-checked', String(home[key] === true));
+    b.disabled = home.admin === true;
+    const text = make('span', 'switch__text');
+    text.append(make('span', 'switch__title', TEXT.settings[key]), make('span', 'switch__sub', TEXT.settings[`${key}Sub`]));
+    b.append(icon(key === 'silent' ? 'i-mute' : 'i-plane'), text, make('span', 'switch__knob'));
+    pad.append(b);
+  });
+  el.view.replaceChildren(head(TEXT.apps.settings), pad);
+}
+
+/* ---------- Rendern ---------- */
+const SCREENS = {
+  home: renderHome, phone: renderPhone, contacts: renderContacts, contact: renderContact, 'contact-form': renderContactForm,
+  messages: renderMessages, 'message-new': renderNewMessage, thread: renderThread, bank: renderBank, transfer: renderTransfer,
+  debts: renderDebts, debt: renderDebt, dispatch: renderDispatch, settings: renderSettings,
+};
+function render() {
+  if (!state.open || !state.home) return;
+  const screen = current();
+  renderChrome();
+  (SCREENS[screen.name] || renderHome)(screen);
+  renderCall();
+  if (state.busy) setBusy(true);
+}
+
+async function openApp(app) {
+  if (app === 'phone') {
+    go('phone');
+    if (state.home.missed > 0 && !state.home.admin) { const data = await request('phone_calls_seen', {}, { silent: true, force: true }); if (data) state.home.missed = 0; }
+  } else if (app === 'bank') await openBank();
+  else if (app === 'dispatch') await openDispatch();
+  else if (SCREENS[app]) go(app);
+}
+
+let clockTimer = null;
+function tickClock() {
+  el.statusTime.textContent = TIME.format(new Date());
+  const time = document.getElementById('clock-time');
+  if (time) time.textContent = TIME.format(new Date());
+}
+function show(visible) {
+  state.open = visible;
+  el.phone.hidden = !visible;
+  el.toast.hidden = true;
+  clearInterval(clockTimer);
+  clockTimer = visible ? setInterval(tickClock, CLOCK_MS) : null;
+  if (!visible) { clearInterval(callTimer); callTimer = null; }
+  renderPeek();
+}
+function close() {
+  if (!state.open) return;
+  show(false);
+  Bridge.send('phone_close', {});
+}
+
+/* ---------- Ereignisse ---------- */
+document.addEventListener('click', async (event) => {
+  const t = event.target.closest('[data-action]');
+  if (!t || !state.open) return;
+  const a = t.dataset.action;
+  const d = t.dataset;
+  if (a === 'home') { if (current().name === 'home') close(); else goHome(); return; }
+  if (a === 'back') { back(); return; }
+  if (a === 'call-end') { const data = await request('phone_call_end', {}, { force: true, raw: true }); if (data && data.error === 'no_call') setCall(null); return; }
+  if (a === 'call-answer') { const data = await request('phone_call_answer', {}, { force: true }); if (data) setCall(data.call); return; }
+  if (a === 'call-hide') { state.callHidden = true; renderChrome(); renderCall(); return; }
+  if (a === 'call-show') { state.callHidden = false; renderChrome(); renderCall(); return; }
+  if (state.busy) return;
+  if (a === 'app') await openApp(d.app);
+  if (a === 'confirm') { state.confirm = d.what; render(); }
+  if (a === 'phone-tab') { state.phoneTab = d.tab; render(); }
+  if (a === 'dial' && state.dial.length < state.home.limits.number) { state.dial += d.digit; render(); }
+  if (a === 'dial-erase') { state.dial = state.dial.slice(0, -1); render(); }
+  if (a === 'dial-call') await startCall(state.dial);
+  if (a === 'call-number') await startCall(d.number);
+  if (a === 'contact') go('contact', { id: Number(d.id) });
+  if (a === 'contact-new') go('contact-form', { number: d.number || '' });
+  if (a === 'contact-edit') go('contact-form', { id: Number(d.id) });
+  if (a === 'contact-delete') {
+    const data = await request('phone_contact_delete', { id: Number(d.id) });
+    if (data) { state.home.contacts = list(data.contacts); toast(TEXT.contacts.removed); back(); }
+  }
+  if (a === 'message-new') go('message-new');
+  if (a === 'thread') await openThread(d.number, d.replace === '1');
+  if (a === 'thread-older') await loadOlder();
+  if (a === 'thread-delete') {
+    const data = await request('phone_thread_delete', { number: d.number });
+    if (data) { state.home.threads = list(data.threads); state.home.unread = Number(data.unread) || 0; state.thread = null; toast(TEXT.messages.removed); back(); }
+  }
+  if (a === 'send-location') await sendMessage(true);
+  if (a === 'waypoint') { const res = await Bridge.send('phone_waypoint', { x: Number(d.x), y: Number(d.y) }); if (res && res.ok) toast(TEXT.messages.waypointSet); }
+  if (a === 'bank-transfer') { state.transfer = { number: '', amount: '', purpose: '', checked: null, error: '' }; go('transfer'); }
+  if (a === 'bank-debts') await openDebts();
+  if (a === 'transfer-pick') { readTransfer(); Object.assign(state.transfer, { number: d.number, error: '' }); render(); document.getElementById('transfer-amount')?.focus(); }
+  if (a === 'transfer-send') await sendTransfer();
+  if (a === 'transfer-change') { state.transfer.checked = null; render(); }
+  if (a === 'debt') go('debt', { id: Number(d.id) });
+  if (a === 'dispatch-service') { const text = document.getElementById('dispatch-text').value; state.dispatchService = d.key; render(); document.getElementById('dispatch-text').value = text; }
+  if (a === 'dispatch-again') { state.dispatchSent = null; render(); }
+  if (a === 'setting') {
+    const data = await request('phone_settings', { [d.key]: !state.home[d.key] });
+    if (data) { state.home.silent = data.silent === true; state.home.airplane = data.airplane === true; render(); }
+  }
+});
+
+document.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.open || state.busy) return;
+  const id = event.target.id;
+  if (id === 'contact-form') await saveContact();
+  if (id === 'composer') await sendMessage(false);
+  if (id === 'new-message-form') {
+    const number = digits(document.getElementById('new-number').value);
+    if (number.length !== state.home.limits.number) { toast(TEXT.errors.invalid_number, true); return; }
+    if (number === state.home.number) { toast(TEXT.errors.own_number, true); return; }
+    await openThread(number, true);
+  }
+  if (id === 'transfer-form') await checkTransfer();
+  if (id === 'pay-form') await payDebt();
+  if (id === 'dispatch-form') await sendDispatch();
+});
+
+document.addEventListener('input', (event) => {
+  const t = event.target;
+  if (t.id === 'contact-search') { state.contactSearch = t.value; fillContacts(); }
+  if (t.id === 'contact-number' || t.id === 'new-number') t.value = formatNumber(digits(t.value).slice(0, state.home.limits.number));
+  if (t.id === 'transfer-number') t.value = formatAccount(digits(t.value).slice(0, 8));
+});
+
+document.addEventListener('keydown', (event) => {
+  if (!state.open) return;
+  const typing = event.target.matches('input, textarea');
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (state.confirm) { state.confirm = null; render(); return; }
+    if (current().name === 'transfer' && state.transfer.checked) { state.transfer.checked = null; render(); return; }
+    if (!back()) close();
+    return;
+  }
+  // Ziffern direkt tippen, solange die Wahltastatur offen ist
+  if (!typing && current().name === 'phone' && state.phoneTab === 'keys' && !state.call) {
+    if (/^\d$/.test(event.key) && state.dial.length < state.home.limits.number) { event.preventDefault(); state.dial += event.key; render(); return; }
+    if (event.key === 'Backspace') { event.preventDefault(); state.dial = state.dial.slice(0, -1); render(); return; }
+    if (event.key === 'Enter' && !state.busy) { event.preventDefault(); startCall(state.dial); return; }
+  }
+  if (!typing && (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    const items = [...el.view.querySelectorAll('button:not(:disabled)')];
+    if (!items.length) return;
+    event.preventDefault();
+    const index = items.indexOf(document.activeElement);
+    const step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : -1;
+    items[Math.max(0, Math.min(items.length - 1, index + step))].focus();
+  }
+});
+
+Bridge.on('phone_open', (data) => {
+  applyColors(data.colors);
+  if (typeof data.key === 'string') state.key = data.key;
+  if (Number.isFinite(data.volume)) state.volume = data.volume;
+  Object.assign(state, {
+    busy: false, home: data, stack: [{ name: 'home' }], dial: '', phoneTab: 'log', contactSearch: '', confirm: null, thread: null,
+    bank: null, debts: null, dispatch: null, dispatchSent: null, peekToast: null,
+  });
+  show(true);
+  if (data.admin) setCall(null); else if (data.call || state.call) setCall(data.call || null);
+  render();
+  el.phone.focus();
+});
+
+Bridge.on('phone_close', () => { show(false); });
+
+Bridge.on('phone_push', async (data) => {
+  if (data.type === 'call') {
+    const before = state.call;
+    if (!data.call && before && data.ended) {
+      Sound.stop();
+      if (before.state !== 'incoming' || data.ended.reason !== 'declined') Sound.play('end');
+      if (state.open) toast(TEXT.call.ended[data.ended.reason] || TEXT.call.ended.ended);
+    }
+    setCall(data.call || null);
+    if (state.open && !data.call) { await reloadHome(); render(); }
+    return;
+  }
+  const silent = data.silent === true;
+  const who = nameOf(data.number, data.name);
+  if (data.type === 'message') {
+    if (!silent) Sound.play('message');
+    const text = data.kind === 'location' ? TEXT.locationPreview : String(data.text || '').slice(0, PREVIEW_LENGTH);
+    const inThread = state.open && current().name === 'thread' && current().number === data.number;
+    if (!state.open) showPeekToast({ type: 'message', who, text });
+    else if (inThread) {
+      const fresh = await request('phone_thread', { number: data.number }, { silent: true, force: true });
+      if (fresh && state.thread) { state.thread.messages = list(fresh.messages); state.thread.more = fresh.more === true; }
+    } else toast(`${TEXT.peek.message} ${who}: ${text}`);
+  }
+  if (data.type === 'missed') {
+    if (!silent) Sound.play('message');
+    if (!state.open) showPeekToast({ type: 'missed', who });
+    else toast(`${TEXT.peek.missed} ${who}`);
+  }
+  if (state.open) { await reloadHome(); render(); }
+});
+
+el.homebutton.setAttribute('aria-label', TEXT.home);
+
+(async () => {
+  const res = await Bridge.send('ui_ready', { ui: 'phone', version: CONTRACT_VERSION });
+  if (res && res.ok && res.data) {
+    applyColors(res.data.colors);
+    if (typeof res.data.key === 'string') state.key = res.data.key;
+    if (Number.isFinite(res.data.volume)) state.volume = res.data.volume;
+  }
+  if (Bridge.platform === 'mock') {
+    const params = new URLSearchParams(location.search);
+    const anruf = params.get('anruf');
+    if (anruf) Mock.setCall({ id: 1, state: anruf, number: '555014', seconds: anruf === 'active' ? 73 : undefined });
+    if (params.has('zu')) {
+      if (anruf) Mock.push('phone_push', { type: 'call', call: Mock.home().call });
+      if (params.has('nachricht')) Mock.push('phone_push', { type: 'message', number: '555014', name: 'Lena Hoffmann', kind: 'text', text: 'Hier treffen wir uns. Papiere hab ich dabei.', silent: false });
+      return;
+    }
+    Mock.push('phone_open', { ...Mock.home(), key: 'F1' });
+    const screen = params.get('screen');
+    if (screen === 'thread') await openThread('555014');
+    else if (screen === 'keys') { state.phoneTab = 'keys'; state.dial = '555014'; go('phone'); }
+    else if (screen === 'transfer') { await openBank(); state.transfer = { number: '', amount: '', purpose: '', checked: null, error: '' }; go('transfer'); }
+    else if (screen === 'debts') { await openBank(); await openDebts(); }
+    else if (screen) await openApp(screen);
+  }
+})();
+</script>
+</body>
+</html>

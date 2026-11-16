@@ -18,6 +18,7 @@ FACTIONS = os.path.join(ROOT, 'core_factions')
 EMS = os.path.join(ROOT, 'core_ems')
 DISPATCH = os.path.join(ROOT, 'core_dispatch')
 BANK = os.path.join(ROOT, 'core_bank')
+PHONE = os.path.join(ROOT, 'core_phone')
 
 # Die Tests LOESCHEN alle Tabellen der Datenbank. Darum nur gegen eine eigene Test-Datenbank,
 # deren Name "test" enthaelt. Nie gegen die Datenbank des Servers.
@@ -57,6 +58,9 @@ EXTRA_FILES = {
     'core_bank': [(CORE, 'shared/config.lua'), (BANK, 'config.lua'), (BANK, 'data/banks_gta5.lua')] + BRIDGE + [
         (BANK, 'server/schema.lua'), (BANK, 'server/main.lua'), (BANK, 'server/accounts.lua'), (BANK, 'server/debts.lua'),
         (BANK, 'server/sessions.lua'), (BANK, 'server/admin.lua')],
+    'core_phone': [(CORE, 'shared/config.lua'), (PHONE, 'config.lua')] + BRIDGE + [
+        (PHONE, 'server/schema.lua'), (PHONE, 'server/main.lua'), (PHONE, 'server/numbers.lua'), (PHONE, 'server/messages.lua'),
+        (PHONE, 'server/calls.lua'), (PHONE, 'server/apps.lua'), (PHONE, 'server/admin.lua')],
 }
 
 
@@ -83,7 +87,8 @@ def reset_db():
                       'faction_members', 'faction_settings', 'faction_ranks', 'faction_vehicles', 'faction_departments', 'faction_exams',
                       'faction_history', 'faction_archive', 'faction_divisions', 'faction_info', 'faction_logs', 'ems_diseases', 'ems_records', 'ems_insurance',
                       'dispatch_calls', 'dispatch_events', 'dispatch_units', 'dispatch_blocks',
-                      'bank_accounts', 'bank_transactions', 'bank_debts']:
+                      'bank_accounts', 'bank_transactions', 'bank_debts',
+                      'phone_numbers', 'phone_contacts', 'phone_messages', 'phone_calls']:
             cur.execute(f'DROP TABLE IF EXISTS {table}')
         cur.execute('SET FOREIGN_KEY_CHECKS=1')
         for statement in open(f'{CORE}/database/schema.sql').read().split(';'):
