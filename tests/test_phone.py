@@ -154,7 +154,7 @@ env.call(3, 'char_select', {'id': ids[3]})
 env.positions[3] = [103.0, 200.0, 30.0]
 env.tick(2500)
 check('Mira loggt ein: Nachricht wartet im Handy', P(3, 'phone_open')['data']['unread'] == 1)
-check('Flugmodus an', P(4, 'phone_settings', {'airplane': True})['data'] == {'silent': False, 'airplane': True})
+check('Flugmodus an', P(4, 'phone_settings', {'airplane': True})['data'] == {'silent': False, 'airplane': True, 'wallpaper': 'sphaeren'})
 check('im Flugmodus senden: airplane', P(4, 'phone_message_send', {'number': num[ids[1]], 'text': 'Hallo'})['error'] == 'airplane')
 before = len(pushes(4))
 check('an jemanden im Flugmodus: gespeichert, aber kein Bescheid', P(1, 'phone_message_send', {'number': num[ids[4]], 'text': 'Ruf zurück.'})['ok'] and len(pushes(4)) == before
@@ -164,6 +164,13 @@ P(1, 'phone_message_send', {'number': num[ids[4]], 'text': 'Noch da?'})
 check('lautlos: Bescheid kommt mit silent', pushes(4, 'message')[-1]['silent'] is True)
 check('Einstellungen bleiben gespeichert', env.sql('SELECT silent, airplane FROM phone_numbers WHERE character_id = %s', (ids[4],))[0] == {'silent': 1, 'airplane': 0})
 P(4, 'phone_settings', {'silent': False})
+check('Hintergrund: Standard ist der erste aus der Config, die Liste kommt mit', P(4, 'phone_home')['data']['wallpaper'] == 'sphaeren'
+      and P(4, 'phone_home')['data']['wallpapers'] == ['sphaeren', 'eklipse', 'wellen', 'glut'])
+check('Hintergrund wechseln, bleibt gespeichert', P(4, 'phone_settings', {'wallpaper': 'wellen'})['data'] == {'silent': False, 'airplane': False, 'wallpaper': 'wellen'}
+      and env.sql('SELECT wallpaper FROM phone_numbers WHERE character_id = %s', (ids[4],))[0]['wallpaper'] == 'wellen'
+      and P(4, 'phone_home')['data']['wallpaper'] == 'wellen')
+check('unbekannter Hintergrund: invalid_wallpaper, der alte bleibt', P(4, 'phone_settings', {'wallpaper': 'x<y'})['error'] == 'invalid_wallpaper'
+      and P(4, 'phone_home')['data']['wallpaper'] == 'wellen')
 r = P(2, 'phone_thread_delete', {'number': num[ids[1]]})
 check('Paul löscht den Chat: bei ihm weg', r['ok'] and not r['data']['threads'] and not P(2, 'phone_thread', {'number': num[ids[1]]})['data']['messages'])
 check('bei Lena bleibt er stehen', len(P(1, 'phone_thread', {'number': num[ids[2]]})['data']['messages']) >= 5)

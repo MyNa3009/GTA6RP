@@ -4,7 +4,7 @@ lua54 'yes'
 
 name 'core_phone'
 description 'Handy fuer die eigene Core: Item mit eSIM, Telefon, Kontakte, Nachrichten, Bank-App, Notruf'
-version '1.0.0'
+version '1.1.0'
 
 dependencies {
     'core',

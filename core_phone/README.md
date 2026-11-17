@@ -1,8 +1,16 @@
-# core_phone 1.0.0
+# core_phone 1.1.0
 
 Handy für die eigene Core. Das Handy ist ein Item im Inventar, die Nummer kommt von einer eSIM, die an der Person hängt. Mit dem Handy ruft man an, schreibt Nachrichten, schickt seinen Standort, verwaltet Kontakte, sieht sein Konto, überweist, bezahlt Schulden und setzt einen Notruf ab. Ist das Handy zu, zeigt eine kleine Zeile unten rechts Anrufe und neue Nachrichten.
 
 Bank und Notruf sind Apps auf den Daten von `core_bank` und `core_dispatch`. Das Handy bucht und entscheidet dort nichts selbst.
+
+## Update von 1.0.0
+
+1. Ordner `core_phone` ersetzen und neu starten. Die neue Spalte `wallpaper` legt das Script beim Start selbst an, nichts von Hand ausführen.
+2. **Neues Aussehen:** Das Handy sieht jetzt aus wie ein echtes Smartphone, mit Rahmen, Seitentasten, Kamera-Insel, großer Uhr, App-Leiste unten und Mitteilungen oben im Handy. Die Farben kommen wie immer aus `Config.UI.Colors` der Core.
+3. **Hintergründe:** In den Einstellungen gibt es vier Hintergründe (Sphären, Eklipse, Wellen, Glut). Die Wahl bleibt gespeichert. Welche es gibt, steht in `Config.Phone.Wallpapers`. Neue erzeugt `tools/wallpapers.py`.
+4. Kontakt anlegen, Überweisen und Forderung bezahlen öffnen sich als Blatt von unten, Löschen fragt in einem Dialog nach. Fehler stehen direkt am Feld.
+5. Die Taste zum Öffnen (`F1`) schließt das Handy auch wieder.
 
 ## Installation
 
@@ -22,7 +30,7 @@ Für Gespräche braucht der Server Sprache: entweder `pma-voice` oder die eingeb
 
 ## Für Spieler
 
-Öffnen mit `F1` (im Spiel änderbar), mit `/handy` oder durch Benutzen des Items im Inventar. `Escape` geht einen Schritt zurück und schließt am Ende. Der Strich unten im Handy führt zum Startbildschirm.
+Öffnen mit `F1` (im Spiel änderbar), mit `/handy` oder durch Benutzen des Items im Inventar. `F1` schließt es wieder. `Escape` geht einen Schritt zurück und schließt am Ende. Der Strich unten im Handy führt zum Startbildschirm. Pfeiltasten, `Enter` und `Rücktaste` bedienen alles ohne Maus.
 
 | App | Was geht |
 |---|---|
@@ -31,7 +39,7 @@ Für Gespräche braucht der Server Sprache: entweder `pma-voice` oder die eingeb
 | Kontakte | Bis zu 100 Kontakte mit Suche. Aus dem Kontakt anrufen oder schreiben. Unbekannte Nummern lassen sich aus dem Ziffernfeld und aus dem Chat speichern |
 | Bank | Kontostand, Kontonummer, letzte Buchungen, Überweisen mit Prüfung des Empfängers, offene Forderungen ansehen und vom Konto bezahlen, auch in Teilen. Bargeld gibt es weiter nur in der Filiale und am Automaten |
 | Notruf | Dienst wählen (mit Anzeige, wie viele Einheiten im Dienst sind), beschreiben, absenden. Der Standort geht mit. Es gelten dieselben Regeln wie bei `/dispatch` |
-| Einstellungen | Eigene Nummer, Lautlos, Flugmodus |
+| Einstellungen | Eigene Nummer, Lautlos, Flugmodus, Hintergrund |
 
 - **Gespräch:** Beim Anruf erscheint der Bildschirm mit Annehmen und Ablehnen. Während des Gesprächs kann man mit "Zum Handy" weiter das Handy bedienen, das Gespräch läuft als Leiste oben weiter. Auflegen geht immer. Wer bewusstlos wird oder den Server verlässt, legt automatisch auf.
 - **Handy zu:** Ein Anruf erscheint unten rechts als Zeile mit der Taste zum Öffnen. Neue Nachrichten und verpasste Anrufe stehen dort ein paar Sekunden.
@@ -68,6 +76,7 @@ Alles in `config.lua`:
 | `ThreadPage`, `ThreadsShown`, `CallsShown` | `30`, `40`, `40` | Nachrichten pro Seite, Chats und Anrufe in der Liste |
 | `RingSeconds` | `30` | So lange klingelt es |
 | `Volume` | `0.25` | Lautstärke der Töne, 0 bis 1 |
+| `Wallpapers` | 4 Stück | Hintergründe zur Auswahl, der erste ist der Standard |
 | `Bank.Enabled`, `Dispatch.Enabled` | `true` | Apps ein- und ausschalten |
 | `Admin.ViewPermission` | `player.view` | Recht für `/handy <ID>` und `/nummer` |
 | `Colors` | leer | Nur Farben eintragen, die von `Config.UI.Colors` der Core abweichen sollen |
@@ -100,14 +109,14 @@ Der Vertrag zwischen Client und UI steht oben in `html/phone.html`.
 - `server/apps.lua`: Bank und Notruf über die Exports von `core_bank` und `core_dispatch`.
 - `server/admin.lua`: `/nummer` und die Einträge in der Befehlsliste.
 - `client/main.lua`: Öffnen und Schließen, Anfragen der UI weiterreichen, Sprache im Gespräch.
-- `html/phone.html`: die UI.
+- `html/phone.html`: die UI. Die Hintergründe darin erzeugt `tools/wallpapers.py` aus den Farben des Servers.
 - `data/phone_gta5.lua`: die Haltung mit dem Handy in der Hand. Beim Umzug auf GTA 6 wird nur diese Datei ersetzt.
 
 Der Server prüft bei jeder Anfrage, ob die Person einen Charakter spielt, bei Bewusstsein ist und das Handy im Inventar hat. Der Standort einer Standort-Nachricht und eines Notrufs kommt immer vom Server.
 
 ## Test
 
-`python3 tests/test_phone.py` prüft die Serverlogik gegen MariaDB. Die UI läuft im Browser mit Testdaten: `html/phone.html`, dazu `?screen=phone|keys|contacts|messages|thread|bank|transfer|debts|dispatch|settings`, `?admin`, `?leer`, `?anruf=incoming|dialing|active` und `?zu&anruf=incoming` oder `?zu&nachricht` für die Zeile bei geschlossenem Handy.
+`python3 tests/test_phone.py` prüft die Serverlogik gegen MariaDB. Die UI läuft im Browser mit Testdaten: `html/phone.html`, dazu `?screen=phone|log|contacts|messages|thread|bank|debts|dispatch|settings`, `?wp=sphaeren|eklipse|wellen|glut`, `?admin`, `?leer`, `?anruf=incoming|dialing|active` und `?zu&anruf=incoming` oder `?zu&nachricht` für die Zeile bei geschlossenem Handy.
 
 Nur im Spiel prüfbar:
 

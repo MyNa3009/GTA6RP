@@ -35,16 +35,26 @@ function Numbers.Normalize(value)
     return value
 end
 
--- eSIM eines Charakters: { number, silent, airplane } oder nil, wenn noch keine aktiviert ist
+-- Nur Hintergruende aus der Config gelten, alles andere wird zum Standard (dem ersten)
+local function wallpaperOf(value)
+    for _, id in ipairs(CFG.Wallpapers) do
+        if id == value then
+            return id
+        end
+    end
+    return CFG.Wallpapers[1]
+end
+
+-- eSIM eines Charakters: { number, silent, airplane, wallpaper } oder nil, wenn noch keine aktiviert ist
 function Numbers.Get(characterId)
     if cache[characterId] then
         return cache[characterId]
     end
-    local row = DB.Single('SELECT number, silent, airplane FROM phone_numbers WHERE character_id = ?', { characterId })
+    local row = DB.Single('SELECT number, silent, airplane, wallpaper FROM phone_numbers WHERE character_id = ?', { characterId })
     if not row then
         return nil
     end
-    cache[characterId] = { number = row.number, silent = flag(row.silent), airplane = flag(row.airplane) }
+    cache[characterId] = { number = row.number, silent = flag(row.silent), airplane = flag(row.airplane), wallpaper = wallpaperOf(row.wallpaper) }
     return cache[characterId]
 end
 
@@ -169,7 +179,7 @@ function Numbers.Home(source, characterId, admin)
     local threads, unread = Messages.Threads(characterId, admin)
     return {
         number = sim.number, name = Phone.NameOf(characterId), characterId = characterId,
-        silent = sim.silent, airplane = sim.airplane,
+        silent = sim.silent, airplane = sim.airplane, wallpaper = wallpaperOf(sim.wallpaper), wallpapers = CFG.Wallpapers,
         contacts = Numbers.Contacts(characterId), threads = threads, unread = unread,
         calls = Calls.List(characterId), missed = Calls.Missed(characterId),
         call = not admin and Calls.StateOf(source) or nil,
@@ -238,8 +248,16 @@ Phone.Register('phone_settings', { write = true }, function(source, data, ctx)
     if type(data.airplane) == 'boolean' then
         sim.airplane = data.airplane
     end
-    DB.Update('UPDATE phone_numbers SET silent = ?, airplane = ? WHERE character_id = ?', { sim.silent and 1 or 0, sim.airplane and 1 or 0, ctx.characterId })
-    return { ok = true, data = { silent = sim.silent, airplane = sim.airplane } }
+    if type(data.wallpaper) == 'string' then
+        if wallpaperOf(data.wallpaper) ~= data.wallpaper then
+            return { ok = false, error = 'invalid_wallpaper' }
+        end
+        sim.wallpaper = data.wallpaper
+    end
+    sim.wallpaper = wallpaperOf(sim.wallpaper)
+    DB.Update('UPDATE phone_numbers SET silent = ?, airplane = ?, wallpaper = ? WHERE character_id = ?',
+        { sim.silent and 1 or 0, sim.airplane and 1 or 0, sim.wallpaper, ctx.characterId })
+    return { ok = true, data = { silent = sim.silent, airplane = sim.airplane, wallpaper = sim.wallpaper } }
 end)
 
 -- Handy im Inventar benutzt: beim Spieler oeffnen

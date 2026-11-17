@@ -32,6 +32,10 @@ Config.Phone = {
     -- Toene macht das Handy selbst (keine GTA-Sounds): Klingelton, Freizeichen, Nachricht. 0 bis 1.
     Volume = 0.25,
 
+    -- Hintergruende des Startbildschirms. Der erste ist der Standard. Die Bilder selbst stehen in html/phone.html
+    -- (erzeugt von tools/wallpapers.py) und nehmen ihre Farben aus den Farben des Servers.
+    Wallpapers = { 'sphaeren', 'eklipse', 'wellen', 'glut' },
+
     -- Bank-App (braucht core_bank): Kontostand, Ueberweisen, Schulden bezahlen
     Bank = { Enabled = true, RecentCount = 6 },
     -- Notruf-App (braucht core_dispatch): Notruf mit Text an einen Dienst

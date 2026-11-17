@@ -5,9 +5,13 @@ CREATE TABLE IF NOT EXISTS phone_numbers (
     number        VARCHAR(12) NOT NULL,                 -- Handynummer, nur Ziffern
     silent        TINYINT(1) NOT NULL DEFAULT 0,        -- lautlos
     airplane      TINYINT(1) NOT NULL DEFAULT 0,        -- Flugmodus: nicht erreichbar
+    wallpaper     VARCHAR(16) NULL,                     -- gewaehlter Hintergrund, NULL = Standard
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_number (number)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Seit 1.1.0: Hintergrund. Fuer Tabellen, die mit 1.0.0 angelegt wurden.
+ALTER TABLE phone_numbers ADD COLUMN IF NOT EXISTS wallpaper VARCHAR(16) NULL AFTER airplane;
 
 CREATE TABLE IF NOT EXISTS phone_contacts (
     id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
